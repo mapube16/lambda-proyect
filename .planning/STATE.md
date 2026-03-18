@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
-status: planning
-stopped_at: Completed 01-auth-infrastructure/01-01-PLAN.md
-last_updated: "2026-03-18T07:20:58.890Z"
-last_activity: 2026-03-17 — Roadmap created; phases derived from 25 v1 requirements
+status: executing
+stopped_at: Completed 01-auth-infrastructure/01-02-PLAN.md
+last_updated: "2026-03-18T07:23:54.996Z"
+last_activity: "2026-03-18 — Plan 01-01 complete: Wave-0 test scaffold with 8 xfail stubs"
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 33
 ---
 
@@ -50,6 +50,7 @@ Progress: [███░░░░░░░] 33%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01-auth-infrastructure P02 | 25 | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -62,6 +63,9 @@ Recent decisions affecting current work:
 - Roadmap: Auth must exist before any other feature — tenant isolation is a Phase 1 blocker, not a Phase 4 polish item
 - Roadmap: Phases 3 and 4 split the pipeline work — graph definition first, then safety hardening — so scraping reliability is validated before scoring is built
 - [Phase 01-auth-infrastructure]: pytest asyncio_mode = auto chosen so async test functions run without explicit decoration; Wave-0 xfail scaffold pattern established for Nyquist compliance
+- [Phase 01-auth-infrastructure]: Pin bcrypt==4.0.1: passlib 1.7.4 incompatible with bcrypt 5.x — removed __about__ attribute causes ValueError in wrap-bug detection
+- [Phase 01-auth-infrastructure]: oauth2_scheme auto_error=False: prevents FastAPI automatic 403 on missing Bearer; get_current_user explicitly raises 401
+- [Phase 01-auth-infrastructure]: create_user() returns {id, email} only — hashed_password never in return value
 
 ### Pending Todos
 
@@ -74,6 +78,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-18T07:20:58.885Z
-Stopped at: Completed 01-auth-infrastructure/01-01-PLAN.md
+Last session: 2026-03-18T07:23:45.588Z
+Stopped at: Completed 01-auth-infrastructure/01-02-PLAN.md
 Resume file: None
