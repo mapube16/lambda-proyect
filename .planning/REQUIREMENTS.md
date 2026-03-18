@@ -1,0 +1,128 @@
+# Requirements: Hive Pixel Office — AaaS B2B Prospecting Platform
+
+**Defined:** 2026-03-17
+**Core Value:** Un cliente piloto puede configurar su agente prospector, ver los agentes trabajar en la oficina pixel art en tiempo real, y recibir expedientes con correos listos para enviar.
+
+## v1 Requirements
+
+### Authentication
+
+- [ ] **AUTH-01**: Usuario puede registrarse con email y password
+- [ ] **AUTH-02**: Usuario puede hacer login con email y password y recibir JWT
+- [ ] **AUTH-03**: El JWT protege todos los endpoints REST y el WebSocket connection
+
+### Hive Integration
+
+- [ ] **HIVE-01**: El backend instala y carga `aden-hive/hive` v0.6.0 correctamente
+- [ ] **HIVE-02**: `HiveAdapter` reemplaza `orchestrator.py` como única seam entre FastAPI y Hive
+- [ ] **HIVE-03**: `ConnectionManager` enruta mensajes WebSocket por `user_id` (no broadcast global)
+- [ ] **HIVE-04**: `SharedMemory` se instancia con `namespace=f"user_{user_id}"` para aislamiento multi-tenant
+- [ ] **HIVE-05**: Eventos de nodos de `GraphExecutor` se mapean a `AgentState` existente (THINKING, TOOL_USE, WAITING, IDLE)
+
+### Prospecting Pipeline
+
+- [ ] **PIPE-01**: Usuario puede ingresar una URL de empresa y lanzar una corrida de prospección
+- [ ] **PIPE-02**: El pipeline ejecuta los 9 nodos completos: `sourcing_node` → `scraping_node` → `scoring_node` → `veto_router` → `spiced_analyzer` → `jtbd_deducer` → `email_composer` → `expediente_generator` → `human_review`
+- [ ] **PIPE-03**: El contenido scrapeado se sanitiza (HTML → texto plano, truncado a 8,000 chars, delimitadores estructurales) antes de inyectar al LLM
+- [ ] **PIPE-04**: La salida JSON de cada nodo LLM se valida contra un schema estricto antes de pasar al siguiente nodo
+- [ ] **PIPE-05**: `personalidad.md` se carga como system prompt del nodo central prospector con las 10 variables de campaña interpoladas
+
+### HITL (Human-in-the-Loop)
+
+- [ ] **HITL-01**: Cuando el pipeline llega al nodo `human_review`, el agente en la oficina se congela visualmente indicando espera
+- [ ] **HITL-02**: El estado HITL pendiente se persiste en SQLite antes de suspender (sobrevive reinicios del servidor)
+- [ ] **HITL-03**: Usuario puede aprobar o rechazar el lead desde el dashboard; la respuesta reanuda el pipeline
+
+### Agent Configuration
+
+- [ ] **CONF-01**: Usuario puede configurar las 10 variables de campaña a través de un formulario antes de lanzar una corrida: `nombre_remitente`, `empresa_remitente`, `industria_objetivo`, `ciudad_objetivo`, `dolor_operativo`, `solucion_ofrecida`, `software_clave`, `jerarquia_decisores`, `identidad_remitente`, más `input_empresa_url`
+- [ ] **CONF-02**: El AgentPanel muestra de forma permanente el nombre, rol y variables activas del agente en la sesión actual (transparencia de configuración)
+- [ ] **CONF-03**: La configuración de campaña del usuario se persiste en SQLite para reutilizar entre sesiones
+
+### Lead Dashboard
+
+- [ ] **LEAD-01**: Al completar una corrida exitosa (score ≥ 70), el expediente se muestra con: score, perfil (A/B), decisor clave (nombre, cargo, email), tech stack detectado, trigger, y correo borrador
+- [ ] **LEAD-02**: Los correos borrador son copiables con un click desde el expediente
+- [ ] **LEAD-03**: Si el pipeline activa un Kill Switch, se muestra el código de rechazo (`KILL_B2C`, `LOW_SCORE_QUALIFICATION`, etc.) y la evidencia textual que lo justificó
+
+### Real-Time Visualization
+
+- [ ] **VIZ-01**: Los personajes de la oficina animan estados correspondientes a los nodos en ejecución (buscando, procesando, escribiendo, esperando)
+- [ ] **VIZ-02**: El estado del agente se actualiza en tiempo real via WebSocket durante toda la corrida sin bloquear la UI
+- [ ] **VIZ-03**: Los errores de pipeline (scraping fallido, LLM timeout) se muestran como estado de error en el personaje — no pantalla en blanco
+
+## v2 Requirements
+
+### Authentication Enhancements
+- **AUTH-04**: Sesión persistente con JWT refresh token
+- **AUTH-05**: Recuperación de contraseña por email
+
+### Dashboard Enhancements
+- **LEAD-04**: Historial completo de corridas pasadas con outcome y score
+- **LEAD-05**: Score breakdown con desglose por criterio (base B2B, tensión operativa, escala, decisor, geo)
+- **LEAD-06**: Panel de analytics de rechazos (frecuencia de Kill Switches por config de campaña)
+
+### Agent Configuration Enhancements
+- **CONF-04**: Click en personaje pixel art → modal con system prompt completo + variables activas
+- **CONF-05**: Biblioteca de plantillas de campaña reutilizables
+
+### Integrations
+- **INT-01**: CRM push a HubSpot via MCP server
+- **INT-02**: Envío de correo via SendGrid (requiere warm-up y compliance Ley 1581 Colombia)
+- **INT-03**: Webhooks a Slack/Teams al completar corrida
+
+### Scale
+- **SCAL-01**: Procesamiento batch (múltiples URLs en cola por corrida)
+- **SCAL-02**: Clay enrichment para datos adicionales de empresa
+- **SCAL-03**: Migración de SQLite a PostgreSQL para 3+ clientes concurrentes
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| Agent Builder UI (BuildSession visual) | Clientes necesitan resultados de prospección, no construcción de agentes — v3+ |
+| LinkedIn scraping | Riesgo de violación de ToS — fuera de alcance indefinidamente |
+| Self-improving graph (auto-evolución) | Requiere harness de evaluación que no existe aún — v3+ |
+| Next.js / SSR migration | El canvas pixel art con game loop ya funciona en React/Vite — SSR no agrega valor |
+| Auth0 / Clerk / Supabase Auth | JWT in-house es suficiente para MVP piloto — sin dependencia de vendor externo |
+| SQLAlchemy ORM / Alembic | Overhead innecesario para MVP — queries directas con aiosqlite |
+| Playwright / Crawl4AI | `aden_tools web_scrape_tool` primero — instalar headless browser solo si falla |
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| AUTH-01 | Phase 1 | Pending |
+| AUTH-02 | Phase 1 | Pending |
+| AUTH-03 | Phase 1 | Pending |
+| HIVE-01 | Phase 1 | Pending |
+| HIVE-02 | Phase 1 | Pending |
+| HIVE-03 | Phase 1 | Pending |
+| HIVE-04 | Phase 1 | Pending |
+| HIVE-05 | Phase 1 | Pending |
+| PIPE-01 | Phase 2 | Pending |
+| PIPE-02 | Phase 2 | Pending |
+| PIPE-03 | Phase 2 | Pending |
+| PIPE-04 | Phase 2 | Pending |
+| PIPE-05 | Phase 2 | Pending |
+| HITL-01 | Phase 2 | Pending |
+| HITL-02 | Phase 2 | Pending |
+| HITL-03 | Phase 2 | Pending |
+| CONF-01 | Phase 3 | Pending |
+| CONF-02 | Phase 3 | Pending |
+| CONF-03 | Phase 3 | Pending |
+| LEAD-01 | Phase 3 | Pending |
+| LEAD-02 | Phase 3 | Pending |
+| LEAD-03 | Phase 3 | Pending |
+| VIZ-01 | Phase 3 | Pending |
+| VIZ-02 | Phase 3 | Pending |
+| VIZ-03 | Phase 3 | Pending |
+
+**Coverage:**
+- v1 requirements: 25 total
+- Mapped to phases: 25
+- Unmapped: 0 ✓
+
+---
+*Requirements defined: 2026-03-17*
+*Last updated: 2026-03-17 after initial definition*
