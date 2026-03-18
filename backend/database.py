@@ -1,47 +1,58 @@
 """
-database.py — aiosqlite user persistence for Phase 1 auth.
-All DB operations are here. No other module touches aiosqlite directly.
+database.py — Motor (async MongoDB) user persistence for Phase 1 auth.
+All DB operations are here. No other module touches Motor directly.
 """
-import aiosqlite
+import os
 from typing import Optional
+from datetime import datetime, timezone
+from motor.motor_asyncio import AsyncIOMotorClient
 
-DATABASE_URL = "hive_office.db"
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("MONGODB_DB", "hive_office")
+
+# Module-level client — initialized in init_db(), overridable in tests
+_client: Optional[AsyncIOMotorClient] = None
 
 
-async def init_db() -> None:
-    """Create users table if it does not exist. Call from lifespan on startup."""
-    async with aiosqlite.connect(DATABASE_URL) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                hashed_password TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.commit()
+def get_db():
+    """Return the database handle. Requires init_db() to have been called."""
+    return _client[DB_NAME]
+
+
+async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
+    """Connect to MongoDB and create indexes.
+    Pass a custom client for testing (e.g. mongomock_motor).
+    Call from lifespan on startup.
+    """
+    global _client
+    _client = client or AsyncIOMotorClient(MONGODB_URI)
+    db = _client[DB_NAME]
+    # Unique index on email — enforces deduplication at the DB level
+    await db.users.create_index("email", unique=True)
 
 
 async def get_user_by_email(email: str) -> Optional[dict]:
-    """Return user row as dict or None if not found."""
-    async with aiosqlite.connect(DATABASE_URL) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT id, email, hashed_password, created_at FROM users WHERE email = ?",
-            (email,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            return dict(row) if row else None
+    """Return user document as dict or None if not found."""
+    db = get_db()
+    doc = await db.users.find_one({"email": email})
+    if doc is None:
+        return None
+    return {
+        "id": str(doc["_id"]),
+        "email": doc["email"],
+        "hashed_password": doc["hashed_password"],
+        "created_at": doc.get("created_at"),
+    }
 
 
 async def create_user(email: str, hashed_password: str) -> dict:
-    """Insert user, return {id, email}. Caller must pre-check for duplicates.
-    Raises aiosqlite.IntegrityError on duplicate email.
+    """Insert user. Returns {id, email}.
+    Raises pymongo.errors.DuplicateKeyError on duplicate email.
     """
-    async with aiosqlite.connect(DATABASE_URL) as db:
-        cursor = await db.execute(
-            "INSERT INTO users (email, hashed_password) VALUES (?, ?)",
-            (email, hashed_password)
-        )
-        await db.commit()
-        return {"id": cursor.lastrowid, "email": email}
+    db = get_db()
+    result = await db.users.insert_one({
+        "email": email,
+        "hashed_password": hashed_password,
+        "created_at": datetime.now(timezone.utc),
+    })
+    return {"id": str(result.inserted_id), "email": email}

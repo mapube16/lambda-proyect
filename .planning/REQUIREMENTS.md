@@ -7,9 +7,9 @@
 
 ### Authentication
 
-- [ ] **AUTH-01**: Usuario puede registrarse con email y password
-- [ ] **AUTH-02**: Usuario puede hacer login con email y password y recibir JWT
-- [ ] **AUTH-03**: El JWT protege todos los endpoints REST y el WebSocket connection
+- [x] **AUTH-01**: Usuario puede registrarse con email y password
+- [x] **AUTH-02**: Usuario puede hacer login con email y password y recibir JWT
+- [x] **AUTH-03**: El JWT protege todos los endpoints REST y el WebSocket connection
 
 ### Hive Integration
 
@@ -92,9 +92,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUTH-01 | Phase 1 — Auth Infrastructure | Pending |
-| AUTH-02 | Phase 1 — Auth Infrastructure | Pending |
-| AUTH-03 | Phase 1 — Auth Infrastructure | Pending |
+| AUTH-01 | Phase 1 — Auth Infrastructure | Complete |
+| AUTH-02 | Phase 1 — Auth Infrastructure | Complete |
+| AUTH-03 | Phase 1 — Auth Infrastructure | Complete |
 | HIVE-01 | Phase 2 — Hive Adapter and Tenant Isolation | Pending |
 | HIVE-02 | Phase 2 — Hive Adapter and Tenant Isolation | Pending |
 | HIVE-03 | Phase 2 — Hive Adapter and Tenant Isolation | Pending |

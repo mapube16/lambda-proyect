@@ -11,7 +11,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException,
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-import aiosqlite
+from pymongo.errors import DuplicateKeyError
 from jose import JWTError, jwt
 from auth import (
     hash_password, verify_password, create_access_token,
@@ -116,7 +116,7 @@ async def register(user: UserCreate):
     hashed = hash_password(user.password)
     try:
         created = await create_user(user.email, hashed)
-    except aiosqlite.IntegrityError:
+    except DuplicateKeyError:
         raise HTTPException(status_code=400, detail="Email already registered")
     return {"id": created["id"], "email": created["email"]}
 

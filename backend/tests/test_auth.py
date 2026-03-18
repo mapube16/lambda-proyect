@@ -25,9 +25,8 @@ async def test_register_duplicate_email(async_client):
 
 async def test_password_not_stored_plain(async_client):
     """Registered user's hashed_password in DB starts with $2b$ (bcrypt)."""
-    # This test imports database directly to inspect storage
-    from database import get_user_by_email, init_db
-    await init_db()
+    # Use the mock DB already initialized by the reset_db fixture (via conftest)
+    from database import get_user_by_email
     await async_client.post("/auth/register", json={
         "email": "inspect@example.com",
         "password": "plaintext"
