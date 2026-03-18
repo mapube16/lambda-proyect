@@ -32,7 +32,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A registered user can POST login credentials and receive a signed JWT
   3. Any REST endpoint or WebSocket handshake without a valid JWT is rejected with 401
   4. Two users logged in simultaneously cannot see each other's data
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Wave 0 test scaffold: pytest.ini, conftest.py, 8 xfail stubs for AUTH-01/02/03
+- [ ] 01-02-PLAN.md — Core auth modules: backend/auth.py (hash/JWT/dependency) and backend/database.py (aiosqlite users CRUD)
+- [ ] 01-03-PLAN.md — Wire auth into main.py: auth endpoints, Depends on all routes, WS token validation, keyed ConnectionManager
 
 ### Phase 2: Hive Adapter and Tenant Isolation
 **Goal**: The `aden-hive/hive` framework is installed and the single `HiveAdapter` seam replaces `orchestrator.py`; WebSocket connections are keyed by user_id; SharedMemory is namespaced; GraphExecutor node events map to AgentState — the pixel art office still loads and characters still animate
@@ -114,7 +119,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auth Infrastructure | 0/TBD | Not started | - |
+| 1. Auth Infrastructure | 0/3 | Not started | - |
 | 2. Hive Adapter and Tenant Isolation | 0/TBD | Not started | - |
 | 3. Prospecting Graph Definition | 0/TBD | Not started | - |
 | 4. Scraping Safety and Output Validation | 0/TBD | Not started | - |
