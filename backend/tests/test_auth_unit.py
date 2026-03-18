@@ -66,17 +66,17 @@ def test_create_access_token_returns_jwt_string():
 
 def test_create_access_token_decodable_with_secret():
     """JWT is decodable with SECRET_KEY and contains sub claim."""
-    from auth import create_access_token
+    from auth import create_access_token, SECRET_KEY, ALGORITHM
     token = create_access_token({"sub": "42"})
-    payload = jwt.decode(token, TEST_SECRET, algorithms=[TEST_ALGORITHM])
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     assert payload["sub"] == "42"
 
 
 def test_create_access_token_contains_exp_claim():
     """JWT contains expiry claim."""
-    from auth import create_access_token
+    from auth import create_access_token, SECRET_KEY, ALGORITHM
     token = create_access_token({"sub": "1"})
-    payload = jwt.decode(token, TEST_SECRET, algorithms=[TEST_ALGORITHM])
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     assert "exp" in payload
 
 
