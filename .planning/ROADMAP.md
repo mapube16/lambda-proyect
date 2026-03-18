@@ -12,7 +12,7 @@ The project migrates a working pixel art office frontend from a hand-rolled orch
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Auth Infrastructure** - JWT register/login/guard so every subsequent feature has a user identity to isolate against
+- [x] **Phase 1: Auth Infrastructure** - JWT register/login/guard so every subsequent feature has a user identity to isolate against
 - [ ] **Phase 2: Hive Adapter and Tenant Isolation** - Replace `orchestrator.py` with `HiveAdapter`; refactor `ConnectionManager` to per-user keying; namespace SharedMemory; bridge GraphExecutor events to AgentState
 - [ ] **Phase 3: Prospecting Graph Definition** - Define the 9-node `prospector_b2b` GraphSpec; wire `personalidad.md` as system prompt with 10-variable interpolation; confirm URL input → run trigger
 - [ ] **Phase 4: Scraping Safety and Output Validation** - Sanitize scraped content before LLM injection; validate structured JSON output at every LLM node boundary
@@ -49,7 +49,12 @@ Plans:
   3. A `GraphExecutor` node event (e.g., node start) triggers a WebSocket message to the correct user with the mapped `AgentState` value (THINKING, TOOL_USE, WAITING, or IDLE)
   4. The pixel art office page loads and existing character animations still function after the migration
   5. `SharedMemory` is instantiated with `namespace=f"user_{user_id}"` — confirmed in code and verified no cross-tenant key collisions in a two-user test
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Wave 0: Clone aden-hive/hive into vendor/, install as editable package, create empty hive_adapter.py + hive_graph.py, write 11 xfail test stubs
+- [ ] 02-02-PLAN.md — Wave 1: Implement HiveAdapter + hive_graph.py; EventBus subscription; event→AgentState mapping; turn 11 xfail stubs green
+- [ ] 02-03-PLAN.md — Wave 2: Wire HiveAdapter into main.py; delete orchestrator.py; remove broadcast() from routes; visual sign-off checkpoint
 
 ### Phase 3: Prospecting Graph Definition
 **Goal**: The full 9-node `prospector_b2b` graph executes end-to-end against a real company URL with `personalidad.md` loaded as system prompt and 10 campaign variables interpolated
@@ -119,8 +124,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auth Infrastructure | 2/3 | In Progress|  |
-| 2. Hive Adapter and Tenant Isolation | 0/TBD | Not started | - |
+| 1. Auth Infrastructure | 3/3 | Complete | 2026-03-18 |
+| 2. Hive Adapter and Tenant Isolation | 0/3 | Not started | - |
 | 3. Prospecting Graph Definition | 0/TBD | Not started | - |
 | 4. Scraping Safety and Output Validation | 0/TBD | Not started | - |
 | 5. HITL Loop | 0/TBD | Not started | - |
