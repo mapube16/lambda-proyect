@@ -92,37 +92,37 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUTH-01 | Phase 1 | Pending |
-| AUTH-02 | Phase 1 | Pending |
-| AUTH-03 | Phase 1 | Pending |
-| HIVE-01 | Phase 1 | Pending |
-| HIVE-02 | Phase 1 | Pending |
-| HIVE-03 | Phase 1 | Pending |
-| HIVE-04 | Phase 1 | Pending |
-| HIVE-05 | Phase 1 | Pending |
-| PIPE-01 | Phase 2 | Pending |
-| PIPE-02 | Phase 2 | Pending |
-| PIPE-03 | Phase 2 | Pending |
-| PIPE-04 | Phase 2 | Pending |
-| PIPE-05 | Phase 2 | Pending |
-| HITL-01 | Phase 2 | Pending |
-| HITL-02 | Phase 2 | Pending |
-| HITL-03 | Phase 2 | Pending |
-| CONF-01 | Phase 3 | Pending |
-| CONF-02 | Phase 3 | Pending |
-| CONF-03 | Phase 3 | Pending |
-| LEAD-01 | Phase 3 | Pending |
-| LEAD-02 | Phase 3 | Pending |
-| LEAD-03 | Phase 3 | Pending |
-| VIZ-01 | Phase 3 | Pending |
-| VIZ-02 | Phase 3 | Pending |
-| VIZ-03 | Phase 3 | Pending |
+| AUTH-01 | Phase 1 — Auth Infrastructure | Pending |
+| AUTH-02 | Phase 1 — Auth Infrastructure | Pending |
+| AUTH-03 | Phase 1 — Auth Infrastructure | Pending |
+| HIVE-01 | Phase 2 — Hive Adapter and Tenant Isolation | Pending |
+| HIVE-02 | Phase 2 — Hive Adapter and Tenant Isolation | Pending |
+| HIVE-03 | Phase 2 — Hive Adapter and Tenant Isolation | Pending |
+| HIVE-04 | Phase 2 — Hive Adapter and Tenant Isolation | Pending |
+| HIVE-05 | Phase 2 — Hive Adapter and Tenant Isolation | Pending |
+| PIPE-01 | Phase 3 — Prospecting Graph Definition | Pending |
+| PIPE-02 | Phase 3 — Prospecting Graph Definition | Pending |
+| PIPE-05 | Phase 3 — Prospecting Graph Definition | Pending |
+| PIPE-03 | Phase 4 — Scraping Safety and Output Validation | Pending |
+| PIPE-04 | Phase 4 — Scraping Safety and Output Validation | Pending |
+| HITL-01 | Phase 5 — HITL Loop | Pending |
+| HITL-02 | Phase 5 — HITL Loop | Pending |
+| HITL-03 | Phase 5 — HITL Loop | Pending |
+| CONF-01 | Phase 6 — Campaign Configuration | Pending |
+| CONF-02 | Phase 6 — Campaign Configuration | Pending |
+| CONF-03 | Phase 6 — Campaign Configuration | Pending |
+| LEAD-01 | Phase 7 — Lead Dashboard | Pending |
+| LEAD-02 | Phase 7 — Lead Dashboard | Pending |
+| LEAD-03 | Phase 7 — Lead Dashboard | Pending |
+| VIZ-01 | Phase 8 — Real-Time Visualization | Pending |
+| VIZ-02 | Phase 8 — Real-Time Visualization | Pending |
+| VIZ-03 | Phase 8 — Real-Time Visualization | Pending |
 
 **Coverage:**
 - v1 requirements: 25 total
 - Mapped to phases: 25
-- Unmapped: 0 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-17 after initial definition*
+*Last updated: 2026-03-17 after roadmap creation — traceability updated to 8-phase structure*
