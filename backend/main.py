@@ -7,25 +7,32 @@ import json
 import asyncio
 from typing import Dict, Optional
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, HTTPException, Depends, Query, status
-from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+load_dotenv()  # Must be before any module that reads env vars at import time
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, HTTPException, Depends, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from pymongo.errors import DuplicateKeyError
 from jose import JWTError, jwt
 from auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, SECRET_KEY, ALGORITHM
 )
-from database import init_db, get_user_by_email, create_user
+from database import (
+    init_db, get_user_by_email, create_user,
+    save_campaign, get_active_campaign,
+    create_run, update_run_status, get_runs_by_user,
+    save_lead, get_leads_by_run, get_leads_by_user, update_lead_hitl,
+)
 from models import (
     Agent, AgentState, AgentRole,
     CreateAgentRequest, TaskRequest, AgentResponse,
     UserCreate, Token
 )
 from orchestrator import HiveOrchestrator
-
-load_dotenv()
+from prospector import run_prospect
+from onboarding import chat_turn
 
 # WebSocket connection manager — keyed by user_id for tenant isolation
 class ConnectionManager:
@@ -93,7 +100,7 @@ app = FastAPI(
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
+    allow_origins=["http://localhost:5173", "http://localhost:5176", "http://localhost:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -272,6 +279,196 @@ async def websocket_endpoint(
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
+
+
+# ============ Prospecting ============
+
+from pydantic import BaseModel as _BaseModel
+
+class ProspectRequest(_BaseModel):
+    campaign: dict = {}
+    max_results: int = 20
+
+
+@app.post("/api/prospect")
+async def prospect(
+    request: ProspectRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Run B2B prospecting pipeline.
+    Agents discover companies via web search, scrape and analyze each one.
+    Results are broadcast via WebSocket as they arrive and persisted to MongoDB.
+    """
+    user_id = str(current_user["user_id"])
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
+
+    # Use active campaign from DB if none provided in request
+    campaign = request.campaign
+    if not campaign:
+        active = await get_active_campaign(user_id)
+        if active:
+            # Strip internal DB fields before passing to pipeline
+            campaign = {k: v for k, v in active.items()
+                        if k not in ("_id", "user_id", "is_active", "created_at")}
+
+    # Create a run document before launching the pipeline
+    campaign_id = active["_id"] if (not request.campaign and active) else ""
+    run_id = await create_run(
+        user_id=user_id,
+        campaign_id=campaign_id,
+        max_results=min(request.max_results, 50),
+    )
+
+    async def _run_and_finalize():
+        try:
+            result = await run_prospect(
+                campaign=campaign,
+                openai_api_key=api_key,
+                max_results=min(request.max_results, 50),
+                orchestrator=orchestrator,
+                send_to_user=manager.send_to_user,
+                user_id=user_id,
+                run_id=run_id,
+                save_lead=save_lead,
+            )
+            total_found = result.get("total_analyzed", 0)
+            total_approved = result.get("total_approved", 0)
+            await update_run_status(
+                run_id,
+                status="complete",
+                total_found=total_found,
+                total_approved=total_approved,
+            )
+        except Exception as exc:
+            print(f"[prospect] pipeline error: {exc}")
+            await update_run_status(run_id, status="error")
+
+    asyncio.create_task(_run_and_finalize())
+
+    return {"status": "running", "run_id": run_id, "message": "Campaña iniciada — los agentes están buscando empresas"}
+
+
+# ============ Onboarding Chat ============
+
+class ChatRequest(_BaseModel):
+    messages: list[dict]  # [{role: "user"|"assistant", content: "..."}]
+
+
+@app.post("/api/chat")
+async def chat(
+    request: ChatRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Conversational campaign configurator.
+    Streams one assistant turn. When all 8 variables are collected,
+    the reply contains CAMPAIGN_READY: {json}.
+    Auto-saves the campaign to MongoDB when CAMPAIGN_READY is detected.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
+
+    user_id = str(current_user["user_id"])
+    reply = await chat_turn(request.messages, api_key)
+
+    # Auto-save campaign when CAMPAIGN_READY is detected in the reply
+    if "CAMPAIGN_READY:" in reply:
+        try:
+            marker = "CAMPAIGN_READY:"
+            idx = reply.index(marker) + len(marker)
+            # Extract the JSON blob that follows the marker
+            raw_json = reply[idx:].strip()
+            # Handle potential trailing text after the JSON object
+            brace_start = raw_json.index("{")
+            brace_end = raw_json.rindex("}") + 1
+            campaign_data = json.loads(raw_json[brace_start:brace_end])
+            await save_campaign(user_id, campaign_data)
+        except Exception as e:
+            # Non-fatal: log and continue
+            print(f"[chat] Failed to auto-save campaign: {e}")
+
+    return {"reply": reply}
+
+
+# ============ Campaigns ============
+
+@app.post("/api/campaigns")
+async def save_campaign_endpoint(
+    campaign: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Save/update the active campaign for the current user.
+    Accepts the 8 campaign vars plus optional llm_analista and llm_redactor.
+    Defaults: llm_analista='openrouter/anthropic/claude-haiku-3',
+              llm_redactor='openrouter/openai/gpt-4o-mini'.
+    """
+    user_id = str(current_user["user_id"])
+    campaign.setdefault("llm_analista", "openrouter/anthropic/claude-haiku-3")
+    campaign.setdefault("llm_redactor", "openrouter/openai/gpt-4o-mini")
+    campaign_id = await save_campaign(user_id, campaign)
+    return {"campaign_id": campaign_id}
+
+
+@app.get("/api/campaigns/active")
+async def get_campaign_endpoint(current_user: dict = Depends(get_current_user)):
+    """Get active campaign for current user."""
+    user_id = str(current_user["user_id"])
+    campaign = await get_active_campaign(user_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="No active campaign")
+    return campaign
+
+
+# ============ Runs ============
+
+@app.get("/api/runs")
+async def get_runs(current_user: dict = Depends(get_current_user)):
+    """Get run history for current user."""
+    user_id = str(current_user["user_id"])
+    runs = await get_runs_by_user(user_id)
+    return runs
+
+
+@app.get("/api/runs/{run_id}/leads")
+async def get_run_leads(run_id: str, current_user: dict = Depends(get_current_user)):
+    """Get leads for a specific run (tenant-safe)."""
+    user_id = str(current_user["user_id"])
+    leads = await get_leads_by_run(run_id, user_id)
+    return leads
+
+
+# ============ Leads HITL ============
+
+@app.patch("/api/leads/{lead_id}/approve")
+async def approve_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Approve a lead (HITL decision)."""
+    user_id = str(current_user["user_id"])
+    updated = await update_lead_hitl(lead_id, user_id, "approved")
+    if not updated:
+        raise HTTPException(status_code=404, detail="Lead not found or not yours")
+    return {"status": "approved", "lead_id": lead_id}
+
+
+@app.patch("/api/leads/{lead_id}/reject")
+async def reject_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Reject a lead (HITL decision)."""
+    user_id = str(current_user["user_id"])
+    updated = await update_lead_hitl(lead_id, user_id, "rejected")
+    if not updated:
+        raise HTTPException(status_code=404, detail="Lead not found or not yours")
+    return {"status": "rejected", "lead_id": lead_id}
+
+
+@app.get("/api/leads")
+async def get_user_leads(current_user: dict = Depends(get_current_user)):
+    """Get all leads for current user (recent first)."""
+    user_id = str(current_user["user_id"])
+    leads = await get_leads_by_user(user_id)
+    return leads
 
 
 # ============ Demo Mode ============
