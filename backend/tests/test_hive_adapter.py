@@ -1,81 +1,172 @@
 """
 Phase 2 test suite — HiveAdapter, tenant isolation, event mapping.
-Wave 0: All tests are strict xfail (scaffold). Turn green in Plans 02 and 03.
+Plan 02: all 11 tests turn green.
 """
+import ast
+import asyncio
 import pytest
+from pathlib import Path
+from unittest.mock import MagicMock
 
 
 # ─── HIVE-01: Framework installs and imports cleanly ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="HIVE-01: framework not yet imported in hive_adapter")
 async def test_hive_import_ok():
     """AgentRunner imports without ImportError."""
-    assert False, "HIVE-01: from framework.runner.runner import AgentRunner — not yet verified"
+    from framework.runner.runner import AgentRunner  # noqa: F401
 
 
-@pytest.mark.xfail(strict=True, reason="HIVE-01: AgentRunner not yet instantiated")
 async def test_agent_runner_instantiates():
     """AgentRunner(mock_mode=True) constructs without error."""
-    assert False, "HIVE-01: AgentRunner instantiation — not yet implemented"
+    from framework.runner.runner import AgentRunner
+    from hive_graph import build_stub_graph, build_stub_goal
+    runner = AgentRunner(
+        agent_path=Path("/tmp/hive_stub/test_user"),
+        graph=build_stub_graph(),
+        goal=build_stub_goal(),
+        mock_mode=True,
+        interactive=False,
+        skip_credential_validation=True,
+    )
+    assert runner is not None
 
 
 # ─── HIVE-02: HiveAdapter is the only seam ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="HIVE-02: hive_adapter.py not yet implemented")
 async def test_hive_adapter_is_only_seam():
-    """main.py contains zero 'from framework' imports."""
-    assert False, "HIVE-02: seam enforcement — hive_adapter.py not yet implemented"
+    """main.py contains zero 'from framework' imports (static AST check)."""
+    main_source = Path("main.py").read_text()
+    tree = ast.parse(main_source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("framework"), (
+                f"main.py has forbidden import: from {node.module} — "
+                "all framework imports must be in hive_adapter.py"
+            )
 
 
-@pytest.mark.xfail(strict=True, reason="HIVE-02: HiveAdapter.start_run() not yet implemented")
 async def test_start_run_no_error():
     """HiveAdapter.start_run(user_id, inputs) completes without raising."""
-    assert False, "HIVE-02: start_run — HiveAdapter not yet implemented"
+    from hive_adapter import HiveAdapter
+    messages_sent = []
+
+    async def mock_send(user_id: str, message: dict):
+        messages_sent.append((user_id, message))
+
+    adapter = HiveAdapter(send_to_user_callback=mock_send)
+    run_id = await adapter.start_run("test_user", {"empresa_url": "https://example.com"})
+    assert run_id is not None
+    await asyncio.sleep(0.05)  # let background task start
 
 
 # ─── HIVE-03: WebSocket routing by user_id ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="HIVE-03: WS isolation not yet implemented")
 async def test_ws_isolation_user_a_not_b():
     """Event for user_a is NOT delivered to user_b's WebSocket connection."""
-    assert False, "HIVE-03: WS isolation — HiveAdapter not yet wired to ConnectionManager"
+    from hive_adapter import HiveAdapter
+    from framework.runtime.event_bus import EventType
+
+    user_a_received = []
+    user_b_received = []
+
+    async def mock_send(user_id: str, message: dict):
+        if user_id == "user_a":
+            user_a_received.append(message)
+        elif user_id == "user_b":
+            user_b_received.append(message)
+
+    adapter = HiveAdapter(send_to_user_callback=mock_send)
+    handler_a = adapter._make_event_handler("user_a")
+    fake_event = MagicMock()
+    fake_event.type = EventType.NODE_LOOP_STARTED
+    fake_event.node_id = "stub_start"
+    await handler_a(fake_event)
+
+    assert len(user_b_received) == 0, "user_b must receive NO messages from user_a's event"
+    assert len(user_a_received) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="HIVE-03: WS delivery not yet implemented")
 async def test_ws_delivery_correct_user():
     """Event for user_a IS delivered to user_a's WebSocket connection."""
-    assert False, "HIVE-03: WS delivery — HiveAdapter not yet wired to ConnectionManager"
+    from hive_adapter import HiveAdapter
+    from framework.runtime.event_bus import EventType
+
+    received = []
+
+    async def mock_send(user_id: str, message: dict):
+        received.append((user_id, message))
+
+    adapter = HiveAdapter(send_to_user_callback=mock_send)
+    handler_a = adapter._make_event_handler("user_a")
+    fake_event = MagicMock()
+    fake_event.type = EventType.NODE_LOOP_STARTED
+    fake_event.node_id = "stub_start"
+    await handler_a(fake_event)
+
+    assert len(received) == 1
+    assert received[0][0] == "user_a"
+    msg = received[0][1]
+    assert msg["type"] == "agent_update"
+    assert msg["state"] == "thinking"
 
 
 # ─── HIVE-04: Per-run SharedMemory isolation ──────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="HIVE-04: SharedMemory isolation not yet implemented")
 async def test_shared_memory_per_run_isolation():
-    """Two concurrent AgentRunner instances have separate SharedMemory objects."""
-    assert False, "HIVE-04: SharedMemory isolation — HiveAdapter not yet implemented"
+    """Two start_run() calls create two separate AgentRunner instances."""
+    from hive_adapter import HiveAdapter
+
+    async def mock_send(user_id: str, message: dict):
+        pass
+
+    adapter = HiveAdapter(send_to_user_callback=mock_send)
+    await adapter.start_run("user_a", {})
+    await adapter.start_run("user_b", {})
+
+    runner_a = adapter._runners.get("user_a")
+    runner_b = adapter._runners.get("user_b")
+    assert runner_a is not None
+    assert runner_b is not None
+    assert runner_a is not runner_b, "Each user must have a separate AgentRunner instance"
 
 
 # ─── HIVE-05: EventBus events map to AgentState ───────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="HIVE-05: event mapping not yet implemented")
 async def test_event_maps_to_thinking():
-    """NODE_LOOP_STARTED event produces AgentState.THINKING WS message."""
-    assert False, "HIVE-05: NODE_LOOP_STARTED → THINKING — not yet implemented"
+    """NODE_LOOP_STARTED event produces AgentState.THINKING."""
+    from hive_adapter import _event_to_agent_state
+    from framework.runtime.event_bus import EventType
+    from models import AgentState
+    fake = MagicMock()
+    fake.type = EventType.NODE_LOOP_STARTED
+    assert _event_to_agent_state(fake) == AgentState.THINKING
 
 
-@pytest.mark.xfail(strict=True, reason="HIVE-05: event mapping not yet implemented")
 async def test_event_maps_to_tool_use():
-    """TOOL_CALL_STARTED event produces AgentState.TOOL_USE WS message."""
-    assert False, "HIVE-05: TOOL_CALL_STARTED → TOOL_USE — not yet implemented"
+    """TOOL_CALL_STARTED event produces AgentState.TOOL_USE."""
+    from hive_adapter import _event_to_agent_state
+    from framework.runtime.event_bus import EventType
+    from models import AgentState
+    fake = MagicMock()
+    fake.type = EventType.TOOL_CALL_STARTED
+    assert _event_to_agent_state(fake) == AgentState.TOOL_USE
 
 
-@pytest.mark.xfail(strict=True, reason="HIVE-05: event mapping not yet implemented")
 async def test_event_maps_to_waiting():
-    """NODE_LOOP_COMPLETED event produces AgentState.WAITING WS message."""
-    assert False, "HIVE-05: NODE_LOOP_COMPLETED → WAITING — not yet implemented"
+    """NODE_LOOP_COMPLETED event produces AgentState.WAITING."""
+    from hive_adapter import _event_to_agent_state
+    from framework.runtime.event_bus import EventType
+    from models import AgentState
+    fake = MagicMock()
+    fake.type = EventType.NODE_LOOP_COMPLETED
+    assert _event_to_agent_state(fake) == AgentState.WAITING
 
 
-@pytest.mark.xfail(strict=True, reason="HIVE-05: HITL event mapping not yet implemented")
 async def test_event_maps_to_waiting_hitl():
-    """CLIENT_INPUT_REQUESTED event produces AgentState.WAITING WS message."""
-    assert False, "HIVE-05: CLIENT_INPUT_REQUESTED → WAITING — not yet implemented"
+    """CLIENT_INPUT_REQUESTED event produces AgentState.WAITING."""
+    from hive_adapter import _event_to_agent_state
+    from framework.runtime.event_bus import EventType
+    from models import AgentState
+    fake = MagicMock()
+    fake.type = EventType.CLIENT_INPUT_REQUESTED
+    assert _event_to_agent_state(fake) == AgentState.WAITING

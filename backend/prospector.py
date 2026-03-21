@@ -54,6 +54,38 @@ BLOCKED_DOMAINS = {
     "reddit.com", "tripadvisor", "yelp.com", "google.com", "maps.google",
 }
 
+LOW_QUALITY_DISCOVERY_DOMAINS = {
+    "rappi.com", "ubereats.com", "restaurantguru.com", "minube.com", "paginasamarillas.com.co",
+    "consultaamarillas.com", "opcionempleo.com.co", "tiendeo.com.co", "tiktok.com",
+    "yellowpages.ar", "carta.menu", "nexdu.com", "imigra.net", "wokiapp.com",
+    "archivoespana.com", "colombiaguide.co", "polomap.com", "fincasturisticasdelquindio.com",
+}
+
+LOW_QUALITY_PATH_MARKERS = (
+    "/restaurantes", "/restaurant", "/delivery", "/list", "/directorio", "/empleo",
+    "/discover", "/noticias/", "/catalogo", "/tiendas/", "/metro/", "/phone-",
+)
+
+
+def _is_low_quality_candidate(url: str, title: str = "") -> bool:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower().replace("www.", "")
+    path = (parsed.path or "").lower()
+    title_l = (title or "").lower()
+
+    if any(host.endswith(d) for d in LOW_QUALITY_DISCOVERY_DOMAINS):
+        return True
+    if any(marker in path for marker in LOW_QUALITY_PATH_MARKERS):
+        return True
+    if any(token in title_l for token in (
+        "páginas amarillas", "consulta amarillas", "top restaurantes", "trabajo", "ofertas de empleo",
+        "delivery", "domicilio", "directorio", "listado", "mejores restaurantes",
+    )):
+        return True
+    return False
+
 
 # ── Discovery: Google Maps Places API ────────────────────────────────────────
 
@@ -225,28 +257,59 @@ def _discover_ddg_multi(industria: str, ciudad: str, max_results: int) -> list[d
 
 
 async def discover_companies(
-    industria: str, ciudad: str, max_results: int, gmaps_key: str = ""
+    industria: str,
+    ciudad: str,
+    max_results: int,
+    gmaps_key: str = "",
+    excluded_domains: set[str] | None = None,
+    use_secop: bool = False,
 ) -> list[dict]:
     """
     Multi-source discovery:
     1. Google Maps (local businesses with contact info)
     2. Bing web search (companies with web presence)
-    3. DuckDuckGo (fallback)
+    3. SECOP II (Colombian government contractors) — optional, enabled via use_secop=True
+    4. DuckDuckGo (fallback)
     Deduplicates by domain and merges up to max_results.
     """
     from urllib.parse import urlparse
 
     seen_domains: set[str] = set()
+    excluded_domains = {d.lower().strip() for d in (excluded_domains or set()) if d}
     merged: list[dict] = []
+    skipped_history = 0
+    skipped_low_quality = 0
 
     def add(items: list[dict]):
+        nonlocal skipped_history, skipped_low_quality
         for item in items:
             if len(merged) >= max_results:
                 return
             domain = urlparse(item["url"]).netloc.replace("www.", "")
+            if not domain:
+                continue
+            if _is_low_quality_candidate(item.get("url", ""), item.get("title", "")):
+                skipped_low_quality += 1
+                continue
+            if domain in excluded_domains:
+                skipped_history += 1
+                continue
             if domain and domain not in seen_domains:
                 seen_domains.add(domain)
                 merged.append(item)
+
+    def add_secop(items: list[dict]):
+        """Add SECOP companies (may not have URLs yet — kept as-is for URL resolution step)."""
+        nonlocal skipped_history
+        seen_nits: set[str] = set()
+        for item in items:
+            if len(merged) >= max_results:
+                return
+            nit = item.get("nit", "")
+            if nit in seen_nits:
+                continue
+            seen_nits.add(nit)
+            merged.append(item)
 
     # Run Google Maps + Bing in parallel
     per_source = max(10, max_results // 2)
@@ -267,7 +330,29 @@ async def discover_companies(
     # Prefer Google Maps (has phone/address) then supplement with Bing
     add(gmaps_results)
     add(bing_results)
-    print(f"[Discovery] GMaps={len(gmaps_results)} Bing={len(bing_results)} → {len(merged)} únicos")
+    print(
+        f"[Discovery] GMaps={len(gmaps_results)} Bing={len(bing_results)} → {len(merged)} únicos "
+        f"(saltados_historial={skipped_history}, saltados_baja_calidad={skipped_low_quality})"
+    )
+
+    # SECOP source: government contractors
+    if use_secop and len(merged) < max_results:
+        from secop import discover_companies_secop, resolve_secop_urls
+        secop_needed = max_results - len(merged)
+        secop_raw = await discover_companies_secop(industria, ciudad, secop_needed * 2)
+        # Resolve URLs for SECOP companies before adding
+        secop_resolved = await resolve_secop_urls(secop_raw, max_concurrent=3)
+        add_secop(secop_resolved[:secop_needed])
+        print(f"[Discovery] SECOP: {len(secop_raw)} raw → {len(secop_resolved)} resueltas → {len(merged)} total")
+
+    # If exclusions removed many companies, try supplementary DDG search to refill.
+    if len(merged) < max_results:
+        missing = max_results - len(merged)
+        if missing > 0:
+            loop = asyncio.get_event_loop()
+            ddg_extra = await loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, min(max_results * 3, max_results + missing * 2))
+            add(ddg_extra)
+            print(f"[Discovery] Supplementary DDG refill: +{len(ddg_extra)} raw → {len(merged)} final")
 
     # DDG fallback if still empty
     if not merged:
@@ -283,21 +368,94 @@ async def discover_companies(
 # ── Scraping ──────────────────────────────────────────────────────────────────
 
 async def scrape_url(url: str, timeout: int = 12) -> str:
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
-    }
+    from urllib.parse import urlparse, urlunparse
+
+    ua_profiles = [
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/123.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
+        },
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) "
+                "Gecko/20100101 Firefox/124.0"
+            ),
+            "Accept-Language": "es-419,es;q=0.9,en;q=0.8",
+        },
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+            ),
+            "Accept-Language": "es-ES,es;q=0.9,en;q=0.7",
+        },
+    ]
+
+    def build_candidates(raw_url: str) -> list[str]:
+        value = (raw_url or "").strip()
+        if not value:
+            return []
+        if not value.startswith(("http://", "https://")):
+            value = f"https://{value}"
+
+        parsed = urlparse(value)
+        host = parsed.netloc
+        if not host:
+            return [value]
+
+        host_variants = [host]
+        bare_host = host[4:] if host.startswith("www.") else host
+        if bare_host not in host_variants:
+            host_variants.append(bare_host)
+        www_host = f"www.{bare_host}"
+        if www_host not in host_variants:
+            host_variants.append(www_host)
+
+        schemes = [parsed.scheme or "https", "https", "http"]
+        path_variants = [parsed.path or "/"]
+        if (parsed.path or "/") != "/":
+            path_variants.append("/")
+
+        candidates: list[str] = []
+        for scheme in schemes:
+            for h in host_variants:
+                for p in path_variants:
+                    candidate = urlunparse((scheme, h, p, "", "", ""))
+                    if candidate not in candidates:
+                        candidates.append(candidate)
+        return candidates
+
+    html = ""
+    last_error = "no response"
+    candidates = build_candidates(url)
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            html = resp.text
+            for candidate in candidates:
+                for headers in ua_profiles:
+                    try:
+                        resp = await client.get(candidate, headers=headers)
+                    except Exception as e:
+                        last_error = f"{candidate}: {e}"
+                        continue
+
+                    if resp.status_code >= 400:
+                        last_error = f"{candidate}: HTTP {resp.status_code}"
+                        continue
+
+                    html = resp.text or ""
+                    if html.strip():
+                        break
+                if html.strip():
+                    break
     except Exception as e:
-        return f"[SCRAPING_ERROR: {e}]"
+        last_error = str(e)
+
+    if not html.strip():
+        return f"[SCRAPING_ERROR: {last_error}]"
 
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header",
@@ -310,11 +468,11 @@ async def scrape_url(url: str, timeout: int = 12) -> str:
 
 # ── Prompt building ───────────────────────────────────────────────────────────
 
-def _build_prompt(url: str, scraped: str, campaign: dict) -> str:
+def _build_prompt(url: str, scraped: str, campaign: dict, override_template: str = "") -> str:
     variables = {**DEFAULT_CAMPAIGN, **campaign,
                  "input_empresa_url": url,
                  "contenido_scrapeado": scraped}
-    prompt = _SYSTEM_PROMPT_TEMPLATE
+    prompt = override_template if override_template.strip() else _SYSTEM_PROMPT_TEMPLATE
     for key, value in variables.items():
         prompt = prompt.replace("{{" + key + "}}", str(value))
     return prompt
@@ -381,7 +539,7 @@ REGLAS DE SCORING (máx 100 pts):
 VETOS AUTOMÁTICOS (rechazo inmediato):
 - tamano = "micro" → MICRO_BUSINESS_LOW_BUDGET
 - es_sector_correcto = false → WRONG_SECTOR_OR_NO_DATA
-- Score < 70 → LOW_SCORE_QUALIFICATION
+- Score < 60 → LOW_SCORE_QUALIFICATION
 ═══════════════════════════════════════
 
 CAMPAÑA:
@@ -405,7 +563,7 @@ INSTRUCCIONES DE CORREO (solo si aprueba):
 ═══════════════════════════════════════
 
 Si RECHAZADO → responde SOLO con este JSON exacto:
-{{"system_state": "REJECTED_BY_AI", "empresa": "nombre", "score": 0, "motivo_descalificacion": "CODIGO", "evidencia_encontrada": "frase corta específica"}}
+{{"system_state": "REJECTED_BY_AI", "empresa": "nombre", "score": 0, "motivo_descalificacion": "CODIGO", "evidencia_encontrada": "frase corta específica", "resumen_empresa": "a qué se dedica en 1 línea"}}
 
 Si APROBADO → responde SOLO con este JSON exacto:
 {{"system_state": "SUCCESS_READY_FOR_REVIEW", "empresa": "nombre", "score": 85, "es_visitable_zona_objetivo": true, "decisor": {{"nombre": "nombre o null", "cargo": "cargo", "email": "email o null"}}, "datos_tecnicos": {{"tech_stack": "software detectado o null", "perfil": "A_REZAGO o B_FRICCION"}}, "borradores": {{"email_asuntos": ["Asunto directo y específico 1", "Asunto alternativo 2"], "email_cuerpo": "Correo completo. Usa \\n\\n entre párrafos."}}}}
@@ -430,6 +588,102 @@ def _parse_json_safe(raw: str) -> dict | None:
             return None
 
 
+def _normalize_openai_model_name(model_name: str, fallback: str = "gpt-4o-mini") -> str:
+    value = str(model_name or "").strip()
+    if not value:
+        return fallback
+    if value.startswith("openai/"):
+        return value.split("/", 1)[1]
+    if value.startswith("openrouter/"):
+        candidate = value.split("/", 1)[1]
+        if candidate.startswith("gpt-"):
+            return candidate
+        return fallback
+    if value.startswith(("anthropic/", "google/", "meta/")):
+        return fallback
+    return value
+
+
+def _first_text(*values) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _enrich_rejection_payload(result_json: dict, analysis: dict, company: dict) -> dict:
+    reason_labels = {
+        "MICRO_BUSINESS_LOW_BUDGET": "Empresa demasiado pequeña o con baja señal de presupuesto",
+        "LOW_SCORE_QUALIFICATION": "No alcanzó el puntaje mínimo de calificación",
+        "WRONG_SECTOR_OR_NO_DATA": "No coincide con la industria objetivo o no hay datos suficientes",
+        "SCRAPING_BLOCKED": "No fue posible acceder al sitio web para evaluarlo",
+        "KILL_DIRECT_COMPETITOR": "Parece ser competidor directo",
+        "KILL_INFORMAL_BUSINESS": "Negocio informal o sin señales B2B confiables",
+        "NO_B2B_PROFILE": "No se detectó un perfil B2B claro",
+        "KILL_TOO_SMALL": "Tamaño insuficiente para el perfil objetivo",
+        "NO_CLEAR_OPERATIONAL_PAIN": "No se detectó dolor operativo relevante",
+        "NO_DECISION_MAKER_CONTACT": "No se encontró contacto de decisor",
+        "PARSE_ERROR": "La respuesta del motor no fue parseable y se descartó por seguridad",
+    }
+
+    reason_code = _first_text(
+        result_json.get("motivo_descalificacion"),
+        result_json.get("motivo"),
+    )
+
+    if not reason_code:
+        if analysis.get("es_sector_correcto") is False:
+            reason_code = "WRONG_SECTOR_OR_NO_DATA"
+        elif str(analysis.get("tamano_estimado") or "").strip().lower() == "micro":
+            reason_code = "MICRO_BUSINESS_LOW_BUDGET"
+        elif not bool(analysis.get("sintomas_de_dolor")):
+            reason_code = "NO_CLEAR_OPERATIONAL_PAIN"
+        elif not _first_text((analysis.get("decisor") or {}).get("email")):
+            reason_code = "NO_DECISION_MAKER_CONTACT"
+        else:
+            reason_code = "LOW_SCORE_QUALIFICATION"
+
+    evidence = _first_text(
+        result_json.get("evidencia_encontrada"),
+        result_json.get("evidencia"),
+        analysis.get("razon_sector"),
+        analysis.get("razon_tamano"),
+        analysis.get("evidencia_dolor"),
+        analysis.get("analisis_previo"),
+        result_json.get("detalle"),
+    )
+
+    if not evidence:
+        company_name = _first_text(result_json.get("empresa"), analysis.get("nombre_empresa"), company.get("title"))
+        evidence = f"{company_name}: no se encontraron señales suficientes para justificar contacto comercial."
+
+    reason_text = reason_labels.get(reason_code, reason_code)
+
+    result_json["motivo_descalificacion"] = reason_code
+    result_json["motivo_descalificacion_texto"] = reason_text
+    result_json["evidencia_encontrada"] = evidence
+    result_json["resumen_empresa"] = _first_text(
+        result_json.get("resumen_empresa"),
+        analysis.get("analisis_previo"),
+        analysis.get("datos_extra"),
+        f"{_first_text(analysis.get('nombre_empresa'), company.get('title'))}: perfil detectado con información limitada.",
+    )
+    result_json["tamano_estimado"] = _first_text(
+        result_json.get("tamano_estimado"),
+        analysis.get("tamano_estimado"),
+    )
+    result_json["senal_dolor"] = _first_text(
+        result_json.get("senal_dolor"),
+        analysis.get("evidencia_dolor"),
+    )
+    result_json.setdefault("score", 0)
+    result_json.setdefault("empresa", _first_text(analysis.get("nombre_empresa"), company.get("title")))
+    return result_json
+
+
 # ── Multi-agent analysis pipeline ─────────────────────────────────────────────
 
 async def analyze_company(
@@ -437,6 +691,7 @@ async def analyze_company(
     campaign: dict,
     client: AsyncOpenAI,
     on_stage: callable = None,   # async callback(stage: str, status: str)
+    personality_prompt: str = "",  # client-specific analyst prompt (from Queen onboarding)
 ) -> dict:
     """
     3-stage multi-agent pipeline per company:
@@ -459,20 +714,54 @@ async def analyze_company(
             await on_stage(name, status)
 
     # ── Stage 1: Scraper ──────────────────────────────────────────────────────
-    await stage("scraper", f"Scrapeando {company['title'][:35]}...")
-    scraped = await scrape_url(url)
-    if scraped.startswith("[SCRAPING_ERROR"):
-        await stage("scraper", f"✗ Error: {company['title'][:30]}")
-        return {**base, "status": "error", "error": scraped}
+    secop_context = company.get("secop_context", "")
+    is_secop = company.get("source") == "secop"
+    is_secop_fallback_url = company.get("url_is_secop_fallback", False)
+
+    if is_secop and is_secop_fallback_url:
+        # No real URL found — use SECOP data as the scraped content directly
+        await stage("scraper", f"✓ Datos SECOP — {company['title'][:30]}")
+        scraped = secop_context
+    else:
+        await stage("scraper", f"Scrapeando {company['title'][:35]}...")
+        scraped = await scrape_url(url)
+        if scraped.startswith("[SCRAPING_ERROR"):
+            if secop_context:
+                # SECOP companies can fall back to their government data
+                await stage("scraper", f"✓ Fallback SECOP — {company['title'][:30]}")
+                scraped = secop_context
+            else:
+                await stage("scraper", f"✗ Acceso bloqueado: {company['title'][:30]}")
+                reason = scraped.replace("[SCRAPING_ERROR:", "").rstrip("]").strip()
+                rejected_json = {
+                    "system_state": "REJECTED_BY_AI",
+                    "empresa": company.get("title", ""),
+                    "score": 0,
+                    "motivo_descalificacion": "SCRAPING_BLOCKED",
+                    "motivo_descalificacion_texto": "No fue posible acceder al sitio web para evaluar esta empresa",
+                    "evidencia_encontrada": reason or "El sitio devolvió error al intentar extraer contenido",
+                    "resumen_empresa": f"{company.get('title', '')}: se detectó como posible candidato, pero no se pudo obtener contenido verificable del sitio.",
+                    "fuentes_consultadas": [url],
+                }
+                return {**base, "status": "rejected", "markdown": None, "json_payload": rejected_json}
+        # Prepend SECOP context if available (enriches analyst even when URL scraped OK)
+        if secop_context:
+            scraped = f"{secop_context}\n\n---\n\nContenido web:\n{scraped}"
 
     await stage("scraper", f"✓ {len(scraped)} chars — {company['title'][:30]}")
 
     # ── Stage 2: Analista B2B ─────────────────────────────────────────────────
     await stage("analista", f"Analizando perfil: {company['title'][:30]}...")
+    analista_model = _normalize_openai_model_name(merged.get("llm_analista", ""), "gpt-4o-mini")
+    if personality_prompt and personality_prompt.strip():
+        # Use client-specific analyst prompt from Queen onboarding
+        analista_content = _build_prompt(url, scraped, merged, override_template=personality_prompt)
+    else:
+        analista_content = _analista_prompt(url, scraped, merged)
     try:
         r1 = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": _analista_prompt(url, scraped, merged)}],
+            model=analista_model,
+            messages=[{"role": "user", "content": analista_content}],
             temperature=0.15,
             max_tokens=600,
         )
@@ -489,9 +778,10 @@ async def analyze_company(
 
     # ── Stage 3: Motor de Scoring + Redactor ──────────────────────────────────
     await stage("redactor", f"Evaluando y calificando: {nombre[:30]}...")
+    redactor_model = _normalize_openai_model_name(merged.get("llm_redactor", ""), "gpt-4o-mini")
     try:
         r2 = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=redactor_model,
             messages=[{"role": "user", "content": _motor_scoring_prompt(analysis, merged)}],
             temperature=0.15,
             max_tokens=1200,
@@ -505,6 +795,9 @@ async def analyze_company(
         return {**base, "status": "error", "error": str(e)}
 
     is_approved = result_json.get("system_state") == "SUCCESS_READY_FOR_REVIEW"
+    if not is_approved:
+        result_json = _enrich_rejection_payload(result_json, analysis, company)
+    result_json.setdefault("fuentes_consultadas", [url])
     score = result_json.get("score", 0) if is_approved else 0
     status_label = f"✓ Aprobado {score}pts — {nombre[:25]}" if is_approved else f"✗ Descartado — {nombre[:25]}"
     await stage("redactor", status_label)
@@ -566,7 +859,8 @@ async def run_prospect(
                  status=f"{source_label}: {merged['industria_objetivo']} en {merged['ciudad_objetivo']}")
 
     companies = await discover_companies(
-        merged["industria_objetivo"], merged["ciudad_objetivo"], max_results, gmaps_key
+        merged["industria_objetivo"], merged["ciudad_objetivo"], max_results, gmaps_key,
+        use_secop=bool(merged.get("use_secop", False)),
     )
 
     if not companies:
@@ -611,13 +905,12 @@ async def run_prospect(
             result["index"] = i
             result["total"] = len(companies)
             completed += 1
-            await ws({"type": "lead_result", **result})
 
-            # Persist lead to MongoDB if callback provided
+            # Persist FIRST — include lead_id in WebSocket message
             if save_lead and run_id:
                 json_payload = result.get("json_payload") or {}
                 try:
-                    await save_lead(run_id, user_id, {
+                    lead_id = await save_lead(run_id, user_id, {
                         "company_name": company.get("title", ""),
                         "url": result.get("url", company.get("url", "")),
                         "phone": company.get("phone", ""),
@@ -627,8 +920,11 @@ async def run_prospect(
                         "expediente_markdown": result.get("markdown"),
                         "expediente_json": json_payload,
                     })
+                    result["lead_id"] = lead_id  # MongoDB _id — frontend uses this for HITL
                 except Exception as _e:
                     print(f"[prospector] save_lead error: {_e}")
+
+            await ws({"type": "lead_result", **result})
 
             return result
 

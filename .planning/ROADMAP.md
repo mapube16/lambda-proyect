@@ -117,18 +117,76 @@ Plans:
   3. When a pipeline error occurs (scraping failure, LLM timeout), the character displays an error state and the office UI shows the error message — the screen does not go blank or crash
 **Plans**: TBD
 
+---
+
+## Phase 9: Client RAG + Intelligent Onboarding
+**Goal**: Staff can onboard a new client by uploading any documentation (PDFs, brochures, web links, briefs); a per-client RAG is built in MongoDB Atlas Vector Search; the Queen reads that context and proposes agents, system prompts, and campaign variables; staff approves and the client account is created with everything pre-configured
+**Depends on**: Phase 8
+**Requirements**: RAG-01, RAG-02, RAG-03, ONB-01, ONB-02
+**Success Criteria** (what must be TRUE):
+  1. Staff can upload at least 3 document types (PDF, URL, plain text) for a client from the staff dashboard — all content is chunked, embedded, and stored under the client's namespace in MongoDB Atlas Vector Search
+  2. After upload, the Queen generates a structured proposal: suggested agent names/roles, system prompt per agent, and all 8 campaign variables — derived exclusively from the uploaded content, not hallucinated
+  3. Staff can review the proposal side-by-side with the source documents, edit any field, and approve — triggering the creation of a fully configured client account
+  4. When a prospecting run starts for that client, the pipeline queries the client's RAG to enrich the Analista's context (e.g., "what pain points does this client solve?") — confirmed in LLM request log
+  5. Two clients onboarded with different RAG docs produce demonstrably different agent configurations and campaign variables
+**Stack**:
+  - Embeddings: `text-embedding-3-small` via OpenRouter (~$0.00002/1k tokens)
+  - Vector store: MongoDB Atlas Vector Search (collection: `client_knowledge`, namespace per `client_id`)
+  - Ingestion: PyMuPDF (PDFs) + python-docx (Word) + existing scraper (URLs)
+  - RAG query: injected into Queen context window before each campaign run
+**Plans**: TBD
+
+---
+
+## Phase 10: Client Conversation + Lead Feedback
+**Goal**: The client has a persistent chat interface inside their pixel office where they can talk to the Queen about their results — asking why a lead was rejected, requesting more like an approved one, or giving qualitative feedback — and the system extracts actionable intent from every message to propose campaign adjustments
+**Depends on**: Phase 9
+**Requirements**: CHAT-01, CHAT-02, CHAT-03, CHAT-04
+**Success Criteria** (what must be TRUE):
+  1. The client can ask natural language questions about their leads ("¿por qué rechazaste esta empresa?", "tráeme más como esta") and receive a contextual answer grounded in the actual analysis data stored in MongoDB
+  2. The Queen extracts structured intent from every client message — classifying it as one of: `refine_target` (geography/industry/size), `adjust_tone` (email style), `blacklist_company`, `clone_lead` (find more like this), `campaign_feedback` (general quality signal) — stored per conversation turn
+  3. After a conversation turn that contains a `refine_target` or `adjust_tone` intent, the system proposes a concrete campaign update ("¿Quieres que actualice la ciudad objetivo a Medellín?") — client confirms with one click
+  4. Client feedback phrases like "muy pequeñas", "ya son clientes", "tono muy corporativo" are correctly classified into their intent category in at least 8/10 test cases
+**Notes**:
+  - Each conversation turn is stored in MongoDB (`client_conversations` collection) with extracted intents
+  - Conversation history + RAG context are both injected into the Queen on each turn
+  - The pixel office chat panel replaces/extends the current onboarding chat
+**Plans**: TBD
+
+---
+
+## Phase 11: Continuous Learning Loop
+**Goal**: Every client interaction (HITL decision, chat feedback, campaign result) is used to continuously improve that client's pipeline — approved leads shape the "ideal customer" embedding, rejected leads build an "avoid" profile, and detected patterns trigger automatic campaign refinement proposals
+**Depends on**: Phase 10
+**Requirements**: LEARN-01, LEARN-02, LEARN-03
+**Success Criteria** (what must be TRUE):
+  1. Every approved lead is embedded and stored in the client's `ideal_leads` vector namespace; every rejected lead with a reason is stored in `rejected_leads` — confirmed in MongoDB after each HITL action
+  2. Before each new prospecting run, the pipeline computes semantic similarity between each discovered company and the client's `ideal_leads` corpus — companies above 0.75 cosine similarity get a +15 bonus to their qualification score
+  3. After a client has completed 3 campaigns, the system automatically detects the top-3 patterns in approved leads (e.g., "mediana empresa, Bogotá, sector logístico") and surfaces them as a "Tu cliente ideal" card in the staff dashboard — derived from embeddings, not hardcoded rules
+  4. A campaign where the learning loop is active shows a measurably higher approval rate than the client's first campaign (baseline) — documented in the run history
+**Notes**:
+  - "ADN del cliente ideal" = living vector centroid that updates after each approved lead
+  - Blacklisted companies (from chat feedback "ya son clientes") are stored and permanently excluded from future discovery
+  - The Redactor gets access to a `winning_emails` subcorpus: emails from leads that were approved AND the client later reported as replied — style transferred to future drafts
+**Plans**: TBD
+
+---
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auth Infrastructure | 3/3 | Complete | 2026-03-18 |
-| 2. Hive Adapter and Tenant Isolation | 0/3 | Not started | - |
-| 3. Prospecting Graph Definition | 0/TBD | Not started | - |
-| 4. Scraping Safety and Output Validation | 0/TBD | Not started | - |
-| 5. HITL Loop | 0/TBD | Not started | - |
-| 6. Campaign Configuration | 0/TBD | Not started | - |
-| 7. Lead Dashboard | 0/TBD | Not started | - |
-| 8. Real-Time Visualization | 0/TBD | Not started | - |
+| 2. Hive Adapter and Tenant Isolation | 3/3 | Complete | 2026-03-19 |
+| 3. Prospecting Graph Definition | - | Complete | 2026-03-19 |
+| 4. Scraping Safety and Output Validation | - | Partial (~70%) | - |
+| 5. HITL Loop | - | Partial (post-hoc only) | - |
+| 6. Campaign Configuration | - | Complete | 2026-03-19 |
+| 7. Lead Dashboard | - | Partial (copy button missing) | - |
+| 8. Real-Time Visualization | - | Partial (basic states only) | - |
+| 9. Client RAG + Intelligent Onboarding | 1/1 | Complete | 2026-03-20 |
+| 10. Client Conversation + Lead Feedback | 1/1 | Complete | 2026-03-20 |
+| 11. Continuous Learning Loop | 1/1 | Complete | 2026-03-20 |

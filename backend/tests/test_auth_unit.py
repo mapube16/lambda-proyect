@@ -84,12 +84,12 @@ def test_create_access_token_contains_exp_claim():
 
 @pytest.mark.asyncio
 async def test_get_current_user_returns_user_id_for_valid_token():
-    """get_current_user returns {'user_id': int} for a valid token."""
+    """get_current_user returns {'user_id': str} for a valid token (MongoDB ObjectId = str)."""
     from auth import create_access_token, get_current_user
     token = create_access_token({"sub": "42"})
     result = await get_current_user(token=token)
-    assert result == {"user_id": 42}
-    assert isinstance(result["user_id"], int)
+    assert result == {"user_id": "42"}
+    assert isinstance(result["user_id"], str)
 
 
 @pytest.mark.asyncio

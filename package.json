@@ -1,0 +1,10 @@
+{
+  "name": "isomorph-office",
+  "version": "1.0.0",
+  "description": "Isomorph Office - A collaborative pixel art office environment",
+  "scripts": {
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "preview": "cd frontend && npm run preview"
+  }
+}

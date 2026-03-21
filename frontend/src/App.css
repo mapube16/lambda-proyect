@@ -1,0 +1,363 @@
+/* App Layout */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1a1a2e;
+  color: #e0e0e0;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
+  background: #16162a;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.app-header .subtitle {
+  color: #8080a0;
+  font-size: 14px;
+}
+
+.app-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Canvas Container */
+.canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.office-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #2d2d44;
+}
+
+.canvas-loading,
+.canvas-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: #2d2d44;
+  color: #a0a0b0;
+}
+
+.loading-icon,
+.error-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.canvas-error {
+  color: #ff6b6b;
+}
+
+.error-detail {
+  font-size: 12px;
+  color: #a0a0b0;
+  margin-top: 8px;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 320px;
+  background: #1e1e38;
+  border-left: 1px solid #2a2a4a;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Agent Panel */
+.agent-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.connection-status {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 12px;
+}
+
+.connection-status.connected {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.connection-status.disconnected {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+/* Create Agent Form */
+.create-agent-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.create-agent-form input {
+  flex: 1;
+  padding: 8px 12px;
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+}
+
+.create-agent-form input:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.create-agent-form select {
+  padding: 8px;
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.create-agent-form button {
+  padding: 8px 16px;
+  background: #6366f1;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.create-agent-form button:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.create-agent-form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Agent List */
+.agent-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.no-agents {
+  text-align: center;
+  color: #6b7280;
+  padding: 32px 16px;
+}
+
+/* Agent Card */
+.agent-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.agent-card:hover {
+  background: #32325a;
+  border-color: #4a4a6a;
+}
+
+.agent-card.selected {
+  border-color: #6366f1;
+  background: #2d2d5a;
+}
+
+.agent-icon {
+  font-size: 24px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a2e;
+  border-radius: 8px;
+}
+
+.agent-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-name {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-role {
+  font-size: 12px;
+  color: #8080a0;
+  text-transform: capitalize;
+}
+
+.agent-status {
+  font-size: 11px;
+  color: #60a5fa;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #8080a0;
+  text-transform: capitalize;
+}
+
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.simulate-btn {
+  padding: 6px 10px;
+  background: #3a3a5a;
+  border: none;
+  border-radius: 4px;
+  color: #a0a0b0;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.simulate-btn:hover {
+  background: #4a4a6a;
+  color: #e0e0e0;
+}
+
+/* Task Input Section */
+.task-input-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #3a3a5a;
+}
+
+.task-header {
+  font-size: 12px;
+  color: #8080a0;
+  margin-bottom: 8px;
+}
+
+.task-header strong {
+  color: #e0e0e0;
+}
+
+.task-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.task-input-row input {
+  flex: 1;
+  padding: 10px 12px;
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+}
+
+.task-input-row input:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.task-input-row button {
+  padding: 10px 20px;
+  background: #10b981;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.task-input-row button:hover:not(:disabled) {
+  background: #059669;
+}
+
+.task-input-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Scrollbar */
+.agent-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.agent-list::-webkit-scrollbar-thumb {
+  background: #3a3a5a;
+  border-radius: 3px;
+}
+
+.agent-list::-webkit-scrollbar-thumb:hover {
+  background: #4a4a6a;
+}
