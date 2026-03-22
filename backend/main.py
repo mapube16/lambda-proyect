@@ -32,7 +32,7 @@ from auth import (
     get_current_user, require_staff, SECRET_KEY, ALGORITHM
 )
 from database import (
-    init_db, get_user_by_email, create_user,
+    init_db, get_db, get_user_by_email, create_user,
     save_campaign, get_active_campaign, get_campaigns_by_user,
     create_run, update_run_status, get_runs_by_user,
     save_lead, get_leads_by_run, get_leads_by_user, update_lead_hitl,
@@ -657,25 +657,30 @@ async def get_run_leads(run_id: str, current_user: dict = Depends(get_current_us
 
 @app.patch("/api/leads/{lead_id}/approve")
 async def approve_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
-    """Approve a lead (HITL decision). Also embeds lead into ideal_leads corpus."""
+    """Approve a lead (HITL decision). Also embeds lead into ideal_leads corpus and fires outreach."""
     user_id = str(current_user["user_id"])
     updated = await update_lead_hitl(lead_id, user_id, "approved")
     if not updated:
         raise HTTPException(status_code=404, detail="Lead not found or not yours")
+    # Fetch leads once — shared by learning embed and outreach tasks
+    leads = await get_leads_by_user(user_id, limit=200)
+    lead_data = next((l for l in leads if l["_id"] == lead_id), None)
     # Fire-and-forget: embed approved lead for learning (non-blocking)
     api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        leads = await get_leads_by_user(user_id, limit=200)
-        lead_data = next((l for l in leads if l["_id"] == lead_id), None)
-        if lead_data:
-            from learning import embed_and_store_approved_lead
-            asyncio.create_task(embed_and_store_approved_lead(user_id, lead_id, lead_data))
+    if api_key and lead_data:
+        from learning import embed_and_store_approved_lead
+        asyncio.create_task(embed_and_store_approved_lead(user_id, lead_id, lead_data))
+    # Phase 13: Fire-and-forget outreach on approval
+    if lead_data:
+        canal = lead_data.get("canal_elegido", "email")
+        from outreach_agent import run_outreach
+        asyncio.create_task(run_outreach(lead_id, user_id, canal, intento=1))
     return {"status": "approved", "lead_id": lead_id}
 
 
 @app.patch("/api/leads/{lead_id}/reject")
 async def reject_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
-    """Reject a lead (HITL decision). Stores rejection in rejected_leads."""
+    """Reject a lead (HITL decision). Stores rejection in rejected_leads and transitions to nurturing."""
     user_id = str(current_user["user_id"])
     updated = await update_lead_hitl(lead_id, user_id, "rejected")
     if not updated:
@@ -686,6 +691,20 @@ async def reject_lead(lead_id: str, current_user: dict = Depends(get_current_use
     if lead_data:
         from learning import store_rejected_lead
         asyncio.create_task(store_rejected_lead(user_id, lead_id, lead_data))
+    # Phase 13: Transition rejected lead to nurturing lifecycle
+    from bson import ObjectId as _ObjectId
+    from landa.state_machine import update_lead_estado
+    db = get_db()
+    lead_doc = await db.leads.find_one({"_id": _ObjectId(lead_id)})
+    if lead_doc and lead_doc.get("estado") == "checkpoint":
+        await db.leads.update_one(
+            {"_id": _ObjectId(lead_id)},
+            {"$set": {"motivo_nurturing": "rechazado_humano"}},
+        )
+        try:
+            await update_lead_estado(lead_id, user_id, "nurturing")
+        except ValueError:
+            pass  # Not in a valid state for this transition — skip gracefully
     return {"status": "rejected", "lead_id": lead_id}
 
 
