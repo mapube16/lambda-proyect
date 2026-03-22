@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 12-04-PLAN.md
-last_updated: "2026-03-22T22:54:08.219Z"
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-03-22T23:30:00Z"
 last_activity: "2026-03-18 — Phase 1 complete: auth endpoints, MongoDB Motor, 21/21 tests pass"
 progress:
   total_phases: 14
@@ -68,6 +68,7 @@ Recent decisions affecting current work:
 - [Phase 12-02]: VALID_TRANSITIONS is hardcoded dict[str,set[str]] — not DB-driven — per Documento B Sección 5.5; archivado is terminal by empty set construction
 - [Phase 12]: APScheduler uses MemoryJobStore only — MongoDB jobstore conflicts with Motor async stack; durable state in db.scheduled_actions
 - [Phase 12]: build_system_prompt uses [inferida — KEY] marker for missing variables
+- [Phase 13-01]: 8 strict xfail stubs (2 per req) for LANDA-05 through LANDA-08; import-inside-body pattern ensures collection with missing modules
 
 ### Pending Todos
 
@@ -80,6 +81,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-22T22:53:58.314Z
-Stopped at: Completed 12-04-PLAN.md
+Last session: 2026-03-22T23:30:00Z
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
