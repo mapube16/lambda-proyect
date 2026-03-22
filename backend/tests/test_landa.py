@@ -7,24 +7,45 @@ import pytest
 
 # ── LANDA-01: Lead State Machine ──────────────────────────────────────────────
 
-@pytest.mark.xfail(reason="LANDA-01 not implemented yet", strict=True)
-async def test_lead_estado_valid_transition():
-    """
-    update_lead_estado(lead_id, user_id, "checkpoint") on a lead in state
-    "investigando" must succeed and persist the new state.
-    """
-    from landa.state_machine import VALID_TRANSITIONS, update_lead_estado  # noqa
-    assert False
+async def test_lead_estado_valid_transition(async_client, reset_db):
+    """update_lead_estado transitions investigando → checkpoint successfully."""
+    from landa.state_machine import VALID_TRANSITIONS, update_lead_estado
+    # Insert a test lead directly
+    from database import get_db
+    from datetime import datetime, timezone
+    db = get_db()
+    result = await db.leads.insert_one({
+        "user_id": "test_user",
+        "company_name": "Test Corp",
+        "url": "http://test.com",
+        "estado": "investigando",
+        "created_at": datetime.now(timezone.utc),
+    })
+    lead_id = str(result.inserted_id)
+
+    updated = await update_lead_estado(lead_id, "test_user", "checkpoint")
+    assert updated["estado"] == "checkpoint"
+    assert "checkpoint" in VALID_TRANSITIONS["investigando"]
 
 
-@pytest.mark.xfail(reason="LANDA-01 not implemented yet", strict=True)
-async def test_lead_estado_invalid_transition_raises():
-    """
-    update_lead_estado(lead_id, user_id, "handover") on a lead in state
-    "investigando" must raise ValueError — direct jump is not a valid transition.
-    """
-    from landa.state_machine import update_lead_estado  # noqa
-    assert False
+async def test_lead_estado_invalid_transition_raises(async_client, reset_db):
+    """update_lead_estado raises ValueError for invalid transition investigando → handover."""
+    from landa.state_machine import update_lead_estado
+    import pytest
+    from database import get_db
+    from datetime import datetime, timezone
+    db = get_db()
+    result = await db.leads.insert_one({
+        "user_id": "test_user",
+        "company_name": "Test Corp",
+        "url": "http://test.com",
+        "estado": "investigando",
+        "created_at": datetime.now(timezone.utc),
+    })
+    lead_id = str(result.inserted_id)
+
+    with pytest.raises(ValueError, match="handover"):
+        await update_lead_estado(lead_id, "test_user", "handover")
 
 
 # ── LANDA-02: sector_profiles Generation ─────────────────────────────────────
