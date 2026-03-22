@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-03-22T22:49:00.000Z"
+stopped_at: Completed 12-04-PLAN.md
+last_updated: "2026-03-22T22:54:08.219Z"
 last_activity: "2026-03-18 — Phase 1 complete: auth endpoints, MongoDB Motor, 21/21 tests pass"
 progress:
   total_phases: 14
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 10
-  completed_plans: 6
-  percent: 42
+  completed_plans: 7
+  percent: 38
 ---
 
 # Project State
@@ -47,6 +47,7 @@ Progress: [████░░░░░░] 38%
 | Phase 12-landa-foundation P01 | 5 | 1 tasks | 1 files |
 | Phase 12-landa-foundation P02 | ~8 min | 2 tasks | 4 files |
 | Phase 12 P03 | 5 | 2 tasks | 2 files |
+| Phase 12 P04 | 10 | 4 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,8 @@ Recent decisions affecting current work:
 - [Phase 12-landa-foundation]: 8 xfail stubs (2 per req) chosen over 4 to document both happy-path and error-path contracts from the start
 - [Phase 12-landa-foundation]: motor upgraded 3.3.2 to 3.7.1 and python-multipart installed to fix pre-existing env incompatibilities blocking conftest
 - [Phase 12-02]: VALID_TRANSITIONS is hardcoded dict[str,set[str]] — not DB-driven — per Documento B Sección 5.5; archivado is terminal by empty set construction
+- [Phase 12]: APScheduler uses MemoryJobStore only — MongoDB jobstore conflicts with Motor async stack; durable state in db.scheduled_actions
+- [Phase 12]: build_system_prompt uses [inferida — KEY] marker for missing variables
 
 ### Pending Todos
 
@@ -77,6 +80,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-22T22:49:00.000Z
-Stopped at: Completed 12-02-PLAN.md
+Last session: 2026-03-22T22:53:58.314Z
+Stopped at: Completed 12-04-PLAN.md
 Resume file: None
