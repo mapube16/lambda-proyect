@@ -14,6 +14,12 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+from landa.company_voice import get_or_create_company_voice
+from landa.sector_profiles import generate_sector_profile
+from landa.core.context import call_agent, build_system_prompt, TEMP_NURTURING
+from email_sender import send_email
+from whatsapp_sender import send_whatsapp_text
+
 logger = logging.getLogger(__name__)
 
 # Content strategy instructions per motivo_nurturing
@@ -61,9 +67,6 @@ async def run_nurturing(
     """
     from database import get_db
     from bson import ObjectId
-    from landa.company_voice import get_or_create_company_voice
-    from landa.sector_profiles import generate_sector_profile
-    from landa.core.context import call_agent, build_system_prompt, TEMP_NURTURING
     from landa.state_machine import update_lead_estado
 
     db = get_db()
@@ -109,7 +112,6 @@ async def run_nurturing(
     # Send message
     sent = False
     if canal_elegido == "email":
-        from email_sender import send_email
         remitentes = company_voice.get("remitentes", [{}])
         sender = remitentes[0] if remitentes else {}
         to_email = decisor.get("email", "")
@@ -123,7 +125,6 @@ async def run_nurturing(
                 sender_email=sender.get("email", ""),
             )
     elif canal_elegido == "whatsapp":
-        from whatsapp_sender import send_whatsapp_text
         phone = decisor.get("phone", decisor.get("telefono", ""))
         if phone:
             sent = await send_whatsapp_text(phone=phone, message=message_text)

@@ -273,22 +273,102 @@ async def test_run_outreach_logs_to_historial(reset_db):
 
 # ── LANDA-08: Nurturing agent content + re-entry detection ────────────────────
 
-@pytest.mark.xfail(reason="LANDA-08 not implemented yet", strict=True)
-async def test_run_nurturing_returns_dict_with_required_keys():
+async def test_run_nurturing_returns_dict_with_required_keys(reset_db):
     """
     run_nurturing(lead_id, user_id) returns dict with keys:
     mensaje_enviado (str), senial_detectada (bool), nuevo_estado (str).
     """
-    from landa.agents.nurturing import run_nurturing  # noqa
-    assert False
+    from landa.agents.nurturing import run_nurturing
+    from database import get_db
+    from datetime import datetime, timezone
+
+    db = get_db()
+    ins = await db.leads.insert_one({
+        "user_id": "test_user",
+        "company_name": "Empresa Nurturing S.A.",
+        "estado": "nurturing",
+        "motivo_nurturing": "score_bajo",
+        "canal_elegido": "email",
+        "decisor": {"nombre": "Ana Lopez", "cargo": "Directora", "email": "ana@empresa.co"},
+        "ciclo_nurturing": 0,
+        "historial_conversacion": [],
+        "created_at": datetime.now(timezone.utc),
+    })
+    lead_id = str(ins.inserted_id)
+
+    minimal_voice = {
+        "industria_objetivo": "tecnologia",
+        "tono_comunicacion": "profesional",
+        "remitentes": [{"nombre": "Juan Bot", "email": "bot@landa.co"}],
+    }
+    minimal_sector_profile = {
+        "decisor_primario": "Gerente TI",
+        "senales_reentrada": ["presupuesto aprobado", "licitacion abierta"],
+        "canal_principal": "email",
+        "tono": "formal",
+    }
+
+    with patch("landa.agents.nurturing.get_or_create_company_voice", new=AsyncMock(return_value=minimal_voice)), \
+         patch("landa.agents.nurturing.generate_sector_profile", new=AsyncMock(return_value=minimal_sector_profile)), \
+         patch("landa.agents.nurturing.call_agent", new=AsyncMock(return_value="Contenido educativo de prueba")), \
+         patch("landa.agents.nurturing.send_email", new=AsyncMock(return_value=True)):
+        result = await run_nurturing(lead_id, "test_user")
+
+    assert "mensaje_enviado" in result
+    assert "senial_detectada" in result
+    assert "nuevo_estado" in result
+    assert isinstance(result["senial_detectada"], bool)
+    assert isinstance(result["mensaje_enviado"], str)
+    assert isinstance(result["nuevo_estado"], str)
 
 
-@pytest.mark.xfail(reason="LANDA-08 not implemented yet", strict=True)
-async def test_run_nurturing_detects_reentrada_signal():
+async def test_run_nurturing_detects_reentrada_signal(reset_db):
     """
     When lead's latest historial_conversacion entry contains a keyword
     from sector_profile.senales_reentrada, nurturing transitions lead
     to "checkpoint". Asserts returned nuevo_estado == "checkpoint".
     """
-    from landa.agents.nurturing import run_nurturing  # noqa
-    assert False
+    from landa.agents.nurturing import run_nurturing
+    from database import get_db
+    from datetime import datetime, timezone
+
+    db = get_db()
+    ins = await db.leads.insert_one({
+        "user_id": "test_user",
+        "company_name": "Empresa Reentrada S.A.",
+        "estado": "nurturing",
+        "motivo_nurturing": "sin_respuesta",
+        "canal_elegido": "email",
+        "decisor": {"nombre": "Carlos Gil", "cargo": "CEO", "email": "carlos@reentrada.co"},
+        "ciclo_nurturing": 2,
+        "historial_conversacion": [
+            {
+                "tipo": "respuesta_lead",
+                "mensaje": "Tenemos presupuesto aprobado este trimestre",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
+        "created_at": datetime.now(timezone.utc),
+    })
+    lead_id = str(ins.inserted_id)
+
+    minimal_voice = {
+        "industria_objetivo": "tecnologia",
+        "tono_comunicacion": "profesional",
+        "remitentes": [{"nombre": "Landa Bot", "email": "bot@landa.co"}],
+    }
+    minimal_sector_profile = {
+        "decisor_primario": "CEO",
+        "senales_reentrada": ["presupuesto aprobado"],
+        "canal_principal": "email",
+        "tono": "formal",
+    }
+
+    with patch("landa.agents.nurturing.get_or_create_company_voice", new=AsyncMock(return_value=minimal_voice)), \
+         patch("landa.agents.nurturing.generate_sector_profile", new=AsyncMock(return_value=minimal_sector_profile)), \
+         patch("landa.core.context.call_agent", new=AsyncMock(return_value="mensaje nurturing")), \
+         patch("email_sender.send_email", new=AsyncMock(return_value=True)):
+        result = await run_nurturing(lead_id, "test_user")
+
+    assert result["senial_detectada"] is True
+    assert result["nuevo_estado"] == "checkpoint"
