@@ -124,6 +124,7 @@ def make_prospecting_registry(
                 "state": "thinking",
                 "tool_status": f"Buscando {industria} en {ciudad}...",
             })
+        use_secop_radar = bool(campaign.get("use_secop_radar", False))
         companies = await discover_companies(
             industria,
             ciudad,
@@ -132,6 +133,25 @@ def make_prospecting_registry(
             excluded_domains=excluded_set,
             use_secop=bool(campaign.get("use_secop", False)),
         )
+        if use_secop_radar:
+            try:
+                from secop_radar import fetch_open_processes
+                radar_leads = await fetch_open_processes(sector=industria)
+                # Merge radar leads into companies list (deduplicate by domain)
+                from urllib.parse import urlparse
+                existing_domains = {
+                    urlparse(c.get("url", "")).netloc.lower().lstrip("www.")
+                    for c in companies
+                    if c.get("url")
+                }
+                for rl in radar_leads:
+                    rl_domain = urlparse(rl.get("url", "")).netloc.lower().lstrip("www.")
+                    if rl_domain and rl_domain not in existing_domains:
+                        companies.append(rl)
+                        existing_domains.add(rl_domain)
+                logger.info("[discover_companies] secop_radar added %d leads", len(radar_leads))
+            except Exception as e:
+                logger.warning("[discover_companies] secop_radar error: %s", e)
         _state["discovered"] = companies
         await send_to_user(user_id, {
             "type": "discovery_complete", "count": len(companies),
