@@ -172,10 +172,51 @@ Plans:
 
 ---
 
+## Phase 12: Landa Foundation
+**Goal**: Establecer la base de datos y scheduler para el módulo de captación Landa: máquina de estados de 8 etapas para leads, colecciones `sector_profiles` y `company_voice`, `scheduled_actions` con APScheduler, y el builder de variables de prompt — todo multi-tenant y listo para los agentes del Día 2
+**Depends on**: Phase 11
+**Requirements**: LANDA-01, LANDA-02, LANDA-03, LANDA-04
+**Success Criteria** (what must be TRUE):
+  1. Un lead puede transitar por los 8 estados válidos (investigando → checkpoint → pausado → outreach → handover → nurturing → congelado → archivado) y se rechazan transiciones inválidas
+  2. `sector_profiles` se genera automáticamente con GPT-4o dado un sector + región, devolviendo los campos del esquema del Documento B (decisor, ganchos, señales, etc.)
+  3. APScheduler persiste y ejecuta acciones programadas (`reintento`, `nurturing`, `notificacion`) sobreviviendo reinicios del servidor
+  4. `build_system_prompt()` reemplaza correctamente todas las `[VARIABLES]` de un template con el diccionario de valores, marcando vacías como `[inferida — KEY]`
+**Plans**: 4 plans
+
+Plans:
+- [ ] 12-01-PLAN.md — Wave 0: xfail stubs for all LANDA-01 through LANDA-04 requirements
+- [ ] 12-02-PLAN.md — Wave 1: Lead state machine (8 states + valid transitions) + new lead schema fields + MongoDB indexes
+- [ ] 12-03-PLAN.md — Wave 1: sector_profiles GPT-4o generation (temp=0.2, 30-day cache) + company_voice sync from client_profiles
+- [ ] 12-04-PLAN.md — Wave 2: APScheduler setup + scheduled_actions + build_system_prompt + call_agent utilities
+
+### Phase 13: Landa Agent Pipeline
+**Goal**: Los tres agentes del módulo Landa (Investigador, Outreach, Nurturing) operan sobre leads reales con temperaturas diferenciadas, canales analizados por probabilidad, y envío real por Email (SMTP) y WhatsApp Business API
+**Depends on**: Phase 12
+**Requirements**: LANDA-05, LANDA-06, LANDA-07, LANDA-08
+**Success Criteria** (what must be TRUE):
+  1. El Agente Investigador califica un lead con puntaje 0-100 usando el sector_profile y retorna criterios, señales de intención y análisis de canal con probabilidades
+  2. Leads con puntaje 40-69 pasan directamente a nurturing; ≥70 van a checkpoint; <40 se descartan — automaticamente
+  3. El Agente Outreach genera un mensaje usando `[VARIABLES]` de voz de empresa y lo envía por el canal elegido (Email SMTP o WhatsApp Business API)
+  4. El Agente Nurturing genera contenido mensual según `[MOTIVO_NURTURING]` y detecta señales de reentrada que vuelven el lead a checkpoint
+**Plans**: TBD
+
+### Phase 14: Landa API & Checkpoint UI
+**Goal**: El humano puede revisar leads en checkpoint desde el frontend (aprobar/pausar/rechazar + elegir canal), tomar control de un handover, y reportar resultado de llamada — con notificaciones automáticas vía Slack y WhatsApp
+**Depends on**: Phase 13
+**Requirements**: LANDA-09, LANDA-10, LANDA-11, LANDA-12
+**Success Criteria** (what must be TRUE):
+  1. `GET /api/leads/checkpoint` devuelve leads con puntaje, criterios, señales y canales con probabilidades; `POST /api/leads/{id}/decision` procesa aprobar/pausar/rechazar y dispara la transición de estado correcta
+  2. `GET /api/leads/{id}/handover` devuelve el paquete completo (hilo, calificación, sugerencia de cierre); `POST /api/leads/{id}/handover/tomar` pausa el agente en ese lead
+  3. `POST /api/leads/{id}/reporte-llamada` procesa los 4 resultados (bien/mas_o_menos/mal/no_pude) y ejecuta la lógica interna correcta (nurturing, reintento, handover, etc.)
+  4. El frontend muestra la pantalla de checkpoint con cards de leads, botones aprobar/pausar/rechazar, selector de canal, y se actualiza en tiempo real via WebSocket
+**Plans**: TBD
+
+---
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -190,3 +231,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. Client RAG + Intelligent Onboarding | 1/1 | Complete | 2026-03-20 |
 | 10. Client Conversation + Lead Feedback | 1/1 | Complete | 2026-03-20 |
 | 11. Continuous Learning Loop | 1/1 | Complete | 2026-03-20 |
+| 12. Landa Foundation | - | Not started | - |
+| 13. Landa Agent Pipeline | - | Not started | - |
+| 14. Landa API & Checkpoint UI | - | Not started | - |
