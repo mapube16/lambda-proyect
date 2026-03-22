@@ -172,8 +172,8 @@ Plans:
 
 ---
 
-## Phase 12: Landa Foundation
-**Goal**: Establecer la base de datos y scheduler para el módulo de captación Landa: máquina de estados de 8 etapas para leads, colecciones `sector_profiles` y `company_voice`, `scheduled_actions` con APScheduler, y el builder de variables de prompt — todo multi-tenant y listo para los agentes del Día 2
+## Phase 12: Lead Lifecycle Foundation
+**Goal**: Extender el pipeline existente con la infraestructura para que el sistema pueda continuar trabajando después del HITL: máquina de estados de 8 etapas, `sector_profiles` para mejor scoring, `company_voice` para mensajes con voz de marca, APScheduler para reintentos automáticos y nurturing mensual, y builder de variables de prompt — todo integrado en archivos existentes, sin módulo separado
 **Depends on**: Phase 11
 **Requirements**: LANDA-01, LANDA-02, LANDA-03, LANDA-04
 **Success Criteria** (what must be TRUE):
@@ -185,19 +185,19 @@ Plans:
 
 Plans:
 - [ ] 12-01-PLAN.md — Wave 0: xfail stubs for all LANDA-01 through LANDA-04 requirements
-- [ ] 12-02-PLAN.md — Wave 1: Lead state machine (8 states + valid transitions) + new lead schema fields + MongoDB indexes
-- [ ] 12-03-PLAN.md — Wave 1: sector_profiles GPT-4o generation (temp=0.2, 30-day cache) + company_voice sync from client_profiles
-- [ ] 12-04-PLAN.md — Wave 2: APScheduler setup + scheduled_actions + build_system_prompt + call_agent utilities
+- [ ] 12-02-PLAN.md — Wave 1: Lead state machine (8 estados + 14 transiciones) en backend/state_machine.py + nuevos campos en leads + índices MongoDB
+- [ ] 12-03-PLAN.md — Wave 1: sector_profiles GPT-4o (temp=0.2, cache 30d) en backend/sector_profiles.py + company_voice sync desde client_profiles en backend/company_voice.py
+- [ ] 12-04-PLAN.md — Wave 2: APScheduler + scheduled_actions en backend/scheduler.py + build_system_prompt en backend/context_builder.py + wiring en main.py lifespan
 
-### Phase 13: Landa Agent Pipeline
-**Goal**: Los tres agentes del módulo Landa (Investigador, Outreach, Nurturing) operan sobre leads reales con temperaturas diferenciadas, canales analizados por probabilidad, y envío real por Email (SMTP) y WhatsApp Business API
+### Phase 13: Lead Outreach & Nurturing Agents
+**Goal**: Después de que el humano aprueba un lead, el sistema envía automáticamente el primer mensaje (Email o WhatsApp) con la voz de marca del cliente; leads rechazados o sin respuesta entran a un ciclo mensual de nurturing; el scoring del Investigador existente se enriquece con sector_profile para análisis de canal con probabilidades
 **Depends on**: Phase 12
 **Requirements**: LANDA-05, LANDA-06, LANDA-07, LANDA-08
 **Success Criteria** (what must be TRUE):
-  1. El Agente Investigador califica un lead con puntaje 0-100 usando el sector_profile y retorna criterios, señales de intención y análisis de canal con probabilidades
-  2. Leads con puntaje 40-69 pasan directamente a nurturing; ≥70 van a checkpoint; <40 se descartan — automaticamente
-  3. El Agente Outreach genera un mensaje usando `[VARIABLES]` de voz de empresa y lo envía por el canal elegido (Email SMTP o WhatsApp Business API)
-  4. El Agente Nurturing genera contenido mensual según `[MOTIVO_NURTURING]` y detecta señales de reentrada que vuelven el lead a checkpoint
+  1. Cuando `hitl_status` pasa a `"approved"`, el sistema envía automáticamente un mensaje al lead por el canal elegido (Email o WhatsApp) usando la voz de empresa del cliente
+  2. Leads con puntaje 40-69 pasan a nurturing; ≥70 van a checkpoint; <40 se descartan — el routing es automático post-scoring
+  3. Un lead en nurturing recibe contenido mensual diferenciado según su `motivo_nurturing`; si responde con señal de reentrada, vuelve a checkpoint automáticamente
+  4. El scoring del pipeline existente retorna `canales[]` con probabilidad por canal, usando señales del sector_profile
 **Plans**: TBD
 
 ### Phase 14: Landa API & Checkpoint UI
@@ -231,6 +231,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. Client RAG + Intelligent Onboarding | 1/1 | Complete | 2026-03-20 |
 | 10. Client Conversation + Lead Feedback | 1/1 | Complete | 2026-03-20 |
 | 11. Continuous Learning Loop | 1/1 | Complete | 2026-03-20 |
-| 12. Landa Foundation | - | Not started | - |
+| 12. Landa Foundation | 1/4 | In Progress|  |
 | 13. Landa Agent Pipeline | - | Not started | - |
 | 14. Landa API & Checkpoint UI | - | Not started | - |

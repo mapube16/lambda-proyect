@@ -51,6 +51,26 @@
 - [ ] **VIZ-02**: El estado del agente se actualiza en tiempo real via WebSocket durante toda la corrida sin bloquear la UI
 - [ ] **VIZ-03**: Los errores de pipeline (scraping fallido, LLM timeout) se muestran como estado de error en el personaje — no pantalla en blanco
 
+### Landa Lead Captation Module
+
+#### Phase 12 — Foundation
+- [x] **LANDA-01**: La colección `leads` soporta 8 estados (investigando/checkpoint/pausado/outreach/handover/nurturing/congelado/archivado) con transiciones validadas en código — transiciones inválidas son rechazadas con error explícito
+- [x] **LANDA-02**: La función `generate_sector_profile(sector, pais_region, tamaño)` llama a GPT-4o (temp=0.2) y retorna un documento completo con decisor_primario, ganchos[3], objeciones[5], señales_compra[3], señales_reentrada[3], canal_principal, tono, ciclo_venta — guardado en colección `sector_profiles`
+- [x] **LANDA-03**: APScheduler (AsyncIOScheduler) arranca con la app y persiste jobs en MongoDB (`scheduled_actions`); `schedule_retry(lead_id, canal, days)` y `schedule_nurturing(lead_id, mes)` crean jobs; `cancel_lead_actions(lead_id)` los elimina todos — jobs sobreviven reinicios
+- [x] **LANDA-04**: `build_system_prompt(template, variables)` reemplaza todas las `[VARIABLES]` del template; vacías quedan como `[inferida — KEY]`; función disponible en `core/context.py`
+
+#### Phase 13 — Agent Pipeline
+- [ ] **LANDA-05**: Agente Investigador recibe sector_profile + campaign_context y retorna lista de leads con puntaje 0-100, criterios cumplidos, señales de intención, y análisis de canal (probabilidad por canal) — usando GPT-4o temp=0.2
+- [ ] **LANDA-06**: Routing automático: leads <40 pts → descartado; 40-69 → nurturing directo; ≥70 → estado checkpoint + notifica al humano
+- [ ] **LANDA-07**: Agente Outreach genera mensaje con variables de `company_voice` y envía por canal_elegido: Email vía SMTP (smtplib) o WhatsApp Business API (graph.facebook.com/v18.0) — retorna bool de éxito y registra en historial_conversacion del lead
+- [ ] **LANDA-08**: Agente Nurturing genera contenido según motivo_nurturing usando GPT-4o temp=0.6; detecta señales de reentrada en respuestas del lead; reentrada detectada → transiciona lead a checkpoint
+
+#### Phase 14 — API & Checkpoint UI
+- [ ] **LANDA-09**: `GET /api/leads/checkpoint` retorna leads en estado checkpoint del usuario autenticado con puntaje, criterios, señales y canales; `POST /api/leads/{id}/decision` acepta decision(aprobar/pausar/rechazar) + canal_elegido + motivo y ejecuta la transición de estado
+- [ ] **LANDA-10**: `GET /api/leads/{id}/handover` retorna paquete completo (lead, hilo_conversacion, calificacion_original, sugerencia_cierre); `POST /api/leads/{id}/handover/tomar` congela el agente en ese lead
+- [ ] **LANDA-11**: `POST /api/leads/{id}/reporte-llamada` acepta resultado(bien/mas_o_menos/mal/no_pude) + sub_tipo; ejecuta lógica: bien/mas_o_menos → IA decide; mal → nurturing; no_pude ocupado/apagado → reintento 24h; incorrecto → buscar alternativo; corto → intento 1
+- [ ] **LANDA-12**: Frontend muestra vista Checkpoint con cards de leads (empresa, decisor, puntaje, canales con probabilidades), botones Aprobar/Pausar/Rechazar, selector de canal — se actualiza en tiempo real via WebSocket cuando llegan nuevos leads a checkpoint
+
 ## v2 Requirements
 
 ### Authentication Enhancements
