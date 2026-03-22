@@ -22,7 +22,8 @@ for _logger in ("hive_adapter", "hive_llm", "hive_tools", "hive_graph",
                  "framework.graph.event_loop_node", "framework.graph.executor"):
     logging.getLogger(_logger).setLevel(logging.INFO)
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, HTTPException, Depends, Query, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, HTTPException, Depends, Query, status, Request
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo.errors import DuplicateKeyError
 from jose import JWTError, jwt
@@ -43,6 +44,7 @@ from database import (
     sync_user_root_onboarding_from_profile,
     get_user_root_onboarding,
     get_prospecting_excluded_domains,
+    upsert_whatsapp_agent, get_whatsapp_agent, list_whatsapp_agents, delete_whatsapp_agent,
 )
 from models import (
     Agent, AgentState, AgentRole,
@@ -51,6 +53,7 @@ from models import (
 )
 from orchestrator import HiveOrchestrator
 from onboarding import chat_turn
+from landa.scheduler import start_scheduler, shutdown_scheduler
 
 # WebSocket connection manager — keyed by user_id for tenant isolation
 class ConnectionManager:
@@ -192,8 +195,10 @@ async def lifespan(app: FastAPI):
     from hive_adapter import HiveAdapter
     hive_adapter = HiveAdapter(send_to_user_callback=manager.send_to_user)
 
+    await start_scheduler()
     print("Isomorph Office started!")
     yield
+    shutdown_scheduler()
     print("Shutting down...")
 
 
@@ -818,6 +823,153 @@ async def send_welcome_to_client(
         ))
 
     return {"ok": True, "sent_to": client_email}
+
+
+# ============ NIT Enricher / Radar Pólizas ============
+
+class NitEnrichRequest(_BaseModel):
+    nit: str
+
+
+class RadarRequest(_BaseModel):
+    sector: str
+    ciudad: Optional[str] = None
+    max_procesos: int = 10
+    max_proponentes: int = 20
+
+
+@app.post("/api/secop/enrich-nit")
+async def enrich_nit_endpoint(
+    request: NitEnrichRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Enriquece un NIT colombiano con datos de RUES, SECOP, Supersociedades y web.
+    Retorna expediente completo listo para que una aseguradora ofrezca póliza de cumplimiento.
+    """
+    from nit_enricher import enrich_nit
+    result = await enrich_nit(request.nit)
+    return result
+
+
+@app.post("/api/secop/radar-polizas")
+async def radar_polizas_endpoint(
+    request: RadarRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Radar de pólizas de cumplimiento:
+    - Detecta licitaciones ABIERTAS en SECOP por sector
+    - Identifica proponentes probables (por historial de contratos)
+    - Enriquece cada proponente con NIT → expediente completo
+    Retorna leads listos para que la aseguradora llame hoy mismo.
+    """
+    from secop_radar import build_poliza_leads
+    result = await build_poliza_leads(
+        keyword=request.sector,
+        ciudad=request.ciudad,
+        max_procesos=request.max_procesos,
+        max_proponentes=request.max_proponentes,
+    )
+    return result
+
+
+@app.get("/api/secop/procesos-abiertos")
+async def procesos_abiertos_endpoint(
+    sector: str,
+    ciudad: Optional[str] = None,
+    limit: int = 20,
+    current_user: dict = Depends(get_current_user),
+):
+    """Lista licitaciones abiertas en SECOP para un sector dado."""
+    from secop_radar import fetch_open_processes
+    return await fetch_open_processes(sector, ciudad, limit)
+
+
+# ============ Health check ============
+
+@app.get("/api/health")
+async def health():
+    return {"ok": True}
+
+
+# ============ WhatsApp Webhook (Twilio) ============
+
+@app.post("/api/whatsapp/webhook")
+async def whatsapp_webhook(request: Request):
+    """
+    Recibe mensajes entrantes de Twilio WhatsApp y los enruta al agente conversacional.
+    Configurar en Twilio Console → Messaging → WhatsApp Sandbox → When a message comes in.
+    URL: https://<tu-ngrok>.ngrok.io/api/whatsapp/webhook
+    """
+    form = await request.form()
+    from_phone  = (form.get("From") or "").replace("whatsapp:", "")
+    from_twilio = form.get("To") or os.getenv("TWILIO_FROM_NUMBER", "")
+    body        = form.get("Body") or ""
+
+    if not from_phone or not body:
+        return {"ok": False, "error": "Missing From or Body"}
+
+    _wa_log = logging.getLogger("whatsapp_webhook")
+    _wa_log.info("[WA] from=%s body=%r twilio=%s", from_phone, body, from_twilio)
+
+    # Cargar config del agente desde MongoDB (fallback a env vars si no existe)
+    from whatsapp_agent import handle_inbound_message
+    agent_config = await get_whatsapp_agent(from_phone) or {}
+
+    async def _run():
+        try:
+            await handle_inbound_message(from_phone, body, from_twilio, agent_config)
+        except Exception as e:
+            _wa_log.error("[WA] handle error: %s", e, exc_info=True)
+
+    asyncio.create_task(_run())
+
+    # Twilio espera respuesta rápida — el agente responde de forma asíncrona vía API
+    return Response(content="", media_type="text/xml")
+
+
+# ============ WhatsApp Agents CRUD ============
+
+class WhatsAppAgentConfig(_BaseModel):
+    phone_number: str                        # número del asesor e.g. "+573123528153"
+    twilio_from: str                         # número Twilio e.g. "whatsapp:+14155238886"
+    nombre_asesor: str
+    empresa: str
+    telefono_asesor: Optional[str] = None
+    sectores: list[str] = []
+    ciudad_default: Optional[str] = None
+    cliente_id: Optional[str] = None        # ObjectId del usuario en la plataforma
+    activo: bool = True
+
+
+@app.post("/api/whatsapp-agents", dependencies=[Depends(require_staff)])
+async def create_whatsapp_agent(config: WhatsAppAgentConfig):
+    """Crea o actualiza la configuración de un agente WhatsApp para un asesor."""
+    doc = await upsert_whatsapp_agent(config.model_dump())
+    return doc
+
+
+@app.get("/api/whatsapp-agents", dependencies=[Depends(require_staff)])
+async def list_agents(cliente_id: Optional[str] = None):
+    """Lista todos los agentes WhatsApp configurados."""
+    return await list_whatsapp_agents(cliente_id)
+
+
+@app.get("/api/whatsapp-agents/{phone_number}", dependencies=[Depends(require_staff)])
+async def get_agent(phone_number: str):
+    doc = await get_whatsapp_agent(phone_number)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+    return doc
+
+
+@app.delete("/api/whatsapp-agents/{phone_number}", dependencies=[Depends(require_staff)])
+async def remove_agent(phone_number: str):
+    ok = await delete_whatsapp_agent(phone_number)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+    return {"ok": True}
 
 
 # ============ Demo Mode ============
