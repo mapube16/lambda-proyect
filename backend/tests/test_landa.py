@@ -73,43 +73,56 @@ async def test_generate_sector_profile_uses_cache():
 
 # ── LANDA-03: APScheduler + scheduled_actions ─────────────────────────────────
 
-@pytest.mark.xfail(reason="LANDA-03 not implemented yet", strict=True)
-async def test_schedule_retry_creates_job():
-    """
-    schedule_retry(lead_id="abc", canal="email", days=7) must insert a
-    document in scheduled_actions with tipo="reintento" and estado="pendiente".
-    """
-    from landa.scheduler import schedule_retry  # noqa
-    assert False
+async def test_schedule_retry_creates_job(reset_db):
+    """schedule_retry inserts a scheduled_actions doc with tipo=reintento."""
+    from landa.scheduler import schedule_retry
+    from database import get_db
+
+    action_id = await schedule_retry("lead_abc", "email", days=7)
+    assert action_id is not None
+
+    db = get_db()
+    doc = await db.scheduled_actions.find_one({"lead_id": "lead_abc"})
+    assert doc is not None
+    assert doc["tipo"] == "reintento"
+    assert doc["estado"] == "pendiente"
 
 
-@pytest.mark.xfail(reason="LANDA-03 not implemented yet", strict=True)
-async def test_cancel_lead_actions_removes_jobs():
-    """
-    After schedule_retry + schedule_nurturing for lead "abc",
-    cancel_lead_actions("abc") must leave zero scheduled_actions docs for that lead_id.
-    """
-    from landa.scheduler import schedule_retry, schedule_nurturing, cancel_lead_actions  # noqa
-    assert False
+async def test_cancel_lead_actions_removes_jobs(reset_db):
+    """cancel_lead_actions sets all pending actions to cancelado."""
+    from landa.scheduler import schedule_retry, schedule_nurturing, cancel_lead_actions
+    from database import get_db
+
+    await schedule_retry("lead_xyz", "email", days=7)
+    await schedule_nurturing("lead_xyz", mes=1)
+
+    cancelled = await cancel_lead_actions("lead_xyz")
+    assert cancelled == 2
+
+    db = get_db()
+    pending = await db.scheduled_actions.find(
+        {"lead_id": "lead_xyz", "estado": "pendiente"}
+    ).to_list(length=100)
+    assert len(pending) == 0
 
 
 # ── LANDA-04: build_system_prompt Variable Template Builder ───────────────────
 
-@pytest.mark.xfail(reason="LANDA-04 not implemented yet", strict=True)
-async def test_build_system_prompt_replaces_all_vars():
-    """
-    build_system_prompt("[SECTOR] opera en [PAIS_REGION]", {"SECTOR": "tech", "PAIS_REGION": "Colombia"})
-    must return "tech opera en Colombia".
-    """
-    from landa.core.context import build_system_prompt  # noqa
-    assert False
+def test_build_system_prompt_replaces_all_vars():
+    """build_system_prompt replaces all [KEY] placeholders."""
+    from landa.core.context import build_system_prompt
+    result = build_system_prompt(
+        "[SECTOR] opera en [PAIS_REGION]",
+        {"SECTOR": "tech", "PAIS_REGION": "Colombia"}
+    )
+    assert result == "tech opera en Colombia"
 
 
-@pytest.mark.xfail(reason="LANDA-04 not implemented yet", strict=True)
-async def test_build_system_prompt_marks_missing_vars():
-    """
-    build_system_prompt("[SECTOR] opera en [PAIS_REGION]", {"SECTOR": "tech"})
-    must return "tech opera en [inferida — PAIS_REGION]" (missing key → inferida marker).
-    """
-    from landa.core.context import build_system_prompt  # noqa
-    assert False
+def test_build_system_prompt_marks_missing_vars():
+    """build_system_prompt marks missing keys as [inferida — KEY]."""
+    from landa.core.context import build_system_prompt
+    result = build_system_prompt(
+        "[SECTOR] opera en [PAIS_REGION]",
+        {"SECTOR": "tech"}
+    )
+    assert result == "tech opera en [inferida — PAIS_REGION]"
