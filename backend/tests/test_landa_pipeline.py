@@ -366,8 +366,8 @@ async def test_run_nurturing_detects_reentrada_signal(reset_db):
 
     with patch("landa.agents.nurturing.get_or_create_company_voice", new=AsyncMock(return_value=minimal_voice)), \
          patch("landa.agents.nurturing.generate_sector_profile", new=AsyncMock(return_value=minimal_sector_profile)), \
-         patch("landa.core.context.call_agent", new=AsyncMock(return_value="mensaje nurturing")), \
-         patch("email_sender.send_email", new=AsyncMock(return_value=True)):
+         patch("landa.agents.nurturing.call_agent", new=AsyncMock(return_value="mensaje nurturing")), \
+         patch("landa.agents.nurturing.send_email", new=AsyncMock(return_value=True)):
         result = await run_nurturing(lead_id, "test_user")
 
     assert result["senial_detectada"] is True
