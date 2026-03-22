@@ -63,7 +63,7 @@
 - [x] **LANDA-05**: Agente Investigador recibe sector_profile + campaign_context y retorna lista de leads con puntaje 0-100, criterios cumplidos, señales de intención, y análisis de canal (probabilidad por canal) — usando GPT-4o temp=0.2
 - [x] **LANDA-06**: Routing automático: leads <40 pts → descartado; 40-69 → nurturing directo; ≥70 → estado checkpoint + notifica al humano
 - [x] **LANDA-07**: Agente Outreach genera mensaje con variables de `company_voice` y envía por canal_elegido: Email vía SMTP (smtplib) o WhatsApp Business API (graph.facebook.com/v18.0) — retorna bool de éxito y registra en historial_conversacion del lead
-- [ ] **LANDA-08**: Agente Nurturing genera contenido según motivo_nurturing usando GPT-4o temp=0.6; detecta señales de reentrada en respuestas del lead; reentrada detectada → transiciona lead a checkpoint
+- [x] **LANDA-08**: Agente Nurturing genera contenido según motivo_nurturing usando GPT-4o temp=0.6; detecta señales de reentrada en respuestas del lead; reentrada detectada → transiciona lead a checkpoint
 
 #### Phase 14 — API & Checkpoint UI
 - [ ] **LANDA-09**: `GET /api/leads/checkpoint` retorna leads en estado checkpoint del usuario autenticado con puntaje, criterios, señales y canales; `POST /api/leads/{id}/decision` acepta decision(aprobar/pausar/rechazar) + canal_elegido + motivo y ejecuta la transición de estado
