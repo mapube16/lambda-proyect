@@ -64,7 +64,7 @@ async def _bootstrap_pending_jobs() -> int:
         else:
             action_id = str(action["_id"])
             scheduler.add_job(
-                _noop_stub,
+                _dispatch_scheduled_action,
                 "date",
                 run_date=fecha,
                 id=action_id,
@@ -77,21 +77,48 @@ async def _bootstrap_pending_jobs() -> int:
     return reloaded
 
 
-async def _noop_stub(action_id: str, tipo: str) -> None:
+async def _dispatch_scheduled_action(action_id: str, tipo: str) -> None:
     """
-    Stub job function for Phase 12. Phase 13 will replace this with real agent dispatch.
-    Marks the scheduled_action as 'ejecutado' when triggered.
+    Phase 13 replacement for _dispatch_scheduled_action.
+    Dispatches to run_outreach (tipo=reintento) or run_nurturing (tipo=nurturing).
     """
     logger.info("Landa scheduled action triggered: action_id=%s tipo=%s", action_id, tipo)
-    db = get_db()
     from bson import ObjectId
+
+    db = get_db()
+    action = await db.scheduled_actions.find_one({"_id": ObjectId(action_id)})
+    if not action:
+        logger.warning("Scheduled action %s not found in DB, skipping", action_id)
+        return
+
+    lead_id = action.get("lead_id")
+    user_id = action.get("user_id")
+    # Fallback: read user_id from the lead document if not stored in action
+    if not user_id and lead_id:
+        lead = await db.leads.find_one({"_id": ObjectId(lead_id)})
+        user_id = lead.get("user_id") if lead else None
+
+    canal = action.get("canal") or action.get("contexto", {}).get("canal", "email")
+    intento = int(action.get("intento", action.get("contexto", {}).get("intento", 1)))
+
     try:
+        if tipo == "reintento":
+            from outreach_agent import run_outreach
+            await run_outreach(lead_id, user_id, canal, intento=intento)
+        elif tipo == "nurturing":
+            from nurturing_agent import run_nurturing
+            await run_nurturing(lead_id, user_id)
+        # Mark action as executed
         await db.scheduled_actions.update_one(
             {"_id": ObjectId(action_id)},
             {"$set": {"estado": "ejecutado", "executed_at": datetime.now(timezone.utc)}},
         )
-    except Exception as e:
-        logger.error("Failed to mark action %s as ejecutado: %s", action_id, e)
+    except Exception as exc:
+        logger.error("[scheduler] Action %s (%s) failed: %s", action_id, tipo, exc)
+        await db.scheduled_actions.update_one(
+            {"_id": ObjectId(action_id)},
+            {"$set": {"estado": "error", "error": str(exc)}},
+        )
 
 
 async def schedule_retry(
@@ -124,7 +151,7 @@ async def schedule_retry(
 
     if scheduler.running:
         scheduler.add_job(
-            _noop_stub,
+            _dispatch_scheduled_action,
             "date",
             run_date=fecha,
             id=action_id,
@@ -163,7 +190,7 @@ async def schedule_nurturing(
 
     if scheduler.running:
         scheduler.add_job(
-            _noop_stub,
+            _dispatch_scheduled_action,
             "date",
             run_date=fecha,
             id=action_id,
