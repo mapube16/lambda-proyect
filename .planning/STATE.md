@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 12-03-PLAN.md
-last_updated: "2026-03-22T22:48:10.121Z"
+stopped_at: Completed 12-02-PLAN.md
+last_updated: "2026-03-22T22:49:00.000Z"
 last_activity: "2026-03-18 — Phase 1 complete: auth endpoints, MongoDB Motor, 21/21 tests pass"
 progress:
   total_phases: 14
   completed_phases: 0
   total_plans: 10
-  completed_plans: 5
-  percent: 38
+  completed_plans: 6
+  percent: 42
 ---
 
 # Project State
@@ -45,6 +45,7 @@ Progress: [████░░░░░░] 38%
 |-------|-------|-------|----------|
 | 01-auth-infrastructure | 3/3 ✓ | ~30 min | 10 min |
 | Phase 12-landa-foundation P01 | 5 | 1 tasks | 1 files |
+| Phase 12-landa-foundation P02 | ~8 min | 2 tasks | 4 files |
 | Phase 12 P03 | 5 | 2 tasks | 2 files |
 
 ## Accumulated Context
@@ -63,6 +64,7 @@ Recent decisions affecting current work:
 - [Phase 01]: ConnectionManager keyed by user_id (Dict[str, WebSocket]) — tenant isolation at WS layer
 - [Phase 12-landa-foundation]: 8 xfail stubs (2 per req) chosen over 4 to document both happy-path and error-path contracts from the start
 - [Phase 12-landa-foundation]: motor upgraded 3.3.2 to 3.7.1 and python-multipart installed to fix pre-existing env incompatibilities blocking conftest
+- [Phase 12-02]: VALID_TRANSITIONS is hardcoded dict[str,set[str]] — not DB-driven — per Documento B Sección 5.5; archivado is terminal by empty set construction
 
 ### Pending Todos
 
@@ -75,6 +77,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-22T22:48:10.112Z
-Stopped at: Completed 12-03-PLAN.md
+Last session: 2026-03-22T22:49:00.000Z
+Stopped at: Completed 12-02-PLAN.md
 Resume file: None
