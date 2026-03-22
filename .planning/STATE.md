@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 13-05-PLAN.md
-last_updated: "2026-03-22T23:42:19.516Z"
+stopped_at: Completed 13-06-PLAN.md
+last_updated: "2026-03-22T23:46:17.523Z"
 last_activity: "2026-03-18 — Phase 1 complete: auth endpoints, MongoDB Motor, 21/21 tests pass"
 progress:
   total_phases: 14
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 16
-  completed_plans: 12
+  completed_plans: 13
   percent: 38
 ---
 
@@ -79,6 +79,9 @@ Recent decisions affecting current work:
 - [Phase 13-04]: module-level imports in agent files required for unittest.mock patch() targets to work
 - [Phase 13-landa-agent-pipeline]: nurturing.py placed at backend/landa/agents/nurturing.py with backend/nurturing_agent.py as re-export shim to satisfy test imports and plan artifact spec simultaneously
 - [Phase 13-landa-agent-pipeline]: Module-level imports in nurturing.py required for unittest.mock.patch patchability — send_email and call_agent promoted from lazy to module-level
+- [Phase 13-landa-agent-pipeline]: approve_lead fetches leads once before api_key check, shared between embed and outreach tasks
+- [Phase 13-landa-agent-pipeline]: _dispatch_scheduled_action reads canal/intento from both top-level and nested contexto for Phase 12 backward compat
+- [Phase 13-landa-agent-pipeline]: scheduler user_id fallback: query lead document at dispatch time if not in action doc — avoids changing schedule_retry/schedule_nurturing signatures
 
 ### Pending Todos
 
@@ -91,6 +94,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-22T23:42:07.910Z
-Stopped at: Completed 13-05-PLAN.md
+Last session: 2026-03-22T23:45:57.049Z
+Stopped at: Completed 13-06-PLAN.md
 Resume file: None
