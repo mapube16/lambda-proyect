@@ -198,7 +198,15 @@ Plans:
   2. Leads con puntaje 40-69 pasan a nurturing; ≥70 van a checkpoint; <40 se descartan — el routing es automático post-scoring
   3. Un lead en nurturing recibe contenido mensual diferenciado según su `motivo_nurturing`; si responde con señal de reentrada, vuelve a checkpoint automáticamente
   4. El scoring del pipeline existente retorna `canales[]` con probabilidad por canal, usando señales del sector_profile
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 13-01-PLAN.md — Wave 0: xfail stubs for LANDA-05 through LANDA-08
+- [ ] 13-02-PLAN.md — Wave 1: Investigador scoring enrichment with sector_profile + automatic routing (LANDA-05, LANDA-06)
+- [ ] 13-03-PLAN.md — Wave 1: email_sender.py + whatsapp_sender.py (LANDA-07)
+- [ ] 13-04-PLAN.md — Wave 2: outreach_agent.py run_outreach() (LANDA-07)
+- [ ] 13-05-PLAN.md — Wave 2: nurturing_agent.py run_nurturing() (LANDA-08)
+- [ ] 13-06-PLAN.md — Wave 3: HITL hook integration + scheduler dispatch (LANDA-07, LANDA-08)
 
 ### Phase 14: Landa API & Checkpoint UI
 **Goal**: El humano puede revisar leads en checkpoint desde el frontend (aprobar/pausar/rechazar + elegir canal), tomar control de un handover, y reportar resultado de llamada — con notificaciones automáticas vía Slack y WhatsApp
