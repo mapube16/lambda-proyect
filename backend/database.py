@@ -33,6 +33,15 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.client_profiles.create_index("user_id", unique=True)
     await db.ideal_leads.create_index([("user_id", 1), ("lead_id", 1)], unique=True)
     await db.rejected_leads.create_index([("user_id", 1), ("lead_id", 1)], unique=True)
+    await db.whatsapp_agents.create_index("phone_number", unique=True)
+    await db.whatsapp_agents.create_index("cliente_id")
+    # ── Landa Foundation (Phase 12) indexes ──────────────────────────────────
+    await db.leads.create_index("estado")
+    await db.leads.create_index([("user_id", 1), ("estado", 1)])
+    await db.sector_profiles.create_index([("sector", 1), ("pais_region", 1)])
+    await db.scheduled_actions.create_index("fecha_programada")
+    await db.scheduled_actions.create_index([("estado", 1), ("fecha_programada", 1)])
+    await db.scheduled_actions.create_index("lead_id")
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
@@ -404,6 +413,20 @@ async def save_lead(run_id: str, user_id: str, lead_data: dict) -> str:
         "hitl_status": "pending",
         "hitl_at": None,
         "created_at": datetime.now(timezone.utc),
+        # ── Landa fields (Phase 12) — optional, default None ─────────────────
+        "estado": lead_data.get("estado"),
+        "decisor": lead_data.get("decisor"),
+        "canales": lead_data.get("canales"),
+        "canal_elegido": lead_data.get("canal_elegido"),
+        "puntaje": lead_data.get("puntaje"),
+        "criterios": lead_data.get("criterios", []),
+        "senales_intencion": lead_data.get("senales_intencion", []),
+        "recomendacion_agente": lead_data.get("recomendacion_agente"),
+        "motivo_nurturing": lead_data.get("motivo_nurturing"),
+        "intento_actual": lead_data.get("intento_actual", 1),
+        "fecha_entrada_nurturing": lead_data.get("fecha_entrada_nurturing"),
+        "ciclo_nurturing": lead_data.get("ciclo_nurturing", 0),
+        "historial_conversacion": lead_data.get("historial_conversacion", []),
     })
     return str(result.inserted_id)
 
@@ -719,3 +742,43 @@ async def get_all_client_summaries(user_ids: list[str]) -> dict[str, dict]:
             "active_campaign": campaigns_map.get(uid),
         }
     return result
+
+
+# ── WhatsApp Agents ───────────────────────────────────────────────────────────
+
+async def upsert_whatsapp_agent(config: dict) -> dict:
+    """Crea o actualiza la configuración de un agente WhatsApp por número de teléfono."""
+    db = get_db()
+    phone = config["phone_number"]
+    config["updated_at"] = datetime.now(timezone.utc)
+    await db.whatsapp_agents.update_one(
+        {"phone_number": phone},
+        {"$set": config, "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    return await get_whatsapp_agent(phone)
+
+
+async def get_whatsapp_agent(phone_number: str) -> Optional[dict]:
+    """Busca config de agente por número de teléfono del asesor."""
+    db = get_db()
+    doc = await db.whatsapp_agents.find_one({"phone_number": phone_number})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def list_whatsapp_agents(cliente_id: Optional[str] = None) -> list[dict]:
+    """Lista todos los agentes, opcionalmente filtrados por cliente."""
+    db = get_db()
+    query = {"cliente_id": cliente_id} if cliente_id else {}
+    docs = await db.whatsapp_agents.find(query).sort("created_at", -1).to_list(length=500)
+    for d in docs:
+        d["_id"] = str(d["_id"])
+    return docs
+
+
+async def delete_whatsapp_agent(phone_number: str) -> bool:
+    db = get_db()
+    result = await db.whatsapp_agents.delete_one({"phone_number": phone_number})
+    return result.deleted_count > 0
