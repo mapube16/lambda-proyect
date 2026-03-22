@@ -166,25 +166,109 @@ async def test_routing_40_to_69_transitions_to_nurturing(reset_db):
 
 # ── LANDA-07: Outreach agent sends message ────────────────────────────────────
 
-@pytest.mark.xfail(reason="LANDA-07 not implemented yet", strict=True)
-async def test_run_outreach_returns_true_on_success():
+async def test_run_outreach_returns_true_on_success(reset_db):
     """
     run_outreach(lead_id, user_id, "email", intento=1) returns True
     when SMTP mock succeeds. Asserts result is True.
     """
-    from landa.agents.outreach import run_outreach  # noqa
-    assert False
+    from landa.agents.outreach import run_outreach
+    from database import get_db
+    from datetime import datetime, timezone
+
+    db = get_db()
+    ins = await db.leads.insert_one({
+        "user_id": "test_user",
+        "company_name": "Empresa Test S.A.",
+        "url": "http://empresatest.co",
+        "estado": "checkpoint",
+        "canal_elegido": "email",
+        "decisor": {"nombre": "Ana García", "cargo": "Gerente", "email": "ana@empresatest.co"},
+        "intento_actual": 0,
+        "historial_conversacion": [],
+        "created_at": datetime.now(timezone.utc),
+    })
+    lead_id = str(ins.inserted_id)
+
+    company_voice_mock = {
+        "remitentes": [{"nombre": "Carlos Landa", "email": "carlos@landa.co"}],
+        "industria_objetivo": "Tecnología",
+        "ciudad_objetivo": "Bogotá",
+        "dolor_operativo": "Gestión manual de leads",
+        "solucion_ofrecida": "Automatización con IA",
+        "tono_comunicacion": "profesional",
+        "synced_from_profile": True,
+    }
+    sector_profile_mock = {
+        "decisor_primario": "Gerente de Tecnología",
+        "ganchos": ["ahorro de tiempo", "automatización"],
+        "canal_principal": "email",
+        "tono": "formal",
+    }
+
+    with patch("landa.agents.outreach.call_agent", new=AsyncMock(return_value="Hola Ana, me permito contactarle...")), \
+         patch("landa.agents.outreach.get_or_create_company_voice", new=AsyncMock(return_value=company_voice_mock)), \
+         patch("landa.agents.outreach.generate_sector_profile", new=AsyncMock(return_value=sector_profile_mock)), \
+         patch("landa.agents.outreach.send_email", new=AsyncMock(return_value=True)), \
+         patch("landa.agents.outreach.schedule_retry", new=AsyncMock(return_value="action123")):
+        result = await run_outreach(lead_id, "test_user", "email", intento=1)
+
+    assert result is True
 
 
-@pytest.mark.xfail(reason="LANDA-07 not implemented yet", strict=True)
-async def test_run_outreach_logs_to_historial():
+async def test_run_outreach_logs_to_historial(reset_db):
     """
     After run_outreach() completes, the lead document in MongoDB has
     historial_conversacion list with at least one entry containing
     {"tipo": "outreach", "canal": "email"}.
     """
-    from landa.agents.outreach import run_outreach  # noqa
-    assert False
+    from landa.agents.outreach import run_outreach
+    from database import get_db
+    from bson import ObjectId
+    from datetime import datetime, timezone
+
+    db = get_db()
+    ins = await db.leads.insert_one({
+        "user_id": "test_user",
+        "company_name": "Historial Corp",
+        "url": "http://historial.co",
+        "estado": "checkpoint",
+        "canal_elegido": "email",
+        "decisor": {"nombre": "Luis", "cargo": "CTO", "email": "luis@historial.co"},
+        "intento_actual": 0,
+        "historial_conversacion": [],
+        "created_at": datetime.now(timezone.utc),
+    })
+    lead_id = str(ins.inserted_id)
+
+    company_voice_mock = {
+        "remitentes": [{"nombre": "Vendedor", "email": "vendedor@landa.co"}],
+        "industria_objetivo": "Retail",
+        "ciudad_objetivo": "Medellín",
+        "dolor_operativo": "Costos elevados",
+        "solucion_ofrecida": "Reducción de costos",
+        "tono_comunicacion": "amigable",
+        "synced_from_profile": False,
+    }
+    sector_profile_mock = {
+        "decisor_primario": "Gerente Comercial",
+        "ganchos": [],
+        "canal_principal": "email",
+        "tono": "semiformal",
+    }
+
+    with patch("landa.agents.outreach.call_agent", new=AsyncMock(return_value="Estimado Luis...")), \
+         patch("landa.agents.outreach.get_or_create_company_voice", new=AsyncMock(return_value=company_voice_mock)), \
+         patch("landa.agents.outreach.generate_sector_profile", new=AsyncMock(return_value=sector_profile_mock)), \
+         patch("landa.agents.outreach.send_email", new=AsyncMock(return_value=True)), \
+         patch("landa.agents.outreach.schedule_retry", new=AsyncMock(return_value="action456")):
+        await run_outreach(lead_id, "test_user", "email", intento=1)
+
+    doc = await db.leads.find_one({"_id": ObjectId(lead_id)})
+    historial = doc.get("historial_conversacion", [])
+    assert len(historial) >= 1
+    entry = historial[0]
+    assert entry.get("tipo") == "outreach"
+    assert entry.get("canal") == "email"
 
 
 # ── LANDA-08: Nurturing agent content + re-entry detection ────────────────────
