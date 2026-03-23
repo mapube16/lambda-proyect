@@ -327,6 +327,16 @@ Plans:
 - [ ] 15-03-PLAN.md — Wave 1: WhatsApp fallback to email in outreach.py (ENRICH-03)
 - [ ] 15-04-PLAN.md — Wave 2: Integration smoke + human checkpoint (ENRICH-01, ENRICH-02, ENRICH-03)
 
+### Phase 16: WhatsApp Conversational Advisor Bot
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 15
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 16 to break down)
+
 ---
 
 ## Progress

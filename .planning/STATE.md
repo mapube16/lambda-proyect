@@ -57,6 +57,11 @@ Progress: [████░░░░░░] 40%
 
 ## Accumulated Context
 
+### Roadmap Evolution
+
+- Phase 15 added: Pipeline Enrichment + Real Channel Activation (SECOP bridge, NIT enricher, WhatsApp fallback)
+- Phase 16 added: WhatsApp Conversational Advisor Bot (LLM tool-calling bot para asesores via Twilio)
+
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table.
