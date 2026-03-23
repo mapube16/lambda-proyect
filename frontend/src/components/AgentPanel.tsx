@@ -2,8 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { useOfficeStore } from '../store/officeStore';
 import type { Lead as StoreLead } from '../store/officeStore';
 import type { AgentRole } from '../types';
+import { CheckpointModal } from './CheckpointModal';
+import { HandoverModal } from './HandoverModal';
 
-const API_URL = 'http://localhost:8001';
+const API_URL = 'http://localhost:8000';
 
 interface AgentPanelProps {
   createAgent: (name: string, role: string) => void;
@@ -637,10 +639,27 @@ const lc: Record<string, React.CSSProperties> = {
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
+function getSemanticWaitingText(agentName: string, checkpointCount: number): string {
+  const name = agentName.toLowerCase();
+  if (name.includes('investigador') || name.includes('buscador')) {
+    return checkpointCount > 0
+      ? `Tengo ${checkpointCount} candidato${checkpointCount > 1 ? 's' : ''} listos`
+      : 'En espera';
+  }
+  if (name.includes('outreach') || name.includes('redactor')) {
+    return 'Esperando respuesta';
+  }
+  if (name.includes('nurturing')) {
+    return 'Monitoreando señales';
+  }
+  return 'Listo';
+}
+
 export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPanelProps) {
   const {
     agents, connected, prospecting, leads, campaignSummary,
     activeTab, setActiveTab, clearLeads, activeCampaign,
+    checkpointLeads, handoverLead, clearCheckpointLead, setHandoverLead,
   } = useOfficeStore();
 
   const [campaign, setCampaign] = useState<Record<string, string>>(DEFAULT_CAMPAIGN);
@@ -648,6 +667,17 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
   const [campaignReady, setCampaignReady] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [chatResetKey, setChatResetKey] = useState(0);
+  const [showCheckpoint, setShowCheckpoint] = useState(false);
+  const [showHandover, setShowHandover] = useState(false);
+
+  const handleAgentClick = (agentState: string) => {
+    if (agentState !== 'waiting') return;
+    if (checkpointLeads.length > 0) {
+      setShowCheckpoint(true);
+    } else if (handoverLead) {
+      setShowHandover(true);
+    }
+  };
 
   // Pre-fill campaign from DB when it loads (only once, when not yet manually configured)
   const didHydrate = useRef(false);
@@ -702,18 +732,34 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
           {/* Agents mini-list */}
           {agents.size > 0 && (
             <div style={s.agentsMini}>
-              {Array.from(agents.values()).map(agent => (
-                <div key={agent.id} style={s.agentMini}>
-                  <span>{ROLE_ICONS[agent.role]}</span>
-                  <span style={{ flex: 1, fontSize: 12, color: '#ccc' }}>{agent.name}</span>
-                  <span style={{ ...s.miniDot, background: STATE_LABELS[agent.state]?.color || '#888' }} />
-                  {agent.tool_status && (
-                    <span style={{ fontSize: 10, color: '#78dce8', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {agent.tool_status}
-                    </span>
-                  )}
-                </div>
-              ))}
+              {Array.from(agents.values()).map(agent => {
+                const isWaiting = agent.state === 'waiting';
+                const stateLabel = isWaiting
+                  ? getSemanticWaitingText(agent.name, checkpointLeads.length)
+                  : (STATE_LABELS[agent.state]?.label || agent.state);
+                const stateColor = STATE_LABELS[agent.state]?.color || '#888';
+                return (
+                  <div
+                    key={agent.id}
+                    style={{ ...s.agentMini, cursor: isWaiting ? 'pointer' : 'default' }}
+                    onClick={() => handleAgentClick(agent.state)}
+                    title={isWaiting ? 'Click para abrir panel de acción' : undefined}
+                  >
+                    <span>{ROLE_ICONS[agent.role]}</span>
+                    <span style={{ flex: 1, fontSize: 12, color: '#ccc' }}>{agent.name}</span>
+                    {isWaiting ? (
+                      <span style={{ fontSize: 10, color: stateColor, fontStyle: 'italic' }}>{stateLabel}</span>
+                    ) : (
+                      <span style={{ ...s.miniDot, background: stateColor }} />
+                    )}
+                    {agent.tool_status && !isWaiting && (
+                      <span style={{ fontSize: 10, color: '#78dce8', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {agent.tool_status}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -843,6 +889,26 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
         <div style={{ ...s.tabContent, overflow: 'hidden' }}>
           <LeadsChat />
         </div>
+      )}
+
+      {/* ── Landa modals ── */}
+      {showCheckpoint && checkpointLeads.length > 0 && (
+        <CheckpointModal
+          lead={checkpointLeads[0]}
+          onClose={() => {
+            clearCheckpointLead(checkpointLeads[0].leadId);
+            setShowCheckpoint(false);
+          }}
+        />
+      )}
+      {showHandover && handoverLead && (
+        <HandoverModal
+          lead={handoverLead}
+          onClose={() => {
+            setHandoverLead(null);
+            setShowHandover(false);
+          }}
+        />
       )}
 
       {/* ── Tab: Aprobados ── */}
