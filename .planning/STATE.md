@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 14-01-PLAN.md
-last_updated: "2026-03-22T00:00:00Z"
+stopped_at: Completed 14-04-PLAN.md
+last_updated: "2026-03-23T03:56:22.639Z"
 last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
 progress:
   total_phases: 14
   completed_phases: 2
-  total_plans: 16
-  completed_plans: 14
+  total_plans: 23
+  completed_plans: 15
   percent: 40
 ---
 
@@ -51,6 +51,7 @@ Progress: [████░░░░░░] 40%
 | Phase 13 P02 | 18m | 2 tasks | 5 files |
 | Phase 13 P04 | 5m | 2 tasks | 4 files |
 | Phase 13 P05 | 5m | 2 tasks | 3 files |
+| Phase 14-landa-api-checkpoint-ui P04 | 5m | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,8 @@ Recent decisions affecting current work:
 - [Phase 13-landa-agent-pipeline]: _dispatch_scheduled_action reads canal/intento from both top-level and nested contexto for Phase 12 backward compat
 - [Phase 13-landa-agent-pipeline]: scheduler user_id fallback: query lead document at dispatch time if not in action doc — avoids changing schedule_retry/schedule_nurturing signatures
 - [Phase 14-01]: raise NotImplementedError used as xfail stub body (vs assert False in test_landa.py) — both trigger strict xfail; NotImplementedError is more semantically accurate for unimplemented endpoints
+- [Phase 14-04]: Used Depends(require_staff) consistent with all other /api/staff/* endpoints
+- [Phase 14-04]: upsert=True on db.company_voice.update_one handles both create and update without get_or_create_company_voice
 
 ### Pending Todos
 
@@ -95,6 +98,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-22T00:00:00Z
-Stopped at: Completed 14-01-PLAN.md
+Last session: 2026-03-23T03:56:22.635Z
+Stopped at: Completed 14-04-PLAN.md
 Resume file: None
