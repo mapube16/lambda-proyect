@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useOfficeStore } from '../store/officeStore';
 
-const API_URL = 'http://localhost:8001';
+const API_URL = 'http://localhost:8000';
 
 // Pipeline agents definition (mirrors hive_graph.py PIPELINE_AGENTS)
 const PIPELINE_AGENTS = [
@@ -41,6 +41,7 @@ interface ClientData {
   last_run_at: string | null;
   last_run_status: string | null;
   active_campaign: Record<string, string> | null;
+  fuentes_habilitadas?: string[];
 }
 
 interface Lead {
@@ -1259,6 +1260,11 @@ export function StaffDashboard() {
                 )}
               </Section>
 
+              {/* Fuentes de descubrimiento */}
+              <Section title="Fuentes de descubrimiento">
+                <FuentesPanel client={selectedClient} />
+              </Section>
+
               {/* Leads */}
               <Section title={`Leads (${clientLeads.length})`}>
                 {clientLeads.length === 0 ? (
@@ -1340,6 +1346,58 @@ export function StaffDashboard() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function FuentesPanel({ client }: { client: ClientData }) {
+  const token = useOfficeStore.getState().authToken;
+  const [fuentes, setFuentes] = useState<string[]>(client.fuentes_habilitadas ?? ['google_maps']);
+  const [saving, setSaving] = useState(false);
+
+  const toggleFuente = async (fuente: string) => {
+    const updated = fuentes.includes(fuente)
+      ? fuentes.filter(f => f !== fuente)
+      : [...fuentes, fuente];
+    // Always keep google_maps
+    const final = updated.includes('google_maps') ? updated : ['google_maps', ...updated];
+    setFuentes(final);
+    setSaving(true);
+    try {
+      await fetch(`${API_URL}/api/staff/clients/${client.id}/sources`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ fuentes_habilitadas: final }),
+      });
+    } catch (e) {
+      console.error('[FuentesPanel]', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const FUENTE_LABELS: Record<string, string> = {
+    google_maps: 'Google Maps + Web scraping',
+    secop_adjudicados: 'SECOP — Empresas adjudicadas (premium)',
+    secop_licitaciones: 'SECOP — Licitaciones abiertas (premium — aseguradoras)',
+  };
+
+  return (
+    <div style={{ marginTop: 16, padding: 12, background: '#252535', borderRadius: 6 }}>
+      <div style={{ color: '#ffd866', fontFamily: 'monospace', fontSize: 11, marginBottom: 8 }}>
+        Fuentes de descubrimiento {saving && '(guardando...)'}
+      </div>
+      {Object.entries(FUENTE_LABELS).map(([key, label]) => (
+        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: key === 'google_maps' ? 'default' : 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={fuentes.includes(key)}
+            disabled={key === 'google_maps'}
+            onChange={() => key !== 'google_maps' && toggleFuente(key)}
+          />
+          <span style={{ color: '#ccc', fontSize: 11, fontFamily: 'monospace' }}>{label}</span>
+        </label>
+      ))}
     </div>
   );
 }
