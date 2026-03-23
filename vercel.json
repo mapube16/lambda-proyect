@@ -1,0 +1,10 @@
+{
+  "buildCommand": "cd frontend && npm install && npm run build",
+  "outputDirectory": "frontend/dist",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://TU-APP.railway.app/api/:path*" },
+    { "source": "/auth/:path*", "destination": "https://TU-APP.railway.app/auth/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "_envVarsNote": "Backend env vars (set in Railway): WA_TOKEN, WA_PHONE_ID (WhatsApp Business outreach), OPENAI_API_KEY, MONGO_URL, SECRET_KEY"
+}
