@@ -74,6 +74,18 @@ export interface CampaignSummary {
   total_rejected: number;
 }
 
+export interface LandaCheckpointLead {
+  leadId: string;
+  empresa: string;
+  puntaje: number;
+}
+
+export interface LandaHandoverLead {
+  leadId: string;
+  empresa: string;
+  canal: string;
+}
+
 interface OfficeStore {
   agents: Map<string, Agent>;
   characters: Map<string, Character>;
@@ -109,6 +121,12 @@ interface OfficeStore {
   setCampaignSummary: (s: CampaignSummary) => void;
   setActiveTab: (tab: 'campaign' | 'results' | 'approved' | 'chat') => void;
   setActiveCampaign: (campaign: Record<string, string> | null) => void;
+  checkpointLeads: LandaCheckpointLead[];
+  handoverLead: LandaHandoverLead | null;
+  addCheckpointLead: (lead: LandaCheckpointLead) => void;
+  clearCheckpointLead: (leadId: string) => void;
+  setHandoverLead: (lead: LandaHandoverLead | null) => void;
+
   setAuth: (token: string, email: string, role: 'staff' | 'client') => void;
   clearAuth: () => void;
 }
@@ -164,6 +182,8 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   userEmail: sessionStorage.getItem('hive_email'),
   userRole: (sessionStorage.getItem('hive_role') as 'staff' | 'client' | null) ?? null,
   authToken: sessionStorage.getItem('hive_token'),
+  checkpointLeads: [],
+  handoverLead: null,
 
   setAgents: (agents) => {
     // Full reset: clear all seat assignments
@@ -291,6 +311,12 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   setCampaignSummary: (campaignSummary) => set({ campaignSummary }),
   setActiveTab: (activeTab) => set({ activeTab }),
   setActiveCampaign: (activeCampaign) => set({ activeCampaign }),
+
+  addCheckpointLead: (lead) =>
+    set((s) => ({ checkpointLeads: [...s.checkpointLeads.filter(l => l.leadId !== lead.leadId), lead] })),
+  clearCheckpointLead: (leadId) =>
+    set((s) => ({ checkpointLeads: s.checkpointLeads.filter(l => l.leadId !== leadId) })),
+  setHandoverLead: (lead) => set({ handoverLead: lead }),
 
   setAuth: (token, email, role) => {
     sessionStorage.setItem('hive_token', token);

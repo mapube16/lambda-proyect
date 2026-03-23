@@ -1,10 +1,13 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useOfficeStore } from '../store/officeStore';
-import type { Lead } from '../store/officeStore';
+import type { Lead, LandaCheckpointLead, LandaHandoverLead } from '../store/officeStore';
 import type { WSMessage, AgentUpdateMessage, InitialStateMessage, Agent } from '../types';
 
-const API_URL = 'http://localhost:8001';
-const WS_URL_BASE = 'ws://localhost:8001/ws';
+const BACKEND = import.meta.env.VITE_BACKEND_URL || '';
+const API_URL = BACKEND;
+const WS_URL_BASE = BACKEND
+  ? BACKEND.replace(/^https/, 'wss').replace(/^http/, 'ws') + '/ws'
+  : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
 
 const MAX_RECONNECT_DELAY = 30_000;
 
@@ -30,6 +33,8 @@ export function useWebSocket() {
     setCampaignSummary,
     setActiveTab,
     setActiveCampaign,
+    addCheckpointLead,
+    setHandoverLead,
     isAuthenticated,
     authToken,
   } = useOfficeStore();
@@ -181,13 +186,29 @@ export function useWebSocket() {
         console.log('🔍 Discovery:', (data as unknown as { count: number }).count, 'companies found');
         break;
       }
+      case 'lead_checkpoint': {
+        const msg = data as unknown as { type: string } & Omit<LandaCheckpointLead, 'leadId'> & { lead_id: string };
+        addCheckpointLead({ leadId: msg.lead_id, empresa: msg.empresa, puntaje: msg.puntaje });
+        break;
+      }
+      case 'lead_handover': {
+        const msg = data as unknown as { type: string } & Omit<LandaHandoverLead, 'leadId'> & { lead_id: string };
+        setHandoverLead({ leadId: msg.lead_id, empresa: msg.empresa, canal: msg.canal });
+        break;
+      }
+      case 'lead_archived': {
+        const msg = data as unknown as { type: string; lead_id: string };
+        const { clearCheckpointLead } = useOfficeStore.getState();
+        clearCheckpointLead(msg.lead_id);
+        break;
+      }
       case 'pong':
         break;
       default:
         console.log('Unknown message type:', data.type);
     }
   }, [setAgents, updateAgent, addAgent, removeAgent, setExpediente, setProspecting,
-      addLead, clearLeads, setCampaignSummary, setActiveTab]);
+      addLead, clearLeads, setCampaignSummary, setActiveTab, addCheckpointLead, setHandoverLead]);
 
   useEffect(() => {
     // Don't connect if not authenticated
