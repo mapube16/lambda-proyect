@@ -309,12 +309,24 @@ Plans:
 - [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
 - [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
+### Phase 15: Pipeline Enrichment + Real Channel Activation
+**Goal**: El pipeline del investigador lee `fuentes_habilitadas` de `company_voice` para activar SECOP realmente (B), enriquece leads con datos del NIT colombiano antes de generar el expediente (C), y el canal WhatsApp funciona end-to-end al extraer el teléfono del decisor durante el análisis (A)
+**Depends on**: Phase 14
+**Requirements**: ENRICH-01, ENRICH-02, ENRICH-03
+
+**Success Criteria** (what must be TRUE):
+  1. Activar `secop_adjudicados` en StaffDashboard hace que el Investigador incluya empresas de SECOP en la siguiente run — verificable en los logs del servidor
+  2. Después de scoring, `enrich_nit()` se llama con el NIT de la empresa (si existe) y los datos enriquecidos (`contratos_secop`, `valor_total_contratado`, `razon_social_rues`) aparecen en el expediente del lead en MongoDB
+  3. Seleccionar canal "whatsapp" en CheckpointModal resulta en un mensaje real enviado si el investigador extrajo el teléfono del decisor; si no hay teléfono, el sistema hace fallback a email y lo registra
+
+**Plans**: TBD
+
 ---
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -331,4 +343,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 11. Continuous Learning Loop | 1/1 | Complete | 2026-03-20 |
 | 12. Landa Foundation | 4/4 | Complete   | 2026-03-22 |
 | 13. Landa Agent Pipeline | 6/6 | Complete   | 2026-03-22 |
-| 14. Landa API & Checkpoint UI | 6/7 | In Progress|  |
+| 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
+| 15. Pipeline Enrichment + Real Channel Activation | 0/TBD | Planned | - |
