@@ -1570,6 +1570,330 @@ async def staff_client_learning(
     }
 
 
+VALID_SOURCES = {"google_maps", "secop_adjudicados", "secop_licitaciones"}
+
+
+class ClientSourcesRequest(_BaseModel):
+    fuentes_habilitadas: list[str]  # ["google_maps", "secop_adjudicados", "secop_licitaciones"]
+
+
+@app.post("/api/staff/clients/{target_user_id}/sources")
+async def update_client_sources(
+    target_user_id: str,
+    request: ClientSourcesRequest,
+    _staff: dict = Depends(require_staff),
+):
+    """
+    Set the enabled discovery sources for a client.
+    Staff-only. Valid values: google_maps, secop_adjudicados, secop_licitaciones.
+    """
+    invalid = [s for s in request.fuentes_habilitadas if s not in VALID_SOURCES]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid sources: {invalid}. Valid values: {sorted(VALID_SOURCES)}",
+        )
+
+    db = get_db()
+    await db.company_voice.update_one(
+        {"user_id": target_user_id},
+        {"$set": {"fuentes_habilitadas": request.fuentes_habilitadas}},
+        upsert=True,
+    )
+    return {
+        "status": "ok",
+        "user_id": target_user_id,
+        "fuentes_habilitadas": request.fuentes_habilitadas,
+    }
+
+
+# ============ Lead Lifecycle API (Phase 14 — LANDA-09) ============
+
+class LeadDecisionRequest(_BaseModel):
+    decision: str                  # "aprobar" | "pausar" | "rechazar"
+    canal_elegido: str | None = None
+    motivo: str | None = None
+
+
+DECISION_MAP = {"aprobar": "outreach", "pausar": "pausado", "rechazar": "nurturing"}
+
+
+@app.get("/api/leads/checkpoint")
+async def get_checkpoint_leads(current_user: dict = Depends(get_current_user)):
+    """Return all leads in estado='checkpoint' for the authenticated user."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    leads = await db.leads.find(
+        {"user_id": user_id, "estado": "checkpoint"}
+    ).sort("estado_updated_at", -1).to_list(length=100)
+    result = []
+    for l in leads:
+        l["_id"] = str(l["_id"])
+        result.append({
+            "id": l["_id"],
+            "empresa": l.get("company_name") or l.get("empresa", ""),
+            "decisor": l.get("decisor"),
+            "puntaje": l.get("puntaje", 0),
+            "criterios": l.get("criterios", []),
+            "senales": l.get("señales", l.get("senales", [])),
+            "canales": l.get("canales", []),
+            "canal_elegido": l.get("canal_elegido"),
+            "estado": l.get("estado"),
+        })
+    return result
+
+
+@app.post("/api/leads/{lead_id}/decision")
+async def lead_decision(
+    lead_id: str,
+    request: LeadDecisionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Process a human decision on a checkpoint lead: aprobar, pausar, or rechazar."""
+    from landa.state_machine import update_lead_estado
+    from landa.agents.outreach import run_outreach as _run_outreach
+
+    user_id = str(current_user["user_id"])
+    new_estado = DECISION_MAP.get(request.decision)
+    if not new_estado:
+        raise HTTPException(status_code=400, detail=f"Unknown decision: {request.decision}")
+
+    db = get_db()
+    # Set motivo_nurturing before transition if rechazar
+    if request.decision == "rechazar":
+        from bson import ObjectId as _ObjId
+        motivo = request.motivo or "rechazado_humano"
+        await db.leads.update_one(
+            {"_id": _ObjId(lead_id)},
+            {"$set": {"motivo_nurturing": motivo}},
+        )
+
+    try:
+        updated = await update_lead_estado(lead_id, user_id, new_estado)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Fire-and-forget outreach
+    if request.decision == "aprobar":
+        canal = request.canal_elegido or updated.get("canal_elegido", "email")
+        asyncio.create_task(_run_outreach(lead_id, user_id, canal, intento=1))
+        await manager.send_to_user(user_id, {
+            "type": "lead_checkpoint",
+            "lead_id": lead_id,
+            "empresa": updated.get("company_name") or updated.get("empresa", ""),
+            "puntaje": updated.get("puntaje", 0),
+            "accion": "aprobado",
+        })
+    elif request.decision == "rechazar":
+        await manager.send_to_user(user_id, {
+            "type": "lead_archived",
+            "lead_id": lead_id,
+            "empresa": updated.get("company_name") or updated.get("empresa", ""),
+        })
+    else:
+        await manager.send_to_user(user_id, {
+            "type": "agent_state",
+            "agent": "investigador",
+            "state": "idle",
+            "message": f"Lead pausado: {updated.get('company_name', lead_id)}",
+        })
+
+    return {"status": "ok", "lead_id": lead_id, "nuevo_estado": new_estado}
+
+
+# ============ Lead Lifecycle API (Phase 14 — LANDA-10, LANDA-11) ============
+
+class CallReportRequest(_BaseModel):
+    resultado: str          # "bien" | "mas_o_menos" | "mal" | "no_pude"
+    detalle: str | None = None
+    sub_tipo: str | None = None
+
+
+@app.get("/api/leads/{lead_id}/handover")
+async def get_handover(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Return handover package: full lead doc, conversation thread,
+    original qualification, and an AI-generated closing suggestion.
+    sugerencia_cierre is non-fatal — returns "" if OPENAI_API_KEY not set.
+    """
+    from landa.core.context import call_agent as _call_agent
+    from bson import ObjectId as _ObjId
+
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    try:
+        lead = await db.leads.find_one({"_id": _ObjId(lead_id), "user_id": user_id})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid lead_id")
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    lead["_id"] = str(lead["_id"])
+
+    hilo = lead.get("historial_conversacion", [])
+    calificacion = {
+        "puntaje": lead.get("puntaje", 0),
+        "criterios": lead.get("criterios", []),
+        "canales": lead.get("canales", []),
+    }
+
+    empresa = lead.get("company_name") or lead.get("empresa", "empresa desconocida")
+    decisor = lead.get("decisor", "el decisor")
+    system_prompt = "Eres un experto en ventas B2B colombianas."
+    user_message = (
+        f"Genera una sugerencia de cierre concisa (2-3 oraciones) para llamar a {decisor} "
+        f"de {empresa}. Contexto del hilo: {str(hilo)[-500:]}"
+    )
+    try:
+        sugerencia = await _call_agent(system_prompt, user_message)
+    except Exception:
+        sugerencia = ""
+
+    return {
+        "lead": lead,
+        "hilo_conversacion": hilo,
+        "calificacion_original": calificacion,
+        "sugerencia_cierre": sugerencia,
+    }
+
+
+@app.post("/api/leads/{lead_id}/handover/tomar")
+async def handover_tomar(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Human takes over the lead:
+    - Cancel all pending scheduler actions
+    - Transition to 'handover' state
+    - Schedule 48h no-report notification job
+    - Emit lead_handover WebSocket event
+    """
+    from landa.state_machine import update_lead_estado
+    from landa.scheduler import cancel_lead_actions, schedule_retry
+    from bson import ObjectId as _ObjId
+
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    try:
+        lead = await db.leads.find_one({"_id": _ObjId(lead_id), "user_id": user_id})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid lead_id")
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # Cancel all pending scheduler jobs for this lead
+    await cancel_lead_actions(lead_id)
+
+    # Transition to handover state
+    try:
+        updated = await update_lead_estado(lead_id, user_id, "handover")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Schedule 48h no-report notification (RESEARCH pitfall 2)
+    await schedule_retry(lead_id, canal="notificacion_48h", days=2)
+
+    canal = lead.get("canal_elegido", "email")
+    empresa = updated.get("company_name") or updated.get("empresa", "")
+    await manager.send_to_user(user_id, {
+        "type": "lead_handover",
+        "lead_id": lead_id,
+        "empresa": empresa,
+        "canal": canal,
+    })
+
+    return {"status": "ok", "lead_id": lead_id, "estado": "handover"}
+
+
+@app.post("/api/leads/{lead_id}/reporte-llamada")
+async def reporte_llamada(
+    lead_id: str,
+    request: CallReportRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Log call outcome for a lead:
+    - 'bien'/'mas_o_menos': fire-and-forget AI interpretation, return 200 immediately
+    - 'mal': transition to nurturing, set motivo_nurturing
+    - 'no_pude' sub_tipo='ocupado'/'apagado': schedule_retry(days=1)
+    - 'no_pude' sub_tipo='incorrecto': set buscar_numero_alternativo=True (no state transition)
+    - 'no_pude' sub_tipo='corto': schedule_retry(days=7)
+    """
+    from landa.state_machine import update_lead_estado
+    from landa.scheduler import schedule_retry
+    from landa.core.context import call_agent as _call_agent
+    from bson import ObjectId as _ObjId
+
+    user_id = str(current_user["user_id"])
+    db = get_db()
+
+    try:
+        lead = await db.leads.find_one({"_id": _ObjId(lead_id), "user_id": user_id})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid lead_id")
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    resultado = request.resultado
+    detalle = request.detalle or ""
+    sub_tipo = request.sub_tipo or ""
+
+    if resultado == "mal":
+        await db.leads.update_one(
+            {"_id": _ObjId(lead_id)},
+            {"$set": {"motivo_nurturing": detalle or "llamada_mal"}},
+        )
+        try:
+            await update_lead_estado(lead_id, user_id, "nurturing")
+        except ValueError:
+            pass  # Already in nurturing or terminal state — non-fatal
+
+    elif resultado == "no_pude":
+        if sub_tipo in ("ocupado", "apagado"):
+            canal = lead.get("canal_elegido", "telefono")
+            await schedule_retry(lead_id, canal=canal, days=1)
+        elif sub_tipo == "incorrecto":
+            # Flag for alternative contact discovery — NOT a state transition (RESEARCH pitfall 4)
+            await db.leads.update_one(
+                {"_id": _ObjId(lead_id)},
+                {"$set": {"buscar_numero_alternativo": True}},
+            )
+        elif sub_tipo == "corto":
+            canal = lead.get("canal_elegido", "telefono")
+            await schedule_retry(lead_id, canal=canal, days=7)
+
+    elif resultado in ("bien", "mas_o_menos"):
+        # Fire-and-forget AI interpretation — return 200 immediately
+        async def _interpret_and_act():
+            empresa_ia = lead.get("company_name") or lead.get("empresa", "empresa")
+            sp = "Eres un coordinador de ventas B2B."
+            um = (
+                f"Resultado de llamada '{resultado}' con {empresa_ia}. "
+                f"Detalle del vendedor: '{detalle}'. "
+                f"Decide la siguiente acción: nurturing, reintento en 3 días, o handover completo. "
+                f"Responde con solo una de: nurturing | reintento_3d | handover_completo"
+            )
+            try:
+                decision_ia = await _call_agent(sp, um)
+                decision_ia = decision_ia.strip().lower()
+                if "nurturing" in decision_ia:
+                    await update_lead_estado(lead_id, user_id, "nurturing")
+                elif "reintento" in decision_ia:
+                    canal_ret = lead.get("canal_elegido", "email")
+                    await schedule_retry(lead_id, canal=canal_ret, days=3)
+                # "handover_completo" — lead stays in current state, human acts
+            except Exception:
+                pass
+        asyncio.create_task(_interpret_and_act())
+
+    empresa = lead.get("company_name") or lead.get("empresa", "")
+    await manager.send_to_user(user_id, {
+        "type": "agent_state",
+        "agent": "outreach",
+        "state": "idle",
+        "message": f"Reporte registrado para {empresa}",
+    })
+
+    return {"status": "ok", "lead_id": lead_id, "resultado": resultado}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
