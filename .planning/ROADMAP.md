@@ -327,12 +327,25 @@ Plans:
 - [ ] 15-03-PLAN.md — Wave 1: WhatsApp fallback to email in outreach.py (ENRICH-03)
 - [ ] 15-04-PLAN.md — Wave 2: Integration smoke + human checkpoint (ENRICH-01, ENRICH-02, ENRICH-03)
 
-### Phase 16: WhatsApp Conversational Advisor Bot
+### Phase 16: WhatsApp como Canal Completo de Landa
 
-**Goal:** [To be planned]
-**Requirements**: TBD
-**Depends on:** Phase 15
-**Plans:** 0 plans
+**Goal**: Cualquier cliente de Landa puede elegir operar su flujo completo desde WhatsApp — recibir notificaciones de checkpoint/handover, aprobar/rechazar leads, reportar llamadas y configurar campañas via conversación. Los asesores internos de Landa también pueden buscar prospectos SECOP y gestionar leads desde WhatsApp. La web (pixel art office) y WhatsApp son canales equivalentes — el usuario elige.
+**Depends on**: Phase 15
+**Requirements**: WA-01, WA-02, WA-03, WA-04
+
+**Success Criteria** (what must be TRUE):
+  1. Cuando un lead llega a checkpoint, si el cliente tiene `notification_channel` = "whatsapp" o "both", recibe un mensaje WA con el resumen del lead y puede responder "aprobar email", "pausar" o "rechazar" — la respuesta ejecuta `POST /api/leads/{id}/decision` correctamente
+  2. Cuando un lead entra en handover (prospecto respondió), el cliente recibe un mensaje WA con el hilo de conversación y puede responder "tomar control" — ejecuta `POST /api/leads/{id}/handover/tomar`
+  3. Un asesor interno puede escribir "empresas de construcción en Bogotá en SECOP" y recibir una lista de prospectos con NIT, decisor y valor de contratos — conversación multi-turno con contexto
+  4. El cliente puede configurar su `notification_channel` ("web", "whatsapp", "both") desde el StaffDashboard y la preferencia persiste — sin necesidad de tocar código
+
+**Arquitectura:**
+- Webhook entrante: `POST /api/whatsapp/incoming` (Twilio o Meta Cloud API)
+- Router de notificaciones: al emitir `lead_checkpoint`, `lead_handover`, etc., el sistema consulta `company_voice.notification_channel` y enruta a WebSocket, WA, o ambos
+- LLM con tool calling: intención libre → herramientas (buscar_licitaciones, aprobar_lead, rechazar_lead, ver_handover, enriquecer_nit)
+- Sesiones por número de teléfono en MongoDB (reemplaza dict en memoria de whatsapp_agent.py)
+- Dos perfiles de usuario: `asesor_interno` (acceso a SECOP, gestión de múltiples clientes) y `cliente` (acceso solo a sus propios leads)
+**Plans:** TBD
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 16 to break down)
@@ -342,7 +355,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -361,3 +374,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 13. Landa Agent Pipeline | 6/6 | Complete   | 2026-03-22 |
 | 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
+| 16. WhatsApp como Canal Completo de Landa | 0/TBD | Planned | - |
