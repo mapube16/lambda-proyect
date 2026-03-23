@@ -65,7 +65,16 @@ Plans:
   2. All 9 nodes execute in sequence: `sourcing_node` → `scraping_node` → `scoring_node` → `veto_router` → `spiced_analyzer` → `jtbd_deducer` → `email_composer` → `expediente_generator` → `human_review` — confirmed in server logs
   3. The system prompt sent to the central prospector node contains the interpolated values of all 10 campaign variables (verified in LLM request log)
   4. A run triggered with a real Colombian B2B URL reaches the `human_review` node without crashing
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ### Phase 4: Scraping Safety and Output Validation
 **Goal**: Scraped web content is sanitized before LLM injection and every LLM node output is validated against a schema before passing to the next node — the pipeline is hardened against prompt injection and malformed outputs
@@ -75,7 +84,16 @@ Plans:
   1. Raw HTML from a scraped URL is stripped to plain text, truncated at 8,000 characters, and wrapped in structural delimiters before it reaches the LLM — confirmed by inspecting the actual prompt sent
   2. A deliberately malformed LLM response (missing required JSON field) causes the node to return a structured error, not an unhandled exception
   3. A scraped page containing prompt-injection text (e.g., "Ignore previous instructions") does not alter the pipeline's scoring behavior in a detectable way
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ### Phase 5: HITL Loop
 **Goal**: When the pipeline reaches `human_review`, the run suspends with durable SQLite state; the agent character freezes visually; the user can approve or reject from the dashboard and the pipeline resumes correctly
@@ -85,7 +103,16 @@ Plans:
   1. When a run reaches `human_review`, a `hitl_request` WebSocket message is delivered to the user and the agent character visually enters a frozen/waiting state in the office
   2. After a server restart while a run is suspended at HITL, the pending state is recoverable from SQLite — the approve/reject buttons still function
   3. Clicking Approve resumes the pipeline from the suspended node and it completes; clicking Reject terminates the run and records the rejection outcome
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ### Phase 6: Campaign Configuration
 **Goal**: A user can fill the 10-variable campaign form before launching a run, the configuration persists in SQLite for reuse, and the AgentPanel always displays the current agent's name, role, and active campaign variables
@@ -95,7 +122,16 @@ Plans:
   1. A user can open the campaign configuration form, fill all 10 fields with validation, and submit — the run uses those exact values
   2. After closing and reopening the browser, the user's last-saved campaign configuration is pre-populated in the form
   3. The AgentPanel sidebar shows the active agent's name, role, and current campaign variable values without requiring any navigation away from the office canvas
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ### Phase 7: Lead Dashboard
 **Goal**: Completed runs with score >= 70 display a full expediente card; kill switch rejections display the rejection code and evidence; all email drafts are copyable with one click
@@ -105,7 +141,16 @@ Plans:
   1. A successful run (score >= 70) shows a card with: numeric score, profile tier (A/B), key decisor name/title/email, detected tech stack, trigger, and the personalized email draft
   2. Clicking a copy button on an email draft places the full draft text on the clipboard with no additional steps
   3. A run that triggered a kill switch shows the specific kill switch code (e.g., `KILL_B2C`) and the text excerpt from the scraped content that justified it
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ### Phase 8: Real-Time Visualization
 **Goal**: Each of the 9 pipeline nodes maps to a distinct character animation state in the pixel office; state updates arrive via WebSocket without blocking the canvas render loop; pipeline errors surface as visible error states on the character — not blank screens
@@ -115,7 +160,16 @@ Plans:
   1. During a live run, the office character changes animation (searching, processing, writing, waiting) as each graph node transitions — observable in real time on screen
   2. The canvas game loop continues running at target frame rate while WebSocket messages are being received during an active run — no jank or freezing
   3. When a pipeline error occurs (scraping failure, LLM timeout), the character displays an error state and the office UI shows the error message — the screen does not go blank or crash
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ---
 
@@ -134,7 +188,16 @@ Plans:
   - Vector store: MongoDB Atlas Vector Search (collection: `client_knowledge`, namespace per `client_id`)
   - Ingestion: PyMuPDF (PDFs) + python-docx (Word) + existing scraper (URLs)
   - RAG query: injected into Queen context window before each campaign run
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ---
 
@@ -151,7 +214,16 @@ Plans:
   - Each conversation turn is stored in MongoDB (`client_conversations` collection) with extracted intents
   - Conversation history + RAG context are both injected into the Queen on each turn
   - The pixel office chat panel replaces/extends the current onboarding chat
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ---
 
@@ -168,7 +240,16 @@ Plans:
   - "ADN del cliente ideal" = living vector centroid that updates after each approved lead
   - Blacklisted companies (from chat feedback "ya son clientes") are stored and permanently excluded from future discovery
   - The Redactor gets access to a `winning_emails` subcorpus: emails from leads that were approved AND the client later reported as replied — style transferred to future drafts
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ---
 
@@ -217,7 +298,16 @@ Plans:
   2. `GET /api/leads/{id}/handover` devuelve el paquete completo (hilo, calificación, sugerencia de cierre); `POST /api/leads/{id}/handover/tomar` pausa el agente en ese lead
   3. `POST /api/leads/{id}/reporte-llamada` procesa los 4 resultados (bien/mas_o_menos/mal/no_pude) y ejecuta la lógica interna correcta (nurturing, reintento, handover, etc.)
   4. El frontend muestra la pantalla de checkpoint con cards de leads, botones aprobar/pausar/rechazar, selector de canal, y se actualiza en tiempo real via WebSocket
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 0: xfail stubs for LANDA-09, LANDA-10, LANDA-11
+- [ ] 14-02-PLAN.md — Wave 1: GET /api/leads/checkpoint + POST /api/leads/{id}/decision (LANDA-09)
+- [ ] 14-03-PLAN.md — Wave 1: GET+POST /handover + POST /reporte-llamada (LANDA-10, LANDA-11)
+- [ ] 14-04-PLAN.md — Wave 1: POST /api/staff/clients/{id}/sources (LANDA-12 backend)
+- [ ] 14-05-PLAN.md — Wave 2: officeStore + useWebSocket Landa event handlers (LANDA-12)
+- [ ] 14-06-PLAN.md — Wave 2: CheckpointModal + HandoverModal components (LANDA-12)
+- [ ] 14-07-PLAN.md — Wave 3: Wire AgentPanel + StaffDashboard + visual checkpoint (LANDA-12)
 
 ---
 
