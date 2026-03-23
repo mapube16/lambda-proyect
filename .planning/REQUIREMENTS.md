@@ -67,8 +67,8 @@
 
 #### Phase 14 — API & Checkpoint UI
 - [ ] **LANDA-09**: `GET /api/leads/checkpoint` retorna leads en estado checkpoint del usuario autenticado con puntaje, criterios, señales y canales; `POST /api/leads/{id}/decision` acepta decision(aprobar/pausar/rechazar) + canal_elegido + motivo y ejecuta la transición de estado
-- [ ] **LANDA-10**: `GET /api/leads/{id}/handover` retorna paquete completo (lead, hilo_conversacion, calificacion_original, sugerencia_cierre); `POST /api/leads/{id}/handover/tomar` congela el agente en ese lead
-- [ ] **LANDA-11**: `POST /api/leads/{id}/reporte-llamada` acepta resultado(bien/mas_o_menos/mal/no_pude) + sub_tipo; ejecuta lógica: bien/mas_o_menos → IA decide; mal → nurturing; no_pude ocupado/apagado → reintento 24h; incorrecto → buscar alternativo; corto → intento 1
+- [x] **LANDA-10**: `GET /api/leads/{id}/handover` retorna paquete completo (lead, hilo_conversacion, calificacion_original, sugerencia_cierre); `POST /api/leads/{id}/handover/tomar` congela el agente en ese lead
+- [x] **LANDA-11**: `POST /api/leads/{id}/reporte-llamada` acepta resultado(bien/mas_o_menos/mal/no_pude) + sub_tipo; ejecuta lógica: bien/mas_o_menos → IA decide; mal → nurturing; no_pude ocupado/apagado → reintento 24h; incorrecto → buscar alternativo; corto → intento 1
 - [x] **LANDA-12**: Frontend muestra vista Checkpoint con cards de leads (empresa, decisor, puntaje, canales con probabilidades), botones Aprobar/Pausar/Rechazar, selector de canal — se actualiza en tiempo real via WebSocket cuando llegan nuevos leads a checkpoint
 
 ## v2 Requirements
