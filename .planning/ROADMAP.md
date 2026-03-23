@@ -319,7 +319,13 @@ Plans:
   2. Después de scoring, `enrich_nit()` se llama con el NIT de la empresa (si existe) y los datos enriquecidos (`contratos_secop`, `valor_total_contratado`, `razon_social_rues`) aparecen en el expediente del lead en MongoDB
   3. Seleccionar canal "whatsapp" en CheckpointModal resulta en un mensaje real enviado si el investigador extrajo el teléfono del decisor; si no hay teléfono, el sistema hace fallback a email y lo registra
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 15-01-PLAN.md — Wave 0: 7 xfail stubs for ENRICH-01, ENRICH-02, ENRICH-03 in backend/tests/test_enrichment.py
+- [ ] 15-02-PLAN.md — Wave 1: SECOP bridge + NIT enrichment (hive_tools.py, prospector.py, database.py) (ENRICH-01, ENRICH-02)
+- [ ] 15-03-PLAN.md — Wave 1: WhatsApp fallback to email in outreach.py (ENRICH-03)
+- [ ] 15-04-PLAN.md — Wave 2: Integration smoke + human checkpoint (ENRICH-01, ENRICH-02, ENRICH-03)
 
 ---
 
@@ -344,4 +350,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 12. Landa Foundation | 4/4 | Complete   | 2026-03-22 |
 | 13. Landa Agent Pipeline | 6/6 | Complete   | 2026-03-22 |
 | 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
-| 15. Pipeline Enrichment + Real Channel Activation | 0/TBD | Planned | - |
+| 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
