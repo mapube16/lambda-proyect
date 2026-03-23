@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-03-23T04:25:35.431Z"
+stopped_at: Completed 14-05-PLAN.md
+last_updated: "2026-03-23T04:42:57.741Z"
 last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
 progress:
   total_phases: 14
   completed_phases: 2
   total_plans: 23
-  completed_plans: 17
+  completed_plans: 19
   percent: 40
 ---
 
@@ -92,6 +92,9 @@ Recent decisions affecting current work:
 - [Phase 14-landa-api-checkpoint-ui]: no_pude/incorrecto sets buscar_numero_alternativo=True without state transition (RESEARCH pitfall 4)
 - [Phase 14-02]: DECISION_MAP maps human decision vocabulary ('aprobar'/'pausar'/'rechazar') to machine estados ('outreach'/'pausado'/'nurturing')
 - [Phase 14-02]: asyncio.create_task() for fire-and-forget outreach — never await inline to avoid blocking HTTP response
+- [Phase 14]: CheckpointModal fetches GET /api/leads/checkpoint to resolve full lead data by leadId
+- [Phase 14-landa-api-checkpoint-ui]: LandaCheckpointLead/LandaHandoverLead Omit<T> intersection casts in useWebSocket make imports load-bearing and avoid TS6196 unused-import errors
+- [Phase 14-landa-api-checkpoint-ui]: lead_archived uses useOfficeStore.getState().clearCheckpointLead() directly to avoid adding clearCheckpointLead to useCallback dep array
 
 ### Pending Todos
 
@@ -104,6 +107,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-23T04:25:35.427Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-03-23T04:42:57.736Z
+Stopped at: Completed 14-05-PLAN.md
 Resume file: None
