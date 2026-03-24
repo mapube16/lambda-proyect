@@ -15,9 +15,14 @@ These MUST NOT be confused. This file ONLY uses Twilio.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 from typing import Optional
+
+from database import get_db
+from landa.state_machine import update_lead_estado
 
 logger = logging.getLogger(__name__)
 
@@ -145,11 +150,253 @@ async def process_inbound(
     await update_wa_session(from_phone, {"role": "assistant", "content": reply})
 
 
-# ── Private helpers (stubs — implemented in Plans 04-05) ─────────────────────
+# ── Tool Definitions (WA-03) ──────────────────────────────────────────────────
+
+TOOLS_CLIENTE = [
+    {
+        "type": "function",
+        "function": {
+            "name": "ver_leads_checkpoint",
+            "description": "Ver los leads listos para revisión en checkpoint. Muestra empresa, puntaje y canales recomendados.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "aprobar_lead",
+            "description": "Aprobar un lead para iniciar outreach. Requiere lead_id y canal.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "ID del lead"},
+                    "canal": {"type": "string", "enum": ["email", "whatsapp", "linkedin"], "description": "Canal de contacto"},
+                },
+                "required": ["lead_id", "canal"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "pausar_lead",
+            "description": "Pausar un lead (estado nurturing). Requiere lead_id.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "ID del lead"},
+                },
+                "required": ["lead_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rechazar_lead",
+            "description": "Rechazar un lead. Requiere lead_id y motivo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "ID del lead"},
+                    "motivo": {"type": "string", "description": "Motivo del rechazo"},
+                },
+                "required": ["lead_id", "motivo"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ver_handover",
+            "description": "Ver el paquete de handover de un lead: conversación, calificación, sugerencia de cierre.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "ID del lead"},
+                },
+                "required": ["lead_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "tomar_control",
+            "description": "Tomar control de un lead en handover (asesor toma el seguimiento).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "ID del lead"},
+                },
+                "required": ["lead_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reportar_llamada",
+            "description": "Reportar el resultado de una llamada a un lead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "ID del lead"},
+                    "resultado": {"type": "string", "enum": ["bien", "mas_o_menos", "mal", "no_pude"], "description": "Resultado de la llamada"},
+                    "detalle": {"type": "string", "description": "Descripción del resultado"},
+                },
+                "required": ["lead_id", "resultado"],
+            },
+        },
+    },
+]
+
+# Placeholder — filled by Plan 05
+TOOLS_ASESOR: list = []
+
+
+# ── Tool Dispatch — Cliente Profile (WA-03) ───────────────────────────────────
+
+async def dispatch_tool_cliente(tool_name: str, args: dict, user_id: str) -> str:
+    """Execute a cliente tool and return a WhatsApp-friendly result string."""
+    db = get_db()
+
+    if tool_name == "ver_leads_checkpoint":
+        leads = await db.leads.find(
+            {"user_id": user_id, "estado": "checkpoint"}
+        ).to_list(length=5)
+        if not leads:
+            return "No tienes leads en checkpoint en este momento."
+        lines = ["Leads listos para revisión:"]
+        for i, lead in enumerate(leads, 1):
+            empresa = lead.get("company_name", lead.get("empresa", "Empresa"))
+            puntaje = lead.get("puntaje", 0)
+            lead_id = str(lead["_id"])
+            canales = lead.get("canales", [])
+            canal_str = canales[0].get("canal", "email") if canales else "email"
+            lines.append(f"{i}. {empresa} — puntaje {puntaje} (ID: {lead_id[:8]}...) canal sugerido: {canal_str}")
+        return "\n".join(lines)
+
+    elif tool_name == "aprobar_lead":
+        lead_id = args.get("lead_id", "")
+        canal = args.get("canal", "email")
+        try:
+            updated = await update_lead_estado(lead_id, user_id, "aprobado")
+            empresa = updated.get("company_name", updated.get("empresa", lead_id))
+            asyncio.create_task(_run_outreach_tool(lead_id, user_id, canal))
+            return f"✅ {empresa} aprobado. Iniciando outreach por {canal}."
+        except Exception as e:
+            return f"No pude aprobar el lead: {e}"
+
+    elif tool_name == "pausar_lead":
+        lead_id = args.get("lead_id", "")
+        try:
+            updated = await update_lead_estado(lead_id, user_id, "nurturing")
+            empresa = updated.get("company_name", lead_id)
+            return f"⏸️ {empresa} pausado. Vuelve a revisarlo cuando sea el momento."
+        except Exception as e:
+            return f"No pude pausar el lead: {e}"
+
+    elif tool_name == "rechazar_lead":
+        lead_id = args.get("lead_id", "")
+        motivo = args.get("motivo", "")
+        try:
+            updated = await update_lead_estado(lead_id, user_id, "rechazado")
+            empresa = updated.get("company_name", lead_id)
+            return f"❌ {empresa} rechazado. Motivo: {motivo}"
+        except Exception as e:
+            return f"No pude rechazar el lead: {e}"
+
+    elif tool_name == "ver_handover":
+        lead_id = args.get("lead_id", "")
+        lead = await db.leads.find_one({"user_id": user_id})
+        if not lead:
+            return f"No encontré el lead {lead_id[:8]}."
+        empresa = lead.get("company_name", lead.get("empresa", ""))
+        puntaje = lead.get("puntaje", 0)
+        decisor = lead.get("decisor", "el decisor")
+        return f"📊 {empresa} — puntaje {puntaje}. Contacto: {decisor}. Escribe 'tomar control' para proceder."
+
+    elif tool_name == "tomar_control":
+        lead_id = args.get("lead_id", "")
+        try:
+            updated = await update_lead_estado(lead_id, user_id, "handover")
+            empresa = updated.get("company_name", lead_id)
+            return f"🤝 Tomaste el control de {empresa}. ¡Mucho éxito en la negociación!"
+        except Exception as e:
+            return f"No pude transferir el control: {e}"
+
+    elif tool_name == "reportar_llamada":
+        lead_id = args.get("lead_id", "")
+        resultado = args.get("resultado", "")
+        detalle = args.get("detalle", "")
+        lead = await db.leads.find_one({"user_id": user_id})
+        empresa = lead.get("company_name", lead_id) if lead else lead_id
+        await db.leads.update_one(
+            {"user_id": user_id},
+            {"$set": {"ultimo_resultado_llamada": resultado, "detalle_llamada": detalle}},
+        )
+        emoji = {"bien": "✅", "mas_o_menos": "🤔", "mal": "❌", "no_pude": "📵"}.get(resultado, "📞")
+        return f"{emoji} Llamada a {empresa} registrada: {resultado}. {detalle}"
+
+    else:
+        return f"No reconozco la acción '{tool_name}'."
+
+
+async def _run_outreach_tool(lead_id: str, user_id: str, canal: str) -> None:
+    """Fire-and-forget outreach trigger for dispatch_tool_cliente."""
+    try:
+        from landa.agents.outreach import run_outreach
+        await run_outreach(lead_id, user_id, canal, intento=1)
+    except Exception as e:
+        logger.error("[WA] Outreach error for lead %s: %s", lead_id, e)
+
+
+# ── Private helpers ───────────────────────────────────────────────────────────
 
 async def _transcribe_voice_note(media_url: str) -> Optional[str]:
-    """Download Twilio MediaUrl and transcribe with OpenAI Whisper. Stub for Plan 04."""
-    return None
+    """Download Twilio MediaUrl and transcribe with OpenAI Whisper.
+
+    Twilio media URLs require Basic Auth (TWILIO_ACCOUNT_SID:TWILIO_AUTH_TOKEN).
+    Returns transcription text on success, None on any failure.
+    """
+    import base64
+    import httpx
+    from openai import AsyncOpenAI
+
+    sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+    token = os.getenv("TWILIO_AUTH_TOKEN", "")
+    api_key = os.getenv("OPENAI_API_KEY", "")
+
+    if not api_key:
+        logger.warning("[WA] OPENAI_API_KEY not set — cannot transcribe")
+        return None
+
+    try:
+        auth_header = "Basic " + base64.b64encode(f"{sid}:{token}".encode()).decode() if (sid and token) else ""
+        headers = {"Authorization": auth_header} if auth_header else {}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(media_url, headers=headers)
+            if resp.status_code != 200:
+                logger.error("[WA] Twilio media download error %d", resp.status_code)
+                return None
+            audio_bytes = resp.content
+    except Exception as e:
+        logger.error("[WA] Audio download error: %s", e)
+        return None
+
+    try:
+        openai_client = AsyncOpenAI(api_key=api_key)
+        transcript = await openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=("voice_note.ogg", audio_bytes, "audio/ogg"),
+        )
+        text = transcript.text.strip()
+        logger.info("[WA] Whisper transcription: %s", text[:100])
+        return text if text else None
+    except Exception as e:
+        logger.error("[WA] Whisper transcription error: %s", e)
+        return None
 
 
 async def _call_llm_with_tools(
@@ -158,8 +405,79 @@ async def _call_llm_with_tools(
     profile: str,
     user_id: str,
 ) -> str:
-    """Call OpenAI with tool definitions for the given profile. Stub for Plans 04-05."""
-    return "Recibí tu mensaje. Esta función se completará en la próxima fase."
+    """Call OpenAI with tool definitions for the given profile.
+
+    Uses function-calling loop: model decides which tool to call,
+    dispatcher executes it, result fed back to model for final reply.
+    """
+    from openai import AsyncOpenAI
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        return "Sistema no disponible en este momento."
+
+    client = AsyncOpenAI(api_key=api_key)
+    tools = TOOLS_CLIENTE if profile == "cliente" else TOOLS_ASESOR
+
+    system_prompt = (
+        "Eres el asistente de Landa en WhatsApp. "
+        "Ayudas a gestionar el proceso de prospección B2B. "
+        "Responde en español colombiano conversacional. "
+        "Usa emojis con moderación. Máximo 1600 caracteres por mensaje. "
+        "Nunca uses markdown rico (negrillas, tablas, listas con guiones). "
+        "Usa numeración simple para listas (1. 2. 3.)."
+    )
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(history[-8:])
+    messages.append({"role": "user", "content": message})
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            tools=tools if tools else None,
+            tool_choice="auto" if tools else None,
+            max_tokens=600,
+        )
+
+        choice = response.choices[0]
+
+        if not choice.message.tool_calls:
+            return (choice.message.content or "No tengo respuesta en este momento.")[:1600]
+
+        tool_results = []
+        for tool_call in choice.message.tool_calls:
+            tool_name = tool_call.function.name
+            try:
+                tool_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError:
+                tool_args = {}
+
+            if profile == "cliente":
+                result = await dispatch_tool_cliente(tool_name, tool_args, user_id)
+            else:
+                result = await dispatch_tool_asesor(tool_name, tool_args, user_id)
+
+            tool_results.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "content": result,
+            })
+
+        messages.append(choice.message.model_dump(exclude_none=True))
+        messages.extend(tool_results)
+
+        final_response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=400,
+        )
+        return (final_response.choices[0].message.content or "Listo.")[:1600]
+
+    except Exception as e:
+        logger.error("[WA] LLM call error: %s", e)
+        return "Tuve un problema procesando tu mensaje. Intenta de nuevo."
 
 
 async def _send_reply(to_phone: str, message: str) -> None:

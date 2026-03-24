@@ -209,30 +209,94 @@ async def test_webhook_returns_empty_twiml(async_client):
 
 # ── WA-03: LLM tool calling (cliente profile) ─────────────────────────────────
 
-@pytest.mark.xfail(reason="WA-03: dispatch_tool_cliente() not yet implemented", strict=False)
 async def test_tool_call_ver_leads_checkpoint():
-    """dispatch_tool_cliente('ver_leads_checkpoint', {}, user_id) returns list."""
-    pytest.fail("not implemented")
+    """dispatch_tool_cliente('ver_leads_checkpoint', {}, user_id) returns result without raising."""
+    from unittest.mock import patch, AsyncMock, MagicMock
+    import wa_handler
+
+    with patch("wa_handler.get_db") as mock_get_db:
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.to_list = AsyncMock(return_value=[])
+        mock_db.leads.find.return_value = mock_cursor
+        mock_get_db.return_value = mock_db
+
+        result = await wa_handler.dispatch_tool_cliente(
+            "ver_leads_checkpoint", {}, "user123"
+        )
+    # Result is a string (formatted list or "no leads" message)
+    assert isinstance(result, str)
 
 
-@pytest.mark.xfail(reason="WA-03: dispatch_tool_cliente() not yet implemented", strict=False)
 async def test_tool_call_aprobar_lead():
-    """dispatch_tool_cliente('aprobar_lead', {lead_id, canal}, user_id) returns ok."""
-    pytest.fail("not implemented")
+    """dispatch_tool_cliente('aprobar_lead', ...) calls update_lead_estado."""
+    from unittest.mock import patch, AsyncMock
+    import wa_handler
+
+    with patch("wa_handler.update_lead_estado", AsyncMock(return_value={"company_name": "Test"})) as mock_update, \
+         patch("wa_handler.asyncio") as mock_asyncio:
+        mock_asyncio.create_task = lambda coro: coro.close() or None
+        result = await wa_handler.dispatch_tool_cliente(
+            "aprobar_lead",
+            {"lead_id": "64f000000000000000000001", "canal": "email"},
+            "user123",
+        )
+    mock_update.assert_awaited_once()
+    assert isinstance(result, str)
 
 
 # ── WA-03: Voice note transcription ──────────────────────────────────────────
 
-@pytest.mark.xfail(reason="WA-03: voice note transcription not yet implemented", strict=False)
 async def test_voice_note_transcription_success():
-    """MediaUrl0 present → httpx download → Whisper → text returned."""
-    pytest.fail("not implemented")
+    """MediaUrl0 present → httpx download → Whisper returns text."""
+    from unittest.mock import patch, AsyncMock, MagicMock
+    import wa_handler
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"fake-audio-bytes"
+
+    mock_transcript = MagicMock()
+    mock_transcript.text = "habló con el gerente, quedó muy interesado"
+
+    with patch("httpx.AsyncClient") as mock_httpx_cls, \
+         patch("openai.AsyncOpenAI") as mock_openai_cls:
+        mock_http_instance = AsyncMock()
+        mock_http_instance.__aenter__ = AsyncMock(return_value=mock_http_instance)
+        mock_http_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_http_instance.get = AsyncMock(return_value=mock_response)
+        mock_httpx_cls.return_value = mock_http_instance
+
+        mock_openai_instance = AsyncMock()
+        mock_openai_instance.audio = MagicMock()
+        mock_openai_instance.audio.transcriptions = MagicMock()
+        mock_openai_instance.audio.transcriptions.create = AsyncMock(return_value=mock_transcript)
+        mock_openai_cls.return_value = mock_openai_instance
+
+        result = await wa_handler._transcribe_voice_note(
+            "https://api.twilio.com/media/fake-url"
+        )
+
+    assert result == "habló con el gerente, quedó muy interesado"
 
 
-@pytest.mark.xfail(reason="WA-03: voice note transcription not yet implemented", strict=False)
 async def test_voice_note_transcription_failure_returns_fallback():
-    """Whisper failure → returns fallback message (not exception)."""
-    pytest.fail("not implemented")
+    """httpx download failure → _transcribe_voice_note returns None (no exception)."""
+    from unittest.mock import patch, AsyncMock
+    import wa_handler
+
+    with patch("httpx.AsyncClient") as mock_httpx_cls:
+        mock_http_instance = AsyncMock()
+        mock_http_instance.__aenter__ = AsyncMock(return_value=mock_http_instance)
+        mock_http_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_http_instance.get = AsyncMock(side_effect=Exception("Network error"))
+        mock_httpx_cls.return_value = mock_http_instance
+
+        result = await wa_handler._transcribe_voice_note(
+            "https://api.twilio.com/media/fake-url"
+        )
+
+    assert result is None
 
 
 # ── WA-04: asesor_interno tools ───────────────────────────────────────────────
