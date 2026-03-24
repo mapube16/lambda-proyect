@@ -4,9 +4,16 @@ Plan 02: all 11 tests turn green.
 """
 import ast
 import asyncio
+import os
+import sys
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
+
+# vendor/hive/core provides the framework.* packages (via _framework.pth in venv, but not .venv)
+_vendor_core = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../vendor/hive/core"))
+if _vendor_core not in sys.path:
+    sys.path.insert(0, _vendor_core)
 
 
 # ─── HIVE-01: Framework installs and imports cleanly ──────────────────────────
@@ -35,7 +42,7 @@ async def test_agent_runner_instantiates():
 
 async def test_hive_adapter_is_only_seam():
     """main.py contains zero 'from framework' imports (static AST check)."""
-    main_source = Path("main.py").read_text()
+    main_source = Path("main.py").read_text(encoding="utf-8")
     tree = ast.parse(main_source)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
@@ -123,8 +130,8 @@ async def test_shared_memory_per_run_isolation():
     await adapter.start_run("user_a", {})
     await adapter.start_run("user_b", {})
 
-    runner_a = adapter._runners.get("user_a")
-    runner_b = adapter._runners.get("user_b")
+    runner_a = adapter._runs.get("user_a")
+    runner_b = adapter._runs.get("user_b")
     assert runner_a is not None
     assert runner_b is not None
     assert runner_a is not runner_b, "Each user must have a separate AgentRunner instance"

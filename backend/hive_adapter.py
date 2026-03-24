@@ -33,6 +33,11 @@ _EVENT_STATE_MAP = {
 }
 
 
+def _event_to_agent_state(event) -> AgentState | None:
+    """Map a Hive EventBus event to an AgentState. Returns None if unmapped."""
+    return _EVENT_STATE_MAP.get(event.type)
+
+
 class HiveAdapter:
     """
     Adapter between FastAPI WebSocket layer and aden-hive/hive GraphExecutor.
@@ -79,10 +84,10 @@ class HiveAdapter:
 
         self._runtime_agents[user_id] = runtime_agents
 
-        # LLM provider — OpenAI directly (gpt-4o-mini)
+        # LLM provider — OpenAI directly (gpt-5.4-2026-03-05)
         llm = OpenRouterProvider(
             api_key=openai_key,
-            model="gpt-4o-mini",
+            model="gpt-5.4-2026-03-05",
             base_url="https://api.openai.com/v1",
             max_output_tokens=2000,
         )
@@ -195,10 +200,8 @@ class HiveAdapter:
         """Returns async handler: Hive EventBus event → agent_update WS message."""
         async def handler(event) -> None:
             node_id  = getattr(event, "node_id", None)
-            state    = _EVENT_STATE_MAP.get(event.type)
-            # For the single-node "director" graph, map to the buscador agent
-            # as a visual indicator while the LLM is working
-            if node_id == "director" and state:
+            state    = _event_to_agent_state(event)
+            if state:
                 agents = self._runtime_agents.get(user_id) or []
                 target_agent_id = next(
                     (
