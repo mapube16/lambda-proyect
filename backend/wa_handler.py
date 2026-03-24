@@ -140,9 +140,10 @@ async def process_inbound(
         history=session.get("history", []),
         profile=profile_type,
         user_id=user_id,
+        from_phone=from_phone,
     )
 
-    # Step 4: Send reply
+    # Step 4: Send reply (skip if we already sent ack + this is the real result)
     await _send_reply(from_phone, reply)
 
     # Step 5: Update session history
@@ -508,11 +509,13 @@ async def _call_llm_with_tools(
     history: list,
     profile: str,
     user_id: str,
+    from_phone: str = "",
 ) -> str:
     """Call OpenAI with tool definitions for the given profile.
 
-    Uses function-calling loop: model decides which tool to call,
-    dispatcher executes it, result fed back to model for final reply.
+    Fast path: single tool call → return result directly (no second LLM call).
+    Multi-tool: second LLM call to merge results.
+    Sends "Buscando..." ack before heavy tool execution so user gets instant feedback.
     """
     from openai import AsyncOpenAI
 
@@ -551,7 +554,7 @@ async def _call_llm_with_tools(
         )
 
     messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(history[-8:])
+    messages.extend(history[-6:])  # reduced from 8 to save tokens
     messages.append({"role": "user", "content": message})
 
     try:
@@ -560,7 +563,7 @@ async def _call_llm_with_tools(
             messages=messages,
             tools=tools if tools else None,
             tool_choice="auto" if tools else None,
-            max_tokens=600,
+            max_tokens=400,
         )
 
         choice = response.choices[0]
@@ -568,32 +571,40 @@ async def _call_llm_with_tools(
         if not choice.message.tool_calls:
             return (choice.message.content or "No tengo respuesta en este momento.")[:1600]
 
-        tool_results = []
-        for tool_call in choice.message.tool_calls:
-            tool_name = tool_call.function.name
+        tool_calls = choice.message.tool_calls
+
+        # Send ack immediately — user knows bot is working while tools run
+        if from_phone:
+            await _send_reply(from_phone, "Buscando...")
+
+        # Execute all tool calls in parallel
+        async def _run_tool(tc):
             try:
-                tool_args = json.loads(tool_call.function.arguments)
+                args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
-                tool_args = {}
-
+                args = {}
             if profile == "cliente":
-                result = await dispatch_tool_cliente(tool_name, tool_args, user_id)
-            else:
-                result = await dispatch_tool_asesor(tool_name, tool_args, user_id)
+                return await dispatch_tool_cliente(tc.function.name, args, user_id)
+            return await dispatch_tool_asesor(tc.function.name, args, user_id)
 
-            tool_results.append({
-                "tool_call_id": tool_call.id,
-                "role": "tool",
-                "content": result,
-            })
+        results = await asyncio.gather(*[_run_tool(tc) for tc in tool_calls])
 
+        # Fast path: single tool → return result directly (skip second LLM call)
+        if len(tool_calls) == 1:
+            return results[0][:1600]
+
+        # Multiple tools: second LLM call to merge (less common)
+        tool_results = [
+            {"tool_call_id": tc.id, "role": "tool", "content": r}
+            for tc, r in zip(tool_calls, results)
+        ]
         messages.append(choice.message.model_dump(exclude_none=True))
         messages.extend(tool_results)
 
         final_response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=400,
+            max_tokens=300,
         )
         return (final_response.choices[0].message.content or "Listo.")[:1600]
 

@@ -20,6 +20,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# ── In-memory cache (key: (keyword, ciudad), value: (results, timestamp)) ────
+import time as _time
+_cache_procesos: dict = {}
+_cache_proveedores: dict = {}
+_CACHE_TTL = 600  # 10 minutes — SECOP data changes slowly
+
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -62,11 +68,18 @@ async def fetch_open_processes(
     Returns lista de procesos con:
         proceso_id, entidad, objeto, valor_estimado, fecha_cierre, ciudad, estado
     """
+    cache_key = (keyword.lower().strip(), (ciudad or "").lower().strip())
+    cached = _cache_procesos.get(cache_key)
+    if cached:
+        results, ts = cached
+        if _time.time() - ts < _CACHE_TTL:
+            logger.info("[Radar] Cache hit for %s", cache_key)
+            return results[:max_results]
+
     # Solo filtramos por keyword — ciudad puede tener tilde (BOGOTÁ) y fallar
-    # Usamos $q para full-text search que es más robusto
     today_iso = date.today().isoformat()
     params = {
-        "$limit": max(200, max_results * 10),  # Over-fetch masivo
+        "$limit": 100,  # reduced from 500 — date filter does the heavy lifting
         "$q": keyword,
         "$order": "fecha_de_publicacion_del DESC",
         "$where": f"fecha_de_recepcion_de > '{today_iso}T00:00:00.000'",
@@ -147,10 +160,11 @@ async def fetch_open_processes(
                 break
 
         logger.info("[Radar] keyword='%s' total_rows=%d → %d procesos tras filtros", keyword, len(rows), len(processes))
+        _cache_procesos[cache_key] = (processes, _time.time())
     except Exception as e:
         logger.error("[Radar] Error fetcheando procesos: %s", e)
 
-    return processes
+    return processes[:max_results]
 
 
 async def find_likely_proponents(
