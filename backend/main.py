@@ -54,6 +54,7 @@ from models import (
 from orchestrator import HiveOrchestrator
 from onboarding import chat_turn
 from landa.scheduler import start_scheduler, shutdown_scheduler
+from landa.company_voice import get_or_create_company_voice
 
 # WebSocket connection manager — keyed by user_id for tenant isolation
 class ConnectionManager:
@@ -92,6 +93,76 @@ class ConnectionManager:
 manager = ConnectionManager()
 orchestrator: HiveOrchestrator = None
 hive_adapter = None
+
+
+# ============ WhatsApp notification helpers (Phase 16 — WA-01) ============
+
+async def send_whatsapp_text(phone: str, message: str) -> None:
+    """Send a WhatsApp text message via Twilio REST API.
+
+    Uses whatsapp_agent._send_whatsapp() pattern. Non-fatal — logs on failure.
+    """
+    import base64, httpx
+    sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+    token = os.getenv("TWILIO_AUTH_TOKEN", "")
+    from_number = os.getenv("TWILIO_WHATSAPP_FROM", "")
+    if not sid or not token or not from_number:
+        logging.warning("[WA] Twilio creds not configured — skipping WA send")
+        return
+    wa_to = phone if phone.startswith("whatsapp:") else f"whatsapp:{phone}"
+    auth = "Basic " + base64.b64encode(f"{sid}:{token}".encode()).decode()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+                headers={"Authorization": auth},
+                data={"To": wa_to, "From": from_number, "Body": message},
+            )
+            if resp.status_code not in (200, 201):
+                logging.error("[WA] Twilio send error %d: %s", resp.status_code, resp.text[:200])
+    except Exception as e:
+        logging.error("[WA] send_whatsapp_text error: %s", e)
+
+
+def _format_wa_notification(event: dict) -> str:
+    """Format a WS event dict into a WhatsApp-friendly text message.
+
+    Max 1600 chars. Plain text + emojis. No rich markdown.
+    """
+    event_type = event.get("type", "")
+    empresa = event.get("empresa", "")
+    if event_type == "lead_checkpoint":
+        puntaje = event.get("puntaje", 0)
+        return f"✅ Lead listo para revisión: {empresa} (puntaje: {puntaje}). Escribe 'ver leads' para revisarlos."
+    elif event_type == "lead_handover":
+        canal = event.get("canal", "email")
+        return f"🤝 {empresa} respondió. Escribe 'ver oportunidad' para tomar el control. Canal: {canal}."
+    elif event_type == "lead_archived":
+        return f"📁 {empresa} fue archivado."
+    else:
+        return f"Actualización de Landa: {event_type}"
+
+
+async def notify_user(user_id: str, event: dict) -> None:
+    """Unified notification router — replaces direct send_to_user() calls.
+
+    Reads notification_channel from company_voice and routes:
+    - 'web' → WebSocket only
+    - 'whatsapp' → WhatsApp only
+    - 'both' → WebSocket + WhatsApp
+    - missing → defaults to 'web' (Phase 15 fallback)
+    """
+    cv = await get_or_create_company_voice(user_id)
+    channel = cv.get("notification_channel", "web")
+
+    if channel in ("web", "both"):
+        await manager.send_to_user(user_id, event)
+
+    if channel in ("whatsapp", "both"):
+        wa_number = cv.get("wa_phone_number")
+        if wa_number:
+            message = _format_wa_notification(event)
+            await send_whatsapp_text(wa_number, message)
 
 
 def _build_runtime_agents(profile: Optional[dict]) -> list[dict]:
@@ -463,12 +534,15 @@ async def prospect(
     )
 
     async def _finalize_on_complete():
-        """Wait for HiveAdapter task to finish, then update run status."""
+        """Wait for HiveAdapter task to finish, then update run status and save agent logs."""
         task = hive_adapter._runs.get(user_id)
         if task:
             try:
-                await task
-                await update_run_status(run_id, status="complete")
+                result = await task
+                agent_logs = None
+                if isinstance(result, dict):
+                    agent_logs = result.get("agent_logs")
+                await update_run_status(run_id, status="complete", agent_logs=agent_logs)
             except Exception as exc:
                 print(f"[prospect] finalize error: {exc}")
                 await update_run_status(run_id, status="error")
@@ -618,11 +692,11 @@ async def save_campaign_endpoint(
     """Save/update the active campaign for the current user.
     Accepts the 8 campaign vars plus optional llm_analista and llm_redactor.
     Defaults: llm_analista='openrouter/anthropic/claude-haiku-3',
-              llm_redactor='openrouter/openai/gpt-4o-mini'.
+              llm_redactor='openrouter/openai/gpt-5.4-2026-03-05'.
     """
     user_id = str(current_user["user_id"])
     campaign.setdefault("llm_analista", "openrouter/anthropic/claude-haiku-3")
-    campaign.setdefault("llm_redactor", "openrouter/openai/gpt-4o-mini")
+    campaign.setdefault("llm_redactor", "openrouter/openai/gpt-5.4-2026-03-05")
     campaign_id = await save_campaign(user_id, campaign)
     return {"campaign_id": campaign_id}
 
@@ -643,6 +717,25 @@ async def get_runs(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["user_id"])
     runs = await get_runs_by_user(user_id)
     return runs
+
+
+@app.get("/api/runs/{run_id}/report")
+async def get_run_report(run_id: str, current_user: dict = Depends(get_current_user)):
+    """Get agent decision logs for a specific run (shown when user clicks an agent card)."""
+    from database import get_db
+    from bson import ObjectId
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    run = await db.runs.find_one({"_id": ObjectId(run_id), "user_id": user_id})
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return {
+        "run_id": run_id,
+        "status": run.get("status"),
+        "total_found":    run.get("total_found", 0),
+        "total_approved": run.get("total_approved", 0),
+        "agent_logs":     run.get("agent_logs", {}),
+    }
 
 
 @app.get("/api/runs/{run_id}/leads")
@@ -1162,6 +1255,68 @@ async def leads_chat(
     return result
 
 
+# ============ Apply Chat Intent ============
+
+class ApplyIntentRequest(_BaseModel):
+    intent_type: str
+    payload: dict
+
+
+@app.post("/api/campaign/apply-intent")
+async def apply_campaign_intent(
+    request: ApplyIntentRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Apply a structured intent from the leads chat to the active campaign.
+    Supported: refine_target, adjust_tone, blacklist_company.
+    Returns the updated campaign.
+    """
+    from database import patch_active_campaign, get_active_campaign
+
+    user_id = str(current_user["user_id"])
+    t = request.intent_type
+    p = request.payload
+
+    if t == "refine_target":
+        field = p.get("field", "").strip()
+        value = p.get("value", "").strip()
+        allowed = {
+            "industria_objetivo", "ciudad_objetivo", "dolor_operativo",
+            "solucion_ofrecida", "software_clave", "jerarquia_decisores",
+            "sector_propio_cliente",
+        }
+        if not field or field not in allowed:
+            raise HTTPException(status_code=400, detail=f"Campo no permitido: {field}")
+        await patch_active_campaign(user_id, {field: value})
+
+    elif t == "adjust_tone":
+        tone = p.get("tone") or p.get("value", "").strip()
+        if tone:
+            await patch_active_campaign(user_id, {"tono_correo": tone})
+
+    elif t == "blacklist_company":
+        # Append sector/company to the sector_propio_cliente exclusion list
+        # or to a dedicated blacklisted_sectors field
+        sector = p.get("sector") or p.get("company") or p.get("value", "")
+        if sector:
+            campaign = await get_active_campaign(user_id)
+            existing = campaign.get("sectores_excluidos", "") if campaign else ""
+            updated = f"{existing}, {sector}".strip(", ") if existing else sector
+            await patch_active_campaign(user_id, {"sectores_excluidos": updated})
+
+    elif t == "campaign_feedback":
+        feedback = p.get("feedback") or p.get("value", "")
+        if feedback:
+            await patch_active_campaign(user_id, {"ultimo_feedback": feedback})
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Intent no soportado: {t}")
+
+    campaign = await get_active_campaign(user_id)
+    return {"ok": True, "campaign": campaign}
+
+
 # ============ RAG — Document Upload ============
 
 from fastapi import UploadFile, File
@@ -1575,6 +1730,10 @@ VALID_SOURCES = {"google_maps", "secop_adjudicados", "secop_licitaciones"}
 
 class ClientSourcesRequest(_BaseModel):
     fuentes_habilitadas: list[str]  # ["google_maps", "secop_adjudicados", "secop_licitaciones"]
+    notification_channel: str = "web"          # "web" | "whatsapp" | "both"
+    wa_phone_number: str | None = None         # client's WA number (receives notifications)
+    wa_phone_id: str | None = None             # Meta phone_id for outreach FROM this client
+    wa_token: str | None = None                # Meta API token (None = use Landa global)
 
 
 @app.post("/api/staff/clients/{target_user_id}/sources")
@@ -1594,16 +1753,30 @@ async def update_client_sources(
             detail=f"Invalid sources: {invalid}. Valid values: {sorted(VALID_SOURCES)}",
         )
 
+    # Build update fields - always include fuentes and notification_channel
+    update_fields = {
+        "fuentes_habilitadas": request.fuentes_habilitadas,
+        "notification_channel": request.notification_channel,
+    }
+    # Only set WhatsApp fields if they are not None
+    if request.wa_phone_number is not None:
+        update_fields["wa_phone_number"] = request.wa_phone_number
+    if request.wa_phone_id is not None:
+        update_fields["wa_phone_id"] = request.wa_phone_id
+    if request.wa_token is not None:
+        update_fields["wa_token"] = request.wa_token
+
     db = get_db()
     await db.company_voice.update_one(
         {"user_id": target_user_id},
-        {"$set": {"fuentes_habilitadas": request.fuentes_habilitadas}},
+        {"$set": update_fields},
         upsert=True,
     )
     return {
         "status": "ok",
         "user_id": target_user_id,
         "fuentes_habilitadas": request.fuentes_habilitadas,
+        "notification_channel": request.notification_channel,
     }
 
 
@@ -1677,7 +1850,7 @@ async def lead_decision(
     if request.decision == "aprobar":
         canal = request.canal_elegido or updated.get("canal_elegido", "email")
         asyncio.create_task(_run_outreach(lead_id, user_id, canal, intento=1))
-        await manager.send_to_user(user_id, {
+        await notify_user(user_id, {
             "type": "lead_checkpoint",
             "lead_id": lead_id,
             "empresa": updated.get("company_name") or updated.get("empresa", ""),
@@ -1685,7 +1858,7 @@ async def lead_decision(
             "accion": "aprobado",
         })
     elif request.decision == "rechazar":
-        await manager.send_to_user(user_id, {
+        await notify_user(user_id, {
             "type": "lead_archived",
             "lead_id": lead_id,
             "empresa": updated.get("company_name") or updated.get("empresa", ""),
@@ -1792,7 +1965,7 @@ async def handover_tomar(lead_id: str, current_user: dict = Depends(get_current_
 
     canal = lead.get("canal_elegido", "email")
     empresa = updated.get("company_name") or updated.get("empresa", "")
-    await manager.send_to_user(user_id, {
+    await notify_user(user_id, {
         "type": "lead_handover",
         "lead_id": lead_id,
         "empresa": empresa,
@@ -1896,4 +2069,4 @@ async def reporte_llamada(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
