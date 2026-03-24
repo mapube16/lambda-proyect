@@ -2067,6 +2067,57 @@ async def reporte_llamada(
     return {"status": "ok", "lead_id": lead_id, "resultado": resultado}
 
 
+# ============ WhatsApp Webhook (Phase 16 — WA-01) ============
+
+@app.post("/api/whatsapp/incoming")
+async def whatsapp_incoming(request: Request):
+    """
+    Twilio webhook for inbound WhatsApp messages.
+
+    Returns empty TwiML <Response/> immediately — all processing is async.
+    Signature validation via X-Twilio-Signature header.
+    Routing: strip 'whatsapp:' prefix from From, lookup in company_voice or users.
+    """
+    import wa_handler
+
+    form = await request.form()
+    from_raw = str(form.get("From", ""))
+    to_number = str(form.get("To", ""))
+    body = str(form.get("Body", ""))
+    num_media = int(form.get("NumMedia", "0"))
+    media_url = str(form.get("MediaUrl0", "")) if num_media > 0 else ""
+
+    # Validate Twilio signature (skip in test env if not configured)
+    url = str(request.url)
+    signature = request.headers.get("X-Twilio-Signature", "")
+    post_data = dict(form)
+    if not wa_handler.validate_twilio_signature(url, signature, post_data):
+        logging.warning("[WA] Invalid Twilio signature from %s — ignoring", from_raw)
+        return Response(content="<Response/>", media_type="text/xml")
+
+    # Strip whatsapp: prefix before lookup
+    from_phone = from_raw.replace("whatsapp:", "")
+
+    # Identify caller profile (non-blocking lookup, then async processing)
+    profile = await wa_handler.get_profile(from_phone)
+    if profile is None:
+        logging.warning("[WA] Unknown number %s — ignoring message", from_phone)
+        return Response(content="<Response/>", media_type="text/xml")
+
+    # Fire-and-forget processing — never block TwiML response
+    asyncio.create_task(
+        wa_handler.process_inbound(
+            from_phone=from_phone,
+            to_number=to_number,
+            body=body,
+            media_url=media_url,
+            profile=profile,
+        )
+    )
+
+    return Response(content="<Response/>", media_type="text/xml")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

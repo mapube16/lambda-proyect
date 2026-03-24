@@ -89,16 +89,50 @@ async def test_notify_user_routing_both():
 
 # ── WA-01: Webhook routing ────────────────────────────────────────────────────
 
-@pytest.mark.xfail(reason="WA-01: /api/whatsapp/incoming not yet implemented", strict=False)
 async def test_routing_strips_whatsapp_prefix(async_client):
-    """Webhook strips 'whatsapp:' prefix from From before DB lookup."""
-    pytest.fail("not implemented")
+    """Webhook strips 'whatsapp:' prefix from From before DB lookup.
+
+    The wa_handler.get_profile() receives the clean phone number.
+    We verify this by confirming the endpoint handles the prefixed From without error.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    with patch("wa_handler.get_profile", AsyncMock(return_value=None)) as mock_get_profile, \
+         patch("wa_handler.validate_twilio_signature", return_value=True):
+        resp = await async_client.post(
+            "/api/whatsapp/incoming",
+            data={
+                "From": "whatsapp:+573001234567",
+                "To": "whatsapp:+14155238886",
+                "Body": "Hola",
+                "NumMedia": "0",
+            },
+        )
+    assert resp.status_code == 200
+    assert "<Response/>" in resp.text
+    # get_profile called with stripped number (no whatsapp: prefix)
+    mock_get_profile.assert_awaited_once()
+    call_args = mock_get_profile.call_args
+    assert "whatsapp:" not in str(call_args)
 
 
-@pytest.mark.xfail(reason="WA-01: /api/whatsapp/incoming not yet implemented", strict=False)
 async def test_routing_unknown_number_returns_twiml(async_client):
-    """Unknown From number returns empty TwiML <Response/> without error."""
-    pytest.fail("not implemented")
+    """Unknown From returns empty TwiML, no error."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("wa_handler.get_profile", AsyncMock(return_value=None)), \
+         patch("wa_handler.validate_twilio_signature", return_value=True):
+        resp = await async_client.post(
+            "/api/whatsapp/incoming",
+            data={
+                "From": "whatsapp:+999999999",
+                "To": "whatsapp:+14155238886",
+                "Body": "Hola",
+                "NumMedia": "0",
+            },
+        )
+    assert resp.status_code == 200
+    assert "<Response/>" in resp.text
 
 
 # ── WA-02: wa_sessions CRUD ───────────────────────────────────────────────────
