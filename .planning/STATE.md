@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 14-05-PLAN.md
-last_updated: "2026-03-23T04:42:57.741Z"
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-03-24T02:56:58.696Z"
 last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
 progress:
-  total_phases: 14
-  completed_phases: 2
-  total_plans: 23
-  completed_plans: 19
+  total_phases: 16
+  completed_phases: 4
+  total_plans: 33
+  completed_plans: 25
   percent: 40
 ---
 
@@ -54,6 +54,7 @@ Progress: [████░░░░░░] 40%
 | Phase 14-landa-api-checkpoint-ui P04 | 5m | 1 tasks | 1 files |
 | Phase 14-landa-api-checkpoint-ui P03 | 12m | 2 tasks | 2 files |
 | Phase 14-landa-api-checkpoint-ui P02 | 5m | 2 tasks | 2 files |
+| Phase 16-whatsapp-conversational-advisor-bot P01 | 5 | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,9 @@ Recent decisions affecting current work:
 - [Phase 14]: CheckpointModal fetches GET /api/leads/checkpoint to resolve full lead data by leadId
 - [Phase 14-landa-api-checkpoint-ui]: LandaCheckpointLead/LandaHandoverLead Omit<T> intersection casts in useWebSocket make imports load-bearing and avoid TS6196 unused-import errors
 - [Phase 14-landa-api-checkpoint-ui]: lead_archived uses useOfficeStore.getState().clearCheckpointLead() directly to avoid adding clearCheckpointLead to useCallback dep array
+- [Phase 16-01]: strict=False on all xfail markers — stubs show as xfail not failures, CI never blocks on unimplemented WA features
+- [Phase 16-01]: reset_db autouse fixture duplicated in test_whatsapp.py (not imported from conftest) — self-contained per-test MongoDB isolation
+- [Phase 16-01]: async_client uses lazy import inside fixture body to prevent collection-time app-import errors before wa_handler.py exists
 
 ### Pending Todos
 
@@ -112,6 +116,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-23T04:42:57.736Z
-Stopped at: Completed 14-05-PLAN.md
+Last session: 2026-03-24T02:56:58.678Z
+Stopped at: Completed 16-01-PLAN.md
 Resume file: None
