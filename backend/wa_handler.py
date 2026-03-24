@@ -251,8 +251,90 @@ TOOLS_CLIENTE = [
     },
 ]
 
-# Placeholder — filled by Plan 05
-TOOLS_ASESOR: list = []
+TOOLS_ASESOR = [
+    {
+        "type": "function",
+        "function": {
+            "name": "buscar_licitaciones",
+            "description": "Buscar licitaciones abiertas en SECOP por sector y ciudad.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sector": {"type": "string", "description": "Sector económico (ej: construccion, salud, educacion)"},
+                    "ciudad": {"type": "string", "description": "Ciudad o departamento (ej: Bogota, Medellin)"},
+                },
+                "required": ["sector"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "buscar_adjudicados",
+            "description": "Buscar contratos adjudicados en SECOP (empresas que ya ganaron contratos).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sector": {"type": "string", "description": "Sector económico"},
+                    "ciudad": {"type": "string", "description": "Ciudad"},
+                    "nit": {"type": "string", "description": "NIT específico de empresa (opcional)"},
+                },
+                "required": ["sector"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "enriquecer_empresa",
+            "description": "Obtener información detallada de una empresa por NIT (nombre, sector, ciudad, contacto).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nit": {"type": "string", "description": "NIT de la empresa (con o sin guion)"},
+                },
+                "required": ["nit"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ver_clientes",
+            "description": "Ver la lista de clientes activos de Landa.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ver_leads_cliente",
+            "description": "Ver los leads de un cliente específico.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "ID del cliente"},
+                },
+                "required": ["user_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "iniciar_outreach",
+            "description": "Iniciar outreach para un lead específico.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "ID del lead"},
+                    "canal": {"type": "string", "enum": ["email", "whatsapp", "linkedin"], "description": "Canal de contacto"},
+                },
+                "required": ["lead_id", "canal"],
+            },
+        },
+    },
+]
 
 
 # ── Tool Dispatch — Cliente Profile (WA-03) ───────────────────────────────────
@@ -507,3 +589,121 @@ async def _send_reply(to_phone: str, message: str) -> None:
                 logger.error("[WA] Reply error %d: %s", resp.status_code, resp.text[:200])
     except Exception as e:
         logger.error("[WA] _send_reply error: %s", e)
+
+
+# ── Tool Dispatch — Asesor Interno Profile (WA-04) ────────────────────────────
+
+async def dispatch_tool_asesor(tool_name: str, args: dict, user_id: str) -> str:
+    """Execute an asesor_interno tool and return a WhatsApp-friendly result string."""
+    db = get_db()
+
+    if tool_name == "buscar_licitaciones":
+        sector = args.get("sector", "")
+        ciudad = args.get("ciudad", "")
+        try:
+            import secop_radar
+            processes = await secop_radar.fetch_open_processes(sector, ciudad)
+            if not processes:
+                return f"No encontré licitaciones abiertas en {sector} para {ciudad or 'Colombia'}."
+            lines = [f"Licitaciones abiertas — {sector} {ciudad}:"]
+            for i, p in enumerate(processes[:5], 1):
+                nombre = p.get("nombre", "Sin nombre")
+                valor = p.get("valor", 0)
+                valor_str = f"${valor:,.0f}" if valor else "N/D"
+                lines.append(f"{i}. {nombre} — {valor_str}")
+            if len(processes) > 5:
+                lines.append(f"...y {len(processes) - 5} más.")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error("[WA] buscar_licitaciones error: %s", e)
+            return f"Error buscando licitaciones en SECOP: {e}"
+
+    elif tool_name == "buscar_adjudicados":
+        sector = args.get("sector", "")
+        ciudad = args.get("ciudad", "")
+        try:
+            import secop_radar
+            processes = await secop_radar.fetch_open_processes(sector, ciudad)
+            if not processes:
+                return f"No encontré adjudicados para {sector}."
+            lines = [f"Adjudicados — {sector}:"]
+            for i, p in enumerate(processes[:5], 1):
+                nombre = p.get("nombre", "Sin nombre")
+                lines.append(f"{i}. {nombre}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error buscando adjudicados: {e}"
+
+    elif tool_name == "enriquecer_empresa":
+        nit = args.get("nit", "")
+        try:
+            import nit_enricher
+            data = await nit_enricher.enrich_nit(nit)
+            if not data:
+                return f"No encontré información para el NIT {nit}."
+            nombre = data.get("nombre", "N/D")
+            sector = data.get("sector", "N/D")
+            ciudad = data.get("ciudad", "N/D")
+            contacto = data.get("contacto", data.get("email", "N/D"))
+            return (
+                f"📊 {nombre}\n"
+                f"NIT: {nit}\n"
+                f"Sector: {sector}\n"
+                f"Ciudad: {ciudad}\n"
+                f"Contacto: {contacto}"
+            )
+        except Exception as e:
+            logger.error("[WA] enriquecer_empresa error: %s", e)
+            return f"Error enriqueciendo NIT {nit}: {e}"
+
+    elif tool_name == "ver_clientes":
+        try:
+            cvs = await db.company_voice.find({}).to_list(length=20)
+            if not cvs:
+                return "No hay clientes registrados."
+            lines = ["Clientes activos de Landa:"]
+            for i, cv in enumerate(cvs[:10], 1):
+                nombre = cv.get("empresa", cv.get("user_id", "Cliente"))
+                canal = cv.get("notification_channel", "web")
+                lines.append(f"{i}. {nombre} (canal: {canal})")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error listando clientes: {e}"
+
+    elif tool_name == "ver_leads_cliente":
+        target_user_id = args.get("user_id", "")
+        try:
+            leads = await db.leads.find(
+                {"user_id": target_user_id}
+            ).to_list(length=5)
+            if not leads:
+                return f"No hay leads para el cliente {target_user_id}."
+            lines = [f"Leads de {target_user_id}:"]
+            for i, lead in enumerate(leads, 1):
+                empresa = lead.get("company_name", lead.get("empresa", "Empresa"))
+                estado = lead.get("estado", "desconocido")
+                lines.append(f"{i}. {empresa} — {estado}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error buscando leads: {e}"
+
+    elif tool_name == "iniciar_outreach":
+        lead_id = args.get("lead_id", "")
+        canal = args.get("canal", "email")
+        try:
+            asyncio.create_task(_run_outreach_asesor(lead_id, user_id, canal))
+            return f"✅ Outreach iniciado para lead {lead_id[:8]}... por {canal}."
+        except Exception as e:
+            return f"Error iniciando outreach: {e}"
+
+    else:
+        return f"No reconozco la herramienta '{tool_name}'."
+
+
+async def _run_outreach_asesor(lead_id: str, user_id: str, canal: str) -> None:
+    """Fire-and-forget outreach trigger for dispatch_tool_asesor."""
+    try:
+        from landa.agents.outreach import run_outreach
+        await run_outreach(lead_id, user_id, canal, intento=1)
+    except Exception as e:
+        logger.error("[WA] Asesor outreach error for lead %s: %s", lead_id, e)

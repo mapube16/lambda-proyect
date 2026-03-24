@@ -301,13 +301,44 @@ async def test_voice_note_transcription_failure_returns_fallback():
 
 # ── WA-04: asesor_interno tools ───────────────────────────────────────────────
 
-@pytest.mark.xfail(reason="WA-04: dispatch_tool_asesor() not yet implemented", strict=False)
 async def test_asesor_tool_buscar_licitaciones():
-    """dispatch_tool_asesor('buscar_licitaciones', {sector, ciudad}, user_id) calls secop_radar."""
-    pytest.fail("not implemented")
+    """dispatch_tool_asesor('buscar_licitaciones', ...) calls secop_radar and returns formatted string."""
+    from unittest.mock import patch, AsyncMock
+    import wa_handler
+
+    mock_processes = [
+        {"nit": "900111222", "nombre": "Constructora ABC", "objeto": "Construccion vias", "valor": 500000000},
+    ]
+
+    with patch("secop_radar.fetch_open_processes", AsyncMock(return_value=mock_processes)):
+        result = await wa_handler.dispatch_tool_asesor(
+            "buscar_licitaciones",
+            {"sector": "construccion", "ciudad": "Bogota"},
+            "staff_user_id",
+        )
+
+    assert isinstance(result, str)
+    assert "Constructora ABC" in result or "construccion" in result.lower()
 
 
-@pytest.mark.xfail(reason="WA-04: dispatch_tool_asesor() not yet implemented", strict=False)
 async def test_asesor_tool_enriquecer_empresa():
-    """dispatch_tool_asesor('enriquecer_empresa', {nit}, user_id) calls nit_enricher."""
-    pytest.fail("not implemented")
+    """dispatch_tool_asesor('enriquecer_empresa', ...) calls nit_enricher and returns string."""
+    from unittest.mock import patch, AsyncMock
+    import wa_handler
+
+    mock_data = {
+        "nit": "900123456",
+        "nombre": "Empresa Test SAS",
+        "sector": "construccion",
+        "ciudad": "Bogota",
+    }
+
+    with patch("nit_enricher.enrich_nit", AsyncMock(return_value=mock_data)):
+        result = await wa_handler.dispatch_tool_asesor(
+            "enriquecer_empresa",
+            {"nit": "900123456"},
+            "staff_user_id",
+        )
+
+    assert isinstance(result, str)
+    assert "Empresa Test SAS" in result or "900123456" in result
