@@ -42,6 +42,12 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.scheduled_actions.create_index("fecha_programada")
     await db.scheduled_actions.create_index([("estado", 1), ("fecha_programada", 1)])
     await db.scheduled_actions.create_index("lead_id")
+    # ── Phase 16: wa_sessions TTL index ──────────────────────────────────────
+    await db.wa_sessions.create_index("phone", unique=True)
+    await db.wa_sessions.create_index(
+        "updated_at",
+        expireAfterSeconds=86400,  # 24 hours TTL
+    )
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
@@ -227,6 +233,15 @@ async def get_active_campaign(user_id: str) -> Optional[dict]:
     return doc
 
 
+async def patch_active_campaign(user_id: str, fields: dict) -> bool:
+    db = get_db()
+    result = await db.campaigns.update_one(
+        {"user_id": user_id, "is_active": True},
+        {"$set": fields},
+    )
+    return result.modified_count > 0
+
+
 async def get_campaigns_by_user(user_id: str) -> list:
     db = get_db()
     cursor = db.campaigns.find({"user_id": user_id}).sort("created_at", -1)
@@ -371,6 +386,7 @@ async def update_run_status(
     status: str,
     total_found: int = None,
     total_approved: int = None,
+    agent_logs: dict = None,
 ) -> None:
     db = get_db()
     update: dict = {"status": status}
@@ -378,6 +394,8 @@ async def update_run_status(
         update["total_found"] = total_found
     if total_approved is not None:
         update["total_approved"] = total_approved
+    if agent_logs is not None:
+        update["agent_logs"] = agent_logs
     if status in ("complete", "error"):
         update["completed_at"] = datetime.now(timezone.utc)
     await db.runs.update_one(
@@ -456,6 +474,15 @@ async def update_lead_hitl(lead_id: str, user_id: str, decision: str) -> bool:
         {"$set": {"hitl_status": decision, "hitl_at": datetime.now(timezone.utc)}},
     )
     return result.modified_count == 1
+
+
+async def update_lead_nit_data(lead_id: str, nit_data: dict) -> None:
+    """Patch nit_data onto an existing lead document after async NIT enrichment completes."""
+    db = get_db()
+    await db.leads.update_one(
+        {"_id": ObjectId(lead_id)},
+        {"$set": {"nit_data": nit_data}},
+    )
 
 
 async def get_client_summary(user_id: str) -> dict:
@@ -782,3 +809,62 @@ async def delete_whatsapp_agent(phone_number: str) -> bool:
     db = get_db()
     result = await db.whatsapp_agents.delete_one({"phone_number": phone_number})
     return result.deleted_count > 0
+
+
+# ── Phase 16: wa_sessions CRUD ────────────────────────────────────────────────
+
+async def get_or_create_wa_session(
+    phone: str,
+    profile: str,
+    user_id: str,
+) -> dict:
+    """Return existing wa_session for phone, or create a new one.
+
+    Uses upsert so concurrent calls don't create duplicates.
+    """
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    doc = await db.wa_sessions.find_one_and_update(
+        {"phone": phone},
+        {
+            "$setOnInsert": {
+                "phone": phone,
+                "user_id": user_id,
+                "profile": profile,
+                "history": [],
+                "updated_at": now,
+            }
+        },
+        upsert=True,
+        return_document=True,  # ReturnDocument.AFTER equivalent in motor
+    )
+    # find_one_and_update with return_document=True returns the doc after update
+    if doc is None:
+        # Fallback: fetch after upsert
+        doc = await db.wa_sessions.find_one({"phone": phone})
+    return doc
+
+
+async def update_wa_session(phone: str, new_turn: dict) -> None:
+    """Append new_turn to history, keeping only last 10 turns (sliding window).
+
+    Also updates updated_at to reset the TTL clock.
+    """
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    # First push the new turn
+    await db.wa_sessions.update_one(
+        {"phone": phone},
+        {
+            "$push": {"history": new_turn},
+            "$set": {"updated_at": now},
+        }
+    )
+    # Then slice to keep only last 10 (Motor does not support $push $slice in one op with mongomock)
+    doc = await db.wa_sessions.find_one({"phone": phone})
+    if doc and len(doc.get("history", [])) > 10:
+        trimmed = doc["history"][-10:]
+        await db.wa_sessions.update_one(
+            {"phone": phone},
+            {"$set": {"history": trimmed}},
+        )

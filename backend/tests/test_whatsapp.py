@@ -33,22 +33,58 @@ async def async_client():
 
 # ── WA-01: notify_user() routing ──────────────────────────────────────────────
 
-@pytest.mark.xfail(reason="WA-01: notify_user() not yet implemented", strict=False)
 async def test_notify_user_routing_web():
-    """notify_user() sends WS event when notification_channel='web'."""
-    pytest.fail("not implemented")
+    """notify_user() with channel='web' sends WS only, no WA."""
+    from unittest.mock import AsyncMock, patch, MagicMock
+    import main as main_module
+
+    mock_cv = {"notification_channel": "web", "wa_phone_number": None}
+    mock_send_to_user = AsyncMock()
+    mock_send_whatsapp = AsyncMock()
+
+    with patch.object(main_module.manager, "send_to_user", mock_send_to_user), \
+         patch("main.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
+         patch("main.send_whatsapp_text", mock_send_whatsapp, create=True):
+        await main_module.notify_user("user123", {"type": "lead_checkpoint"})
+
+    mock_send_to_user.assert_awaited_once()
+    mock_send_whatsapp.assert_not_awaited()
 
 
-@pytest.mark.xfail(reason="WA-01: notify_user() not yet implemented", strict=False)
 async def test_notify_user_routing_whatsapp():
-    """notify_user() sends WA message (no WS) when notification_channel='whatsapp'."""
-    pytest.fail("not implemented")
+    """notify_user() with channel='whatsapp' sends WA only, no WS."""
+    from unittest.mock import AsyncMock, patch
+    import main as main_module
+
+    mock_cv = {"notification_channel": "whatsapp", "wa_phone_number": "+573001234567"}
+    mock_send_to_user = AsyncMock()
+    mock_send_whatsapp = AsyncMock()
+
+    with patch.object(main_module.manager, "send_to_user", mock_send_to_user), \
+         patch("main.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
+         patch("main.send_whatsapp_text", mock_send_whatsapp, create=True):
+        await main_module.notify_user("user123", {"type": "lead_checkpoint"})
+
+    mock_send_to_user.assert_not_awaited()
+    mock_send_whatsapp.assert_awaited_once()
 
 
-@pytest.mark.xfail(reason="WA-01: notify_user() not yet implemented", strict=False)
 async def test_notify_user_routing_both():
-    """notify_user() sends WS + WA when notification_channel='both'."""
-    pytest.fail("not implemented")
+    """notify_user() with channel='both' sends WS + WA."""
+    from unittest.mock import AsyncMock, patch
+    import main as main_module
+
+    mock_cv = {"notification_channel": "both", "wa_phone_number": "+573001234567"}
+    mock_send_to_user = AsyncMock()
+    mock_send_whatsapp = AsyncMock()
+
+    with patch.object(main_module.manager, "send_to_user", mock_send_to_user), \
+         patch("main.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
+         patch("main.send_whatsapp_text", mock_send_whatsapp, create=True):
+        await main_module.notify_user("user123", {"type": "lead_checkpoint"})
+
+    mock_send_to_user.assert_awaited_once()
+    mock_send_whatsapp.assert_awaited_once()
 
 
 # ── WA-01: Webhook routing ────────────────────────────────────────────────────
@@ -67,24 +103,74 @@ async def test_routing_unknown_number_returns_twiml(async_client):
 
 # ── WA-02: wa_sessions CRUD ───────────────────────────────────────────────────
 
-@pytest.mark.xfail(reason="WA-02: wa_sessions CRUD not yet implemented", strict=False)
 async def test_session_created_on_first_message():
     """get_or_create_wa_session() creates doc if phone not in wa_sessions."""
-    pytest.fail("not implemented")
+    from database import get_or_create_wa_session, get_db
+
+    session = await get_or_create_wa_session(
+        phone="+573001234567",
+        profile="cliente",
+        user_id="user123",
+    )
+    assert session["phone"] == "+573001234567"
+    assert session["profile"] == "cliente"
+    assert session["user_id"] == "user123"
+    assert session["history"] == []
+
+    # Calling again returns same session, no duplicate
+    session2 = await get_or_create_wa_session(
+        phone="+573001234567",
+        profile="cliente",
+        user_id="user123",
+    )
+    assert session2["phone"] == session["phone"]
+
+    # Only one doc in collection
+    count = await get_db().wa_sessions.count_documents({})
+    assert count == 1
 
 
-@pytest.mark.xfail(reason="WA-02: wa_sessions CRUD not yet implemented", strict=False)
 async def test_session_sliding_window_max_10_turns():
     """update_wa_session() keeps only last 10 turns in history."""
-    pytest.fail("not implemented")
+    from database import get_or_create_wa_session, update_wa_session
+
+    await get_or_create_wa_session(
+        phone="+573001234567",
+        profile="cliente",
+        user_id="user123",
+    )
+
+    # Add 11 turns
+    for i in range(11):
+        await update_wa_session("+573001234567", {"role": "user", "content": f"msg {i}"})
+
+    from database import get_db
+    doc = await get_db().wa_sessions.find_one({"phone": "+573001234567"})
+    assert len(doc["history"]) == 10
+    # Last turn should be msg 10 (the 11th added)
+    assert doc["history"][-1]["content"] == "msg 10"
 
 
 # ── WA-02: webhook end-to-end ─────────────────────────────────────────────────
 
-@pytest.mark.xfail(reason="WA-02: wa_handler.process_inbound() not yet implemented", strict=False)
 async def test_webhook_returns_empty_twiml(async_client):
-    """POST /api/whatsapp/incoming returns <Response/> immediately."""
-    pytest.fail("not implemented")
+    """POST /api/whatsapp/incoming returns <Response/> immediately (wa_handler stub in place)."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("wa_handler.validate_twilio_signature", return_value=True), \
+         patch("wa_handler.get_profile", AsyncMock(return_value=None)):
+        resp = await async_client.post(
+            "/api/whatsapp/incoming",
+            data={
+                "From": "whatsapp:+573001234567",
+                "To": "whatsapp:+14155238886",
+                "Body": "Hola",
+                "NumMedia": "0",
+            },
+        )
+    assert resp.status_code == 200
+    assert "<Response/>" in resp.text
+    assert resp.headers["content-type"].startswith("text/xml")
 
 
 # ── WA-03: LLM tool calling (cliente profile) ─────────────────────────────────
