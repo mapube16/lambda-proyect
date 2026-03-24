@@ -2104,16 +2104,43 @@ async def whatsapp_incoming(request: Request):
         logging.warning("[WA] Unknown number %s — ignoring message", from_phone)
         return Response(content="<Response/>", media_type="text/xml")
 
-    # Fire-and-forget processing — never block TwiML response
-    asyncio.create_task(
-        wa_handler.process_inbound(
-            from_phone=from_phone,
-            to_number=to_number,
-            body=body,
-            media_url=media_url,
-            profile=profile,
+    # Route by bot_mode (MongoDB flag — change via Compass without redeploy)
+    from database import get_wa_bot_mode
+    bot_mode = await get_wa_bot_mode(from_phone)
+
+    if bot_mode == "legacy":
+        # Original SECOP prospector bot
+        from whatsapp_agent import handle_inbound_message
+        agent_config = await get_whatsapp_agent(from_phone) or {}
+        async def _legacy():
+            try:
+                await handle_inbound_message(from_phone, body, to_number, agent_config)
+            except Exception as e:
+                logging.error("[WA] legacy bot error: %s", e)
+        asyncio.create_task(_legacy())
+
+    elif bot_mode == "calendar":
+        # Google Calendar agent (Phase 17)
+        try:
+            from calendar_agent import process_calendar_message
+            asyncio.create_task(process_calendar_message(from_phone, body, media_url))
+        except ImportError:
+            asyncio.create_task(wa_handler.process_inbound(
+                from_phone=from_phone, to_number=to_number,
+                body="Agente de calendario no disponible aún.", media_url="", profile=profile,
+            ))
+
+    else:
+        # Default: "landa" — LLM tool calling bot
+        asyncio.create_task(
+            wa_handler.process_inbound(
+                from_phone=from_phone,
+                to_number=to_number,
+                body=body,
+                media_url=media_url,
+                profile=profile,
+            )
         )
-    )
 
     return Response(content="<Response/>", media_type="text/xml")
 

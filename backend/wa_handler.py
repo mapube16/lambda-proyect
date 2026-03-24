@@ -334,6 +334,23 @@ TOOLS_ASESOR = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "crear_reunion",
+            "description": "Crear un evento en Google Calendar con link de Google Meet. Usa lenguaje natural para describir la reunión.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "texto": {
+                        "type": "string",
+                        "description": "Descripción de la reunión en lenguaje natural. Ej: 'Reunión con Juan mañana a las 3pm sobre el contrato'",
+                    },
+                },
+                "required": ["texto"],
+            },
+        },
+    },
 ]
 
 
@@ -695,6 +712,15 @@ async def dispatch_tool_asesor(tool_name: str, args: dict, user_id: str) -> str:
             return f"✅ Outreach iniciado para lead {lead_id[:8]}... por {canal}."
         except Exception as e:
             return f"Error iniciando outreach: {e}"
+
+    elif tool_name == "crear_reunion":
+        texto = args.get("texto", "")
+        try:
+            from calendar_agent import crear_reunion_tool
+            return await crear_reunion_tool(texto)
+        except Exception as e:
+            logger.error("[WA] crear_reunion error: %s", e)
+            return f"Error creando la reunión: {e}"
 
     else:
         return f"No reconozco la herramienta '{tool_name}'."

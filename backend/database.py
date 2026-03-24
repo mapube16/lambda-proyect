@@ -868,3 +868,27 @@ async def update_wa_session(phone: str, new_turn: dict) -> None:
             {"phone": phone},
             {"$set": {"history": trimmed}},
         )
+
+
+# ── wa_config: bot_mode per phone (MongoDB-driven routing) ────────────────────
+
+async def get_wa_bot_mode(phone: str) -> str:
+    """Return bot_mode for a phone number. Defaults to 'landa' if not set.
+
+    Valid values: 'landa' (LLM tool calling), 'legacy' (SECOP prospector),
+                  'calendar' (Google Calendar agent).
+    Change via MongoDB Compass: db.wa_config.updateOne({phone}, {$set: {bot_mode: '...'}})
+    """
+    db = get_db()
+    doc = await db.wa_config.find_one({"phone": phone})
+    return (doc or {}).get("bot_mode", "landa")
+
+
+async def set_wa_bot_mode(phone: str, bot_mode: str) -> None:
+    """Upsert bot_mode for a phone number."""
+    db = get_db()
+    await db.wa_config.update_one(
+        {"phone": phone},
+        {"$set": {"phone": phone, "bot_mode": bot_mode}},
+        upsert=True,
+    )
