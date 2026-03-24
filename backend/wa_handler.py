@@ -622,14 +622,23 @@ async def dispatch_tool_asesor(tool_name: str, args: dict, user_id: str) -> str:
             processes = await secop_radar.fetch_open_processes(sector, ciudad)
             if not processes:
                 return f"No encontré licitaciones abiertas en {sector} para {ciudad or 'Colombia'}."
-            lines = [f"Licitaciones abiertas — {sector} {ciudad}:"]
+            lines = [f"Licitaciones abiertas — {sector} {ciudad} ({len(processes)} encontradas):"]
             for i, p in enumerate(processes[:5], 1):
-                nombre = p.get("nombre", "Sin nombre")
-                valor = p.get("valor", 0)
-                valor_str = f"${valor:,.0f}" if valor else "N/D"
-                lines.append(f"{i}. {nombre} — {valor_str}")
+                entidad = p.get("entidad", p.get("nombre", "Sin nombre"))
+                objeto = p.get("objeto", "")[:80]
+                valor = p.get("valor_estimado", p.get("valor", 0))
+                valor_str = f"${valor:,.0f}" if valor else ""
+                cierre = p.get("fecha_cierre", "")
+                line = f"{i}. {entidad}"
+                if objeto:
+                    line += f" — {objeto}"
+                if valor_str:
+                    line += f" ({valor_str})"
+                if cierre:
+                    line += f" · cierre: {cierre}"
+                lines.append(line)
             if len(processes) > 5:
-                lines.append(f"...y {len(processes) - 5} más.")
+                lines.append(f"...y {len(processes) - 5} más en SECOP.")
             return "\n".join(lines)
         except Exception as e:
             logger.error("[WA] buscar_licitaciones error: %s", e)
@@ -645,8 +654,9 @@ async def dispatch_tool_asesor(tool_name: str, args: dict, user_id: str) -> str:
                 return f"No encontré adjudicados para {sector}."
             lines = [f"Adjudicados — {sector}:"]
             for i, p in enumerate(processes[:5], 1):
-                nombre = p.get("nombre", "Sin nombre")
-                lines.append(f"{i}. {nombre}")
+                entidad = p.get("entidad", p.get("nombre", "Sin nombre"))
+                objeto = p.get("objeto", "")[:60]
+                lines.append(f"{i}. {entidad} — {objeto}")
             return "\n".join(lines)
         except Exception as e:
             return f"Error buscando adjudicados: {e}"
