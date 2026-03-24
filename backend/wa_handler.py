@@ -536,8 +536,10 @@ async def _call_llm_with_tools(
             "\n2. Si piden 'empresas de X que se presentan a licitaciones', usa buscar_licitaciones "
             "con el sector X. Si mencionan ciudad, úsala. Si no, busca en todo Colombia (ciudad vacía)."
             "\n3. No repitas lo que el usuario dijo. No hagas preguntas innecesarias."
-            "\n4. Responde en español colombiano conciso. Sin markdown (negrillas, guiones). "
-            "Listas con 1. 2. 3. Máximo 1600 caracteres."
+            "\n4. Responde en español colombiano conciso. CERO markdown: sin negrillas, "
+            "sin guiones, sin formato [texto](url). Los URLs van en texto plano tal cual. "
+            "Cuando una herramienta devuelve un resultado con links, cópialos exactos sin formatear."
+            "\n5. Listas con 1. 2. 3. Máximo 1600 caracteres."
         )
     else:
         system_prompt = (

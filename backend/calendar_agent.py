@@ -21,27 +21,19 @@ logger = logging.getLogger(__name__)
 # ── Google Calendar client ────────────────────────────────────────────────────
 
 def _get_calendar_service():
-    """Build Google Calendar API service using OAuth2 refresh token."""
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
+    """Build Google Calendar API service using service account credentials."""
+    from google.oauth2 import service_account
     from googleapiclient.discovery import build
+    from pathlib import Path
 
-    refresh_token = os.getenv("GOOGLE_REFRESH_TOKEN", "")
-    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    sa_path = Path(__file__).parent / "google_service_account.json"
+    if not sa_path.exists():
+        raise ValueError(f"Service account key not found at {sa_path}")
 
-    if not refresh_token:
-        raise ValueError("GOOGLE_REFRESH_TOKEN no configurado. Corre: python backend/google_auth.py")
-
-    creds = Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=["https://www.googleapis.com/auth/calendar"],
+    scopes = ["https://www.googleapis.com/auth/calendar"]
+    creds = service_account.Credentials.from_service_account_file(
+        str(sa_path), scopes=scopes
     )
-    creds.refresh(Request())
     return build("calendar", "v3", credentials=creds)
 
 
@@ -131,12 +123,6 @@ async def create_calendar_event(details: dict) -> dict:
         "start": {"dateTime": start_str, "timeZone": tz},
         "end": {"dateTime": end_str, "timeZone": tz},
         "attendees": attendees,
-        "conferenceData": {
-            "createRequest": {
-                "requestId": f"landa-{int(datetime.now().timestamp())}",
-                "conferenceSolutionKey": {"type": "hangoutsMeet"},
-            }
-        },
         "reminders": {
             "useDefault": False,
             "overrides": [
@@ -149,12 +135,30 @@ async def create_calendar_event(details: dict) -> dict:
     # Run sync Google API call in thread pool
     def _create():
         service = _get_calendar_service()
-        return service.events().insert(
-            calendarId=calendar_id,
-            body=event_body,
-            conferenceDataVersion=1,
-            sendUpdates="all" if attendees else "none",
-        ).execute()
+        # Try with Google Meet first; fall back without it (service accounts on personal Gmail)
+        try:
+            body_with_meet = {
+                **event_body,
+                "conferenceData": {
+                    "createRequest": {
+                        "requestId": f"landa-{int(datetime.now().timestamp())}",
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    }
+                },
+            }
+            return service.events().insert(
+                calendarId=calendar_id,
+                body=body_with_meet,
+                conferenceDataVersion=1,
+                sendUpdates="all" if attendees else "none",
+            ).execute()
+        except Exception:
+            # Fall back without Meet link
+            return service.events().insert(
+                calendarId=calendar_id,
+                body=event_body,
+                sendUpdates="all" if attendees else "none",
+            ).execute()
 
     loop = asyncio.get_event_loop()
     event = await loop.run_in_executor(None, _create)
@@ -179,6 +183,13 @@ async def create_calendar_event(details: dict) -> dict:
 
 # ── Format reply message ──────────────────────────────────────────────────────
 
+def _jitsi_url(summary: str) -> str:
+    """Generate a Jitsi Meet URL from an event summary (no account needed)."""
+    import re
+    slug = re.sub(r"[^a-zA-Z0-9]", "", summary.title().replace(" ", ""))[:30] or "Reunion"
+    return f"https://meet.jit.si/{slug}"
+
+
 def format_event_reply(event: dict) -> str:
     """Format a WhatsApp-friendly reply for a created calendar event."""
     start = event["start"]
@@ -188,15 +199,17 @@ def format_event_reply(event: dict) -> str:
     except Exception:
         fecha_str = start
 
+    # Use Google Meet if available, otherwise Jitsi (free, no account)
+    video_link = event.get("meet_link") or _jitsi_url(event.get("summary", "Reunion"))
+
     lines = [
-        f"✅ Reunión creada: {event['summary']}",
-        f"📅 {fecha_str}",
+        f"Reunion creada: {event['summary']}",
+        f"Fecha: {fecha_str}",
+        f"Videollamada: {video_link}",
     ]
-    if event["meet_link"]:
-        lines.append(f"🎥 Meet: {event['meet_link']}")
-    if event["attendees"]:
-        lines.append(f"👥 Invitados: {', '.join(event['attendees'])}")
-    lines.append(f"📆 Ver en Calendar: {event['html_link']}")
+    if event.get("attendees"):
+        lines.append(f"Invitados: {', '.join(event['attendees'])}")
+    lines.append(f"Calendar: {event['html_link']}")
     return "\n".join(lines)
 
 
