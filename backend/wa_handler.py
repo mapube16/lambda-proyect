@@ -474,21 +474,26 @@ async def _transcribe_voice_note(media_url: str) -> Optional[str]:
     try:
         auth_header = "Basic " + base64.b64encode(f"{sid}:{token}".encode()).decode() if (sid and token) else ""
         headers = {"Authorization": auth_header} if auth_header else {}
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.get(media_url, headers=headers)
             if resp.status_code != 200:
-                logger.error("[WA] Twilio media download error %d", resp.status_code)
+                logger.error("[WA] Twilio media download error %d: %s", resp.status_code, resp.text[:200])
                 return None
             audio_bytes = resp.content
+            content_type = resp.headers.get("content-type", "audio/ogg").split(";")[0].strip()
+            logger.info("[WA] Audio downloaded: %d bytes, type=%s", len(audio_bytes), content_type)
     except Exception as e:
         logger.error("[WA] Audio download error: %s", e)
         return None
 
     try:
         openai_client = AsyncOpenAI(api_key=api_key)
+        ext_map = {"audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "mp4",
+                   "audio/amr": "amr", "audio/wav": "wav", "audio/webm": "webm"}
+        ext = ext_map.get(content_type, "ogg")
         transcript = await openai_client.audio.transcriptions.create(
             model="whisper-1",
-            file=("voice_note.ogg", audio_bytes, "audio/ogg"),
+            file=(f"voice_note.{ext}", audio_bytes, content_type),
         )
         text = transcript.text.strip()
         logger.info("[WA] Whisper transcription: %s", text[:100])
