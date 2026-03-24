@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 16-02-PLAN.md
-last_updated: "2026-03-24T03:03:56.659Z"
+stopped_at: Completed 16-03-PLAN.md
+last_updated: "2026-03-24T03:06:05.626Z"
 last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
 progress:
   total_phases: 16
   completed_phases: 4
   total_plans: 33
-  completed_plans: 26
+  completed_plans: 27
   percent: 40
 ---
 
@@ -56,6 +56,7 @@ Progress: [████░░░░░░] 40%
 | Phase 14-landa-api-checkpoint-ui P02 | 5m | 2 tasks | 2 files |
 | Phase 16-whatsapp-conversational-advisor-bot P01 | 5 | 1 tasks | 2 files |
 | Phase 16-whatsapp-conversational-advisor-bot P02 | 4m | 2 tasks | 2 files |
+| Phase 16-whatsapp-conversational-advisor-bot P03 | 8m | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -107,6 +108,9 @@ Recent decisions affecting current work:
 - [Phase 16-01]: async_client uses lazy import inside fixture body to prevent collection-time app-import errors before wa_handler.py exists
 - [Phase 16-02]: send_whatsapp_text() placed in main.py not wa_handler.py to avoid circular import at module init
 - [Phase 16-02]: Only 3 lead lifecycle events replaced with notify_user(): lead_checkpoint, lead_archived, lead_handover — agent_state UI signals left as direct send_to_user()
+- [Phase 16-03]: Two-phase sliding window in update_wa_session: push then trim if >10 — mongomock does not support $push with $slice in single op
+- [Phase 16-03]: validate_twilio_signature returns True when creds not set — permissive fallback for local dev and test environments
+- [Phase 16-03]: get_profile uses lazy import of database inside function body — avoids circular import with main.py
 
 ### Pending Todos
 
@@ -119,6 +123,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-24T03:03:56.648Z
-Stopped at: Completed 16-02-PLAN.md
+Last session: 2026-03-24T03:06:05.617Z
+Stopped at: Completed 16-03-PLAN.md
 Resume file: None

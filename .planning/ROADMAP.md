@@ -345,7 +345,7 @@ Plans:
 - LLM con tool calling: intención libre → herramientas (buscar_licitaciones, aprobar_lead, rechazar_lead, ver_handover, enriquecer_nit)
 - Sesiones por número de teléfono en MongoDB (reemplaza dict en memoria de whatsapp_agent.py)
 - Dos perfiles de usuario: `asesor_interno` (acceso a SECOP, gestión de múltiples clientes) y `cliente` (acceso solo a sus propios leads)
-**Plans:** 2/6 plans executed
+**Plans:** 3/6 plans executed
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 16 to break down)
@@ -374,4 +374,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 13. Landa Agent Pipeline | 6/6 | Complete   | 2026-03-22 |
 | 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
-| 16. WhatsApp como Canal Completo de Landa | 2/6 | In Progress|  |
+| 16. WhatsApp como Canal Completo de Landa | 3/6 | In Progress|  |
