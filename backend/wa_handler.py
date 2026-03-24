@@ -640,26 +640,51 @@ async def dispatch_tool_asesor(tool_name: str, args: dict, user_id: str) -> str:
         ciudad = args.get("ciudad", "")
         try:
             import secop_radar
-            processes = await secop_radar.fetch_open_processes(sector, ciudad)
-            if not processes:
-                return f"No encontré licitaciones abiertas en {sector} para {ciudad or 'Colombia'}."
-            lines = [f"Licitaciones abiertas — {sector} {ciudad} ({len(processes)} encontradas):"]
-            for i, p in enumerate(processes[:5], 1):
-                entidad = p.get("entidad", p.get("nombre", "Sin nombre"))
-                objeto = p.get("objeto", "")[:80]
-                valor = p.get("valor_estimado", p.get("valor", 0))
-                valor_str = f"${valor:,.0f}" if valor else ""
-                cierre = p.get("fecha_cierre", "")
-                line = f"{i}. {entidad}"
-                if objeto:
-                    line += f" — {objeto}"
-                if valor_str:
-                    line += f" ({valor_str})"
-                if cierre:
-                    line += f" · cierre: {cierre}"
-                lines.append(line)
-            if len(processes) > 5:
-                lines.append(f"...y {len(processes) - 5} más en SECOP.")
+            from secop import fetch_secop_providers
+            # Run in parallel: open tenders + companies that historically win in this sector
+            procesos_task = secop_radar.fetch_open_processes(sector, ciudad, max_results=20)
+            empresas_task = fetch_secop_providers(sector, ciudad or None, max_results=10)
+            procesos, empresas = await asyncio.gather(procesos_task, empresas_task)
+
+            lines = []
+            # Section 1: brief tender summary
+            if procesos:
+                lines.append(f"Licitaciones ABIERTAS en {sector} ({len(procesos)} encontradas):")
+                for i, p in enumerate(procesos[:3], 1):
+                    entidad = p.get("entidad", "Sin nombre")
+                    objeto = p.get("objeto", "")[:60]
+                    cierre = p.get("fecha_cierre", "")
+                    line = f"{i}. {entidad}"
+                    if objeto:
+                        line += f" — {objeto}"
+                    if cierre:
+                        line += f" · cierre: {cierre}"
+                    lines.append(line)
+                if len(procesos) > 3:
+                    lines.append(f"...y {len(procesos) - 3} licitaciones más activas.")
+            else:
+                lines.append(f"No encontré licitaciones abiertas en {sector} ahora mismo.")
+
+            # Section 2: companies to target (proponentes habituales)
+            if empresas:
+                lines.append("")
+                lines.append(f"Empresas que suelen participar en {sector} (prospectos para póliza):")
+                for i, e in enumerate(empresas[:7], 1):
+                    nombre = e.get("nombre", "N/D")[:45]
+                    nit = e.get("nit", "")
+                    ciudad_e = e.get("municipio", e.get("ciudad", ""))
+                    contratos = e.get("contratos", 0)
+                    line = f"{i}. {nombre}"
+                    if nit:
+                        line += f" · NIT {nit}"
+                    if ciudad_e:
+                        line += f" · {ciudad_e}"
+                    if contratos:
+                        line += f" ({contratos} contratos)"
+                    lines.append(line)
+            else:
+                lines.append("No encontré empresas con historial en este sector.")
+
             return "\n".join(lines)
         except Exception as e:
             logger.error("[WA] buscar_licitaciones error: %s", e)
