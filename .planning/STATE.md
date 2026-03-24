@@ -57,6 +57,9 @@ Progress: [████░░░░░░] 40%
 | Phase 16-whatsapp-conversational-advisor-bot P01 | 5 | 1 tasks | 2 files |
 | Phase 16-whatsapp-conversational-advisor-bot P02 | 4m | 2 tasks | 2 files |
 | Phase 16-whatsapp-conversational-advisor-bot P03 | 8m | 2 tasks | 3 files |
+| Phase 16-whatsapp-conversational-advisor-bot P04 | 20m | 2 tasks | 2 files |
+| Phase 16-whatsapp-conversational-advisor-bot P05 | 10m | 1 tasks | 2 files |
+| Phase 16-whatsapp-conversational-advisor-bot P06 | 5m | smoke test | all green |
 
 ## Accumulated Context
 
