@@ -1,5 +1,5 @@
 """
-Isomorph Office - Backend Server
+Lambda Office - Backend Server
 FastAPI server with WebSocket support for real-time agent visualization
 """
 import os
@@ -35,7 +35,7 @@ from database import (
     init_db, get_db, get_user_by_email, create_user,
     save_campaign, get_active_campaign, get_campaigns_by_user,
     create_run, update_run_status, get_runs_by_user,
-    save_lead, get_leads_by_run, get_leads_by_user, update_lead_hitl,
+    save_lead, get_leads_by_run, get_leads_by_user, get_lead_by_id, update_lead_hitl,
     seed_users, get_all_users, get_user_by_id, get_client_summary,
     get_knowledge_sources, delete_knowledge_source, delete_knowledge_by_user,
     get_ideal_leads, get_rejected_leads,
@@ -45,11 +45,12 @@ from database import (
     get_user_root_onboarding,
     get_prospecting_excluded_domains,
     upsert_whatsapp_agent, get_whatsapp_agent, list_whatsapp_agents, delete_whatsapp_agent,
+    create_registration_request, get_all_registration_requests, update_registration_request_status,
 )
 from models import (
     Agent, AgentState, AgentRole,
     CreateAgentRequest, TaskRequest, AgentResponse,
-    UserCreate, Token
+    UserCreate, Token, RegistrationRequest
 )
 from orchestrator import HiveOrchestrator
 from onboarding import chat_turn
@@ -253,7 +254,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     from auth import hash_password as _hash
     await seed_users([
-        {"email": "staff@isomorph.com",   "hashed_password": _hash("isomorph2026"), "role": "staff"},
+        {"email": "staff@lambda.com",   "hashed_password": _hash("lambda2026"), "role": "staff"},
         {"email": "dpg.seguros@gmail.com", "hashed_password": _hash("seguros2026"),  "role": "client"},
     ])
 
@@ -294,7 +295,7 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"message": "Isomorph Office API", "status": "running"}
+    return {"message": "Lambda Office API", "status": "running"}
 
 
 @app.post("/auth/register", status_code=201)
@@ -305,7 +306,15 @@ async def register(user: UserCreate):
         raise HTTPException(status_code=400, detail="Email already registered")
     hashed = hash_password(user.password)
     try:
-        created = await create_user(user.email, hashed)
+        created = await create_user(
+            user.email, 
+            hashed,
+            role=user.role or "client",
+            full_name=user.full_name,
+            company_name=user.company_name,
+            phone=user.phone,
+            country=user.country,
+        )
     except DuplicateKeyError:
         raise HTTPException(status_code=400, detail="Email already registered")
     return {"id": created["id"], "email": created["email"]}
@@ -329,6 +338,118 @@ async def login(user: UserCreate):
         "role": db_user.get("role", "client"),
         "email": db_user["email"],
     }
+
+
+@app.post("/auth/google-login")
+async def google_login(data: dict):
+    """
+    Authenticate user with Google OAuth token.
+    Expects: { "token": "<google-jwt-token>" }
+    """
+    import urllib.request
+    
+    token = data.get("token")
+    if not token:
+        raise HTTPException(status_code=400, detail="Token requerido")
+    
+    try:
+        # Verify Google token by making request to Google's tokeninfo endpoint
+        # This validates the token is legitimate and gets user info
+        url = f"https://www.googleapis.com/oauth2/v1/userinfo?access_token={token}"
+        with urllib.request.urlopen(url) as response:
+            user_info = json.loads(response.read().decode())
+        
+        email = user_info.get("email")
+        name = user_info.get("name", "")
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Email no disponible en token de Google")
+        
+        # Check if user exists
+        db_user = await get_user_by_email(email)
+        
+        if not db_user:
+            # Create user if doesn't exist
+            hashed_pw = hash_password("google_oauth_no_password_needed")
+            try:
+                db_user = await create_user(
+                    email,
+                    hashed_pw,
+                    role="client",
+                    full_name=name
+                )
+            except DuplicateKeyError:
+                # User was just created by concurrent request, fetch it
+                db_user = await get_user_by_email(email)
+        
+        # Create JWT token for our app
+        token = create_access_token(data={"sub": str(db_user["id"]), "role": db_user.get("role", "client")})
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user_id": str(db_user["id"]),
+            "role": db_user.get("role", "client"),
+            "email": db_user["email"],
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Error al validar token de Google: {str(e)}")
+
+
+@app.post("/auth/register-request", status_code=202)
+async def register_request(req: RegistrationRequest):
+    """
+    Submit a registration request for staff review.
+    Staff will contact the user to approve/deny access.
+    Returns 202 Accepted (not 201 Created, as the account isn't created yet).
+    """
+    result = await create_registration_request(
+        email=req.email,
+        full_name=req.full_name,
+        company_name=req.company_name,
+        phone=req.phone,
+        country=req.country,
+        role=req.role or "user",
+        message=req.message,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {
+        "message": "Registration request submitted successfully. Our team will contact you soon.",
+        "status": "pending",
+    }
+
+
+@app.get("/admin/registration-requests")
+async def get_registration_requests(current_user: dict = Depends(get_current_user)):
+    """Get all registration requests (staff-only endpoint)."""
+    # Check if user is admin/staff
+    if current_user.get("role") not in ["admin", "staff"]:
+        raise HTTPException(status_code=403, detail="Staff only")
+    
+    requests = await get_all_registration_requests()
+    return {"requests": requests}
+
+
+@app.patch("/admin/registration-requests/{request_id}/status")
+async def update_request_status(
+    request_id: str,
+    status_update: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update registration request status: pending, approved, rejected, contacted."""
+    # Check if user is admin/staff
+    if current_user.get("role") not in ["admin", "staff"]:
+        raise HTTPException(status_code=403, detail="Staff only")
+    
+    new_status = status_update.get("status")
+    if new_status not in ["pending", "approved", "rejected", "contacted"]:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    
+    result = await update_registration_request_status(request_id, new_status)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @app.get("/api/diagnostics/maps")
@@ -480,6 +601,20 @@ async def websocket_endpoint(
                     asyncio.create_task(
                         orchestrator.run_agent(agent_id, task)
                     )
+
+            elif data.get("type") == "agent_state":
+                # Cache agent state for staff view
+                agent_id = data.get("agent_id") or data.get("agent")
+                state = data.get("state")
+                current_tool = data.get("current_tool")
+                tool_status = data.get("tool_status")
+                
+                if agent_id:
+                    _update_agent_state_cache(user_id, agent_id, {
+                        "state": state,
+                        "current_tool": current_tool,
+                        "tool_status": tool_status,
+                    })
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
@@ -809,6 +944,64 @@ async def get_user_leads(current_user: dict = Depends(get_current_user)):
     return leads
 
 
+@app.get("/api/leads/checkpoint")
+async def get_checkpoint_leads(current_user: dict = Depends(get_current_user)):
+    """Return all leads in estado='checkpoint' for the authenticated user."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    leads = await db.leads.find(
+        {"user_id": user_id, "estado": "checkpoint"}
+    ).sort("estado_updated_at", -1).to_list(length=100)
+    result = []
+    for l in leads:
+        l["_id"] = str(l["_id"])
+        result.append({
+            "id": l["_id"],
+            "empresa": l.get("company_name") or l.get("empresa", ""),
+            "decisor": l.get("decisor"),
+            "puntaje": l.get("puntaje", 0),
+            "criterios": l.get("criterios", []),
+            "senales": l.get("señales", l.get("senales", [])),
+            "canales": l.get("canales", []),
+            "canal_elegido": l.get("canal_elegido"),
+            "estado": l.get("estado"),
+        })
+    return result
+
+
+# ============ Lead Detail & Draft Preview (NEW) ============
+
+@app.get("/api/leads/{lead_id}")
+async def get_lead_detail(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Get full lead document with all fields (dossier modal)."""
+    user_id = str(current_user["user_id"])
+    lead = await get_lead_by_id(lead_id, user_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found or not yours")
+    return lead
+
+
+@app.get("/api/leads/{lead_id}/draft")
+async def get_lead_draft(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Get lead + email draft preview (no send)."""
+    user_id = str(current_user["user_id"])
+    lead = await get_lead_by_id(lead_id, user_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found or not yours")
+    
+    exp = lead.get("expediente_json") or {}
+    borradores = exp.get("borradores") or {}
+    
+    return {
+        **lead,
+        "email_draft": {
+            "asuntos": borradores.get("email_asuntos", []),
+            "cuerpo": borradores.get("email_cuerpo", ""),
+            "decisor": exp.get("decisor", {}),
+        }
+    }
+
+
 class SendEmailRequest(_BaseModel):
     subject_index: int = 0   # Which subject line from email_asuntos (0 or 1)
 
@@ -1113,6 +1306,93 @@ async def simulate_agent_activity(agent_id: str, current_user: dict = Depends(ge
 
 
 # ============ Staff Endpoints ============
+
+@app.get("/api/staff/stats")
+async def get_staff_stats(_staff: dict = Depends(require_staff)):
+    """Global stats across all clients + per-client breakdown."""
+    db = get_db()
+    users = await get_all_users()
+    clients = [u for u in users if u["role"] == "client"]
+    
+    # Global totals
+    total_leads = await db.leads.count_documents({})
+    total_runs = await db.runs.count_documents({})
+    total_approved = await db.leads.count_documents({"hitl_status": "approved"})
+    total_checkpoint = await db.leads.count_documents({"estado": "checkpoint"})
+    active_runs = await db.runs.count_documents({"status": "running"})
+    
+    # Per-client breakdown
+    per_client = []
+    for client in clients:
+        client_id = client["id"]
+        client_leads = await db.leads.count_documents({"user_id": client_id})
+        client_runs = await db.runs.count_documents({"user_id": client_id})
+        client_approved = await db.leads.count_documents({"user_id": client_id, "hitl_status": "approved"})
+        client_active_runs = await db.runs.count_documents({"user_id": client_id, "status": "running"})
+        
+        per_client.append({
+            "client_id": client_id,
+            "client_email": client["email"],
+            "total_leads": client_leads,
+            "total_runs": client_runs,
+            "approved_leads": client_approved,
+            "active_runs": client_active_runs,
+        })
+    
+    return {
+        "global": {
+            "total_leads": total_leads,
+            "total_runs": total_runs,
+            "total_approved": total_approved,
+            "total_checkpoint": total_checkpoint,
+            "active_runs": active_runs,
+        },
+        "per_client": per_client,
+    }
+
+
+# ============ Global Agent State Cache (for staff view) ============
+_agent_state_cache: Dict[str, Dict[str, dict]] = {}
+
+
+def _update_agent_state_cache(user_id: str, agent_id: str, state_data: dict):
+    """Update agent state for a client in the cache."""
+    if user_id not in _agent_state_cache:
+        _agent_state_cache[user_id] = {}
+    _agent_state_cache[user_id][agent_id] = {
+        **state_data,
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+
+@app.get("/api/staff/agents/active")
+async def get_staff_agents_active(_staff: dict = Depends(require_staff)):
+    """Get pipeline registry + per-client agent activity."""
+    from hive_graph import PIPELINE_AGENTS
+    
+    # Pipeline registry (static)
+    pipeline = PIPELINE_AGENTS
+    
+    # Per-client active state (dynamic from cache)
+    per_client_agents = []
+    for user_id, agents_dict in _agent_state_cache.items():
+        for agent_id, state_data in agents_dict.items():
+            # Only include recent updates (< 60 seconds old)
+            updated_at = state_data.get("updated_at")
+            if updated_at and (datetime.now(timezone.utc) - updated_at).total_seconds() < 60:
+                per_client_agents.append({
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "state": state_data.get("state", "idle"),
+                    "current_tool": state_data.get("current_tool"),
+                    "tool_status": state_data.get("tool_status"),
+                })
+    
+    return {
+        "pipeline_registry": pipeline,
+        "per_client_active": per_client_agents,
+    }
+
 
 @app.get("/api/staff/clients")
 async def staff_get_clients(_staff: dict = Depends(require_staff)):
@@ -1514,6 +1794,10 @@ class OnboardClientRequest(_BaseModel):
     agents: list    # The approved proposal's agent list
     system_prompt_analista: str = ""
     business_summary: str = ""
+    # Optional WhatsApp bot fields — if provided, creates agent but has_bot_secop stays false
+    wa_phone_number: Optional[str] = None  # e.g. "+573123528153"
+    wa_name: Optional[str] = None          # e.g. "Maximiliano Pulido Beltran"
+    wa_company: Optional[str] = None       # e.g. "Seguros"
 
 
 class OnboardChatRequest(_BaseModel):
@@ -1635,8 +1919,12 @@ async def create_onboarded_client(
     """
     Create a new client account and persist the approved campaign configuration.
     The account is ready to run prospecting immediately.
+    
+    If WhatsApp fields are provided (wa_phone_number, wa_name, wa_company),
+    creates the WhatsApp agent but leaves has_bot_secop=false until explicitly activated.
     """
     from pymongo.errors import DuplicateKeyError as _DupKey
+    from datetime import timezone
 
     existing = await get_user_by_email(request.email)
     if existing:
@@ -1663,11 +1951,105 @@ async def create_onboarded_client(
         "agents": normalized_agents,
     })
 
-    return {
+    # Initialize WhatsApp bot config (always false by default, activated on demand)
+    db = get_db()
+    await db.users.update_one(
+        {"_id": ObjectId(user["id"])},
+        {
+            "$set": {
+                "has_bot_secop": False,
+                "bot_mode": None,
+            }
+        },
+    )
+
+    # If WhatsApp fields provided: create agent, assign phone, but keep bot inactive
+    response = {
         "user_id": user["id"],
         "email": user["email"],
         "campaign_id": campaign_id,
         "message": "Cliente creado y campaña configurada",
+    }
+
+    if request.wa_phone_number and request.wa_name and request.wa_company:
+        try:
+            # Create WhatsApp agent
+            from database import upsert_whatsapp_agent
+            twilio_from = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
+            agent_config = {
+                "phone_number": request.wa_phone_number,
+                "nombre_asesor": request.wa_name,
+                "empresa": request.wa_company,
+                "twilio_from": twilio_from,
+                "cliente_id": user["id"],
+                "activo": False,  # Agent created but not active
+                "bot_mode": "legacy",  # Default SECOP bot mode
+            }
+            await upsert_whatsapp_agent(agent_config)
+
+            # Assign phone to user
+            await db.users.update_one(
+                {"_id": ObjectId(user["id"])},
+                {"$set": {"wa_phone_number": request.wa_phone_number}},
+            )
+
+            response["wa_phone_number"] = request.wa_phone_number
+            response["message"] += " + Agente WhatsApp configurado (activación pendiente)"
+        except Exception as e:
+            logging.warning(f"[onboard] Failed to create WhatsApp agent: {e}")
+            response["wa_warning"] = str(e)
+
+    return response
+
+
+@app.post("/api/staff/activate-bot/{user_id}", dependencies=[Depends(require_staff)])
+async def activate_bot_secop(user_id: str):
+    """
+    Activate SECOP WhatsApp bot for a user.
+    Changes has_bot_secop from false → true.
+    Requires user to have wa_phone_number already assigned.
+    """
+    from bson import ObjectId
+    
+    db = get_db()
+    
+    # Verify user exists and has phone assigned
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no existe")
+    
+    if not user.get("wa_phone_number"):
+        raise HTTPException(
+            status_code=400,
+            detail="Usuario no tiene teléfono WhatsApp asignado. Asígnaelo primero."
+        )
+    
+    # Activate bot
+    await db.users.update_one(
+        {"_id": ObjectId(user_id)},
+        {
+            "$set": {
+                "has_bot_secop": True,
+                "bot_mode": "legacy",
+                "bot_enabled_at": datetime.now(timezone.utc).isoformat() + "Z",
+            }
+        },
+    )
+    
+    # Verify agent exists in whatsapp_agents and set active=True
+    await db.whatsapp_agents.update_one(
+        {"phone_number": user["wa_phone_number"]},
+        {"$set": {"activo": True}},
+        upsert=False,
+    )
+    
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "email": user["email"],
+        "wa_phone_number": user["wa_phone_number"],
+        "has_bot_secop": True,
+        "message": "Bot SECOP activado correctamente",
     }
 
 
@@ -1789,31 +2171,6 @@ class LeadDecisionRequest(_BaseModel):
 
 
 DECISION_MAP = {"aprobar": "outreach", "pausar": "pausado", "rechazar": "nurturing"}
-
-
-@app.get("/api/leads/checkpoint")
-async def get_checkpoint_leads(current_user: dict = Depends(get_current_user)):
-    """Return all leads in estado='checkpoint' for the authenticated user."""
-    user_id = str(current_user["user_id"])
-    db = get_db()
-    leads = await db.leads.find(
-        {"user_id": user_id, "estado": "checkpoint"}
-    ).sort("estado_updated_at", -1).to_list(length=100)
-    result = []
-    for l in leads:
-        l["_id"] = str(l["_id"])
-        result.append({
-            "id": l["_id"],
-            "empresa": l.get("company_name") or l.get("empresa", ""),
-            "decisor": l.get("decisor"),
-            "puntaje": l.get("puntaje", 0),
-            "criterios": l.get("criterios", []),
-            "senales": l.get("señales", l.get("senales", [])),
-            "canales": l.get("canales", []),
-            "canal_elegido": l.get("canal_elegido"),
-            "estado": l.get("estado"),
-        })
-    return result
 
 
 @app.post("/api/leads/{lead_id}/decision")

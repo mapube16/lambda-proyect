@@ -45,9 +45,12 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     # ── Phase 16: wa_sessions TTL index ──────────────────────────────────────
     await db.wa_sessions.create_index("phone", unique=True)
     await db.wa_sessions.create_index(
-        "updated_at",
+        [("updated_at", 1)],
         expireAfterSeconds=86400,  # 24 hours TTL
     )
+    # ── Registration requests index (staff access control) ──────────────────
+    await db.registration_requests.create_index("email", unique=True)
+    await db.registration_requests.create_index([("created_at", -1)])
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
@@ -122,14 +125,33 @@ async def get_user_root_onboarding(user_id: str) -> Optional[dict]:
     return payload or None
 
 
-async def create_user(email: str, hashed_password: str, role: str = "client") -> dict:
+async def create_user(
+    email: str, 
+    hashed_password: str, 
+    role: str = "client",
+    full_name: str = None,
+    company_name: str = None,
+    phone: str = None,
+    country: str = None,
+) -> dict:
     db = get_db()
-    result = await db.users.insert_one({
+    user_doc = {
         "email": email,
         "hashed_password": hashed_password,
         "role": role,
         "created_at": datetime.now(timezone.utc),
-    })
+    }
+    # Add optional fields if provided
+    if full_name:
+        user_doc["full_name"] = full_name
+    if company_name:
+        user_doc["company_name"] = company_name
+    if phone:
+        user_doc["phone"] = phone
+    if country:
+        user_doc["country"] = country
+    
+    result = await db.users.insert_one(user_doc)
     return {"id": str(result.inserted_id), "email": email, "role": role}
 
 
@@ -465,6 +487,19 @@ async def get_leads_by_user(user_id: str, limit: int = 100) -> list:
     for doc in docs:
         doc["_id"] = str(doc["_id"])
     return docs
+
+
+async def get_lead_by_id(lead_id: str, user_id: str) -> Optional[dict]:
+    """Get single lead by ID (tenant-safe)."""
+    db = get_db()
+    try:
+        doc = await db.leads.find_one({"_id": ObjectId(lead_id), "user_id": user_id})
+    except Exception:
+        return None
+    if not doc:
+        return None
+    doc["_id"] = str(doc["_id"])
+    return doc
 
 
 async def update_lead_hitl(lead_id: str, user_id: str, decision: str) -> bool:
@@ -892,3 +927,74 @@ async def set_wa_bot_mode(phone: str, bot_mode: str) -> None:
         {"$set": {"phone": phone, "bot_mode": bot_mode}},
         upsert=True,
     )
+
+
+# ── Registration Requests (Staff Access Control) ───────────────────────────
+
+async def create_registration_request(
+    email: str,
+    full_name: str,
+    company_name: str,
+    phone: Optional[str] = None,
+    country: Optional[str] = None,
+    role: str = "user",
+    message: Optional[str] = None,
+) -> dict:
+    """Save a registration request for staff review."""
+    db = get_db()
+    request_doc = {
+        "email": email,
+        "full_name": full_name,
+        "company_name": company_name,
+        "phone": phone,
+        "country": country,
+        "role": role,
+        "message": message,
+        "created_at": datetime.now(timezone.utc),
+        "status": "pending",  # pending, approved, rejected, contacted
+    }
+    try:
+        result = await db.registration_requests.insert_one(request_doc)
+        return {"id": str(result.inserted_id), "email": email, "status": "pending"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def get_all_registration_requests() -> list:
+    """Get all registration requests (staff-only endpoint)."""
+    db = get_db()
+    cursor = db.registration_requests.find({}).sort("created_at", -1)
+    docs = await cursor.to_list(length=1000)
+    return [
+        {
+            "id": str(d["_id"]),
+            "email": d.get("email"),
+            "full_name": d.get("full_name"),
+            "company_name": d.get("company_name"),
+            "phone": d.get("phone"),
+            "country": d.get("country"),
+            "role": d.get("role"),
+            "message": d.get("message"),
+            "status": d.get("status"),
+            "created_at": d.get("created_at").isoformat() if d.get("created_at") else None,
+        }
+        for d in docs
+    ]
+
+
+async def update_registration_request_status(request_id: str, status: str) -> dict:
+    """Update registration request status (staff action)."""
+    db = get_db()
+    result = await db.registration_requests.update_one(
+        {"_id": ObjectId(request_id)},
+        {
+            "$set": {
+                "status": status,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+    if result.matched_count == 0:
+        return {"error": "Request not found"}
+    return {"id": request_id, "status": status}
+
