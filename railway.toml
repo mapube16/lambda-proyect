@@ -1,11 +1,9 @@
 [build]
-builder = "nixpacks"
-buildCommand = "pip install -r backend/requirements.txt"
+builder = "dockerfile"
 
 [deploy]
-startCommand = "cd backend && python main.py"
 healthcheckPath = "/api/health"
-healthcheckTimeout = 30
+healthcheckTimeout = 60
 restartPolicyType = "on_failure"
 
 # Required env vars — set in Railway dashboard:
