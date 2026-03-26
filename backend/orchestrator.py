@@ -132,8 +132,8 @@ class HiveOrchestrator:
         return base
     
     async def create_agent(
-        self, 
-        name: str, 
+        self,
+        name: str,
         role: AgentRole,
         instructions: Optional[str] = None,
         parent_id: Optional[str] = None
@@ -141,7 +141,7 @@ class HiveOrchestrator:
         """Create a new agent"""
         import uuid
         agent_id = str(uuid.uuid4())[:8]
-        
+
         agent = Agent(
             id=agent_id,
             name=name,
@@ -150,13 +150,54 @@ class HiveOrchestrator:
             is_subagent=parent_id is not None,
             parent_agent_id=parent_id
         )
-        
+
         self.agents[agent_id] = agent
         self.conversations[agent_id] = [
             {"role": "system", "content": self._get_system_prompt(role, instructions)}
         ]
-        
+
+        # Persist to MongoDB
+        try:
+            from database import save_agent
+            await save_agent({
+                "agent_id": agent_id,
+                "name": name,
+                "role": role.value,
+                "palette": agent.palette,
+                "is_subagent": agent.is_subagent,
+                "parent_agent_id": parent_id,
+                "state": agent.state.value,
+                "instructions": instructions,
+            })
+        except Exception as e:
+            print(f"Warning: could not persist agent to DB: {e}")
+
         return agent
+
+    async def load_agents_from_db(self) -> None:
+        """Restore agents from MongoDB on startup."""
+        try:
+            from database import load_all_agents
+            docs = await load_all_agents()
+            for doc in docs:
+                agent_id = doc["agent_id"]
+                role = AgentRole(doc.get("role", "coder"))
+                agent = Agent(
+                    id=agent_id,
+                    name=doc.get("name", "Agent"),
+                    role=role,
+                    palette=doc.get("palette", self._get_next_palette()),
+                    is_subagent=doc.get("is_subagent", False),
+                    parent_agent_id=doc.get("parent_agent_id"),
+                    state=AgentState(doc.get("state", "idle")),
+                )
+                self.agents[agent_id] = agent
+                self.conversations[agent_id] = [
+                    {"role": "system", "content": self._get_system_prompt(role, doc.get("instructions"))}
+                ]
+            print(f"Loaded {len(docs)} agent(s) from DB")
+        except Exception as e:
+            print(f"Warning: could not load agents from DB: {e}")
     
     async def update_agent_state(
         self, 
@@ -286,3 +327,8 @@ class HiveOrchestrator:
             del self.agents[agent_id]
             if agent_id in self.conversations:
                 del self.conversations[agent_id]
+            try:
+                from database import delete_agent_db
+                await delete_agent_db(agent_id)
+            except Exception as e:
+                print(f"Warning: could not delete agent from DB: {e}")

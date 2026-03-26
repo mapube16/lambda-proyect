@@ -310,6 +310,7 @@ async def lifespan(app: FastAPI):
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
     orchestrator = HiveOrchestrator(api_key)
     orchestrator.set_broadcast_callback(manager.broadcast)
+    await orchestrator.load_agents_from_db()
 
     # HiveAdapter: real multi-agent engine for prospecting
     from hive_adapter import HiveAdapter
