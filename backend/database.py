@@ -51,6 +51,8 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     # ── Registration requests index (staff access control) ──────────────────
     await db.registration_requests.create_index("email", unique=True)
     await db.registration_requests.create_index([("created_at", -1)])
+    # ── Agents persistence ───────────────────────────────────────────────────
+    await db.agents.create_index("agent_id", unique=True)
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
@@ -1054,4 +1056,35 @@ async def update_registration_request_status(request_id: str, status: str) -> di
     if result.matched_count == 0:
         return {"error": "Request not found"}
     return {"id": request_id, "status": status}
+
+
+# ── Agents persistence ────────────────────────────────────────────────────────
+
+async def save_agent(agent_doc: dict) -> None:
+    """Upsert an agent document keyed by agent_id."""
+    db = get_db()
+    await db.agents.update_one(
+        {"agent_id": agent_doc["agent_id"]},
+        {"$set": agent_doc},
+        upsert=True,
+    )
+
+
+async def load_all_agents() -> list[dict]:
+    """Return all persisted agent documents."""
+    db = get_db()
+    cursor = db.agents.find({})
+    return await cursor.to_list(length=None)
+
+
+async def delete_agent_db(agent_id: str) -> None:
+    """Delete a single agent from the DB."""
+    db = get_db()
+    await db.agents.delete_one({"agent_id": agent_id})
+
+
+async def delete_all_agents_db() -> None:
+    """Delete all agents from the DB."""
+    db = get_db()
+    await db.agents.delete_many({})
 
