@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 16-03-PLAN.md
-last_updated: "2026-03-24T03:06:05.626Z"
+stopped_at: Completed 16-06-PLAN.md
+last_updated: "2026-03-26T03:58:11.407Z"
 last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
 progress:
   total_phases: 16
-  completed_phases: 4
-  total_plans: 33
-  completed_plans: 27
+  completed_phases: 5
+  total_plans: 35
+  completed_plans: 31
   percent: 40
 ---
 
@@ -60,6 +60,7 @@ Progress: [████░░░░░░] 40%
 | Phase 16-whatsapp-conversational-advisor-bot P04 | 20m | 2 tasks | 2 files |
 | Phase 16-whatsapp-conversational-advisor-bot P05 | 10m | 1 tasks | 2 files |
 | Phase 16-whatsapp-conversational-advisor-bot P06 | 5m | smoke test | all green |
+| Phase 16-whatsapp-conversational-advisor-bot P06 | 5m | 2 tasks | 0 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,9 @@ Recent decisions affecting current work:
 - [Phase 16-03]: Two-phase sliding window in update_wa_session: push then trim if >10 — mongomock does not support $push with $slice in single op
 - [Phase 16-03]: validate_twilio_signature returns True when creds not set — permissive fallback for local dev and test environments
 - [Phase 16-03]: get_profile uses lazy import of database inside function body — avoids circular import with main.py
+- [Phase 16-whatsapp-conversational-advisor-bot]: No new code changes in 16-06 — pure smoke-test plan; all fixes already in place from 16-01..16-05
+- [Phase 16-whatsapp-conversational-advisor-bot]: TOOLS_ASESOR ended up 7 tools (crear_reunion added beyond spec in 16-05) — accepted as additive, not regression
+- [Phase 16-whatsapp-conversational-advisor-bot]: 2 xfailed tests are legitimate manual-only verification stubs; CI should not block on them
 
 ### Pending Todos
 
@@ -126,6 +130,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-24T03:06:05.617Z
-Stopped at: Completed 16-03-PLAN.md
+Last session: 2026-03-26T03:58:11.401Z
+Stopped at: Completed 16-06-PLAN.md
 Resume file: None
