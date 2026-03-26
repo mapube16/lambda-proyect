@@ -374,4 +374,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 13. Landa Agent Pipeline | 6/6 | Complete   | 2026-03-22 |
 | 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
-| 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete   | 2026-03-26 |
+| 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete    | 2026-03-26 |
