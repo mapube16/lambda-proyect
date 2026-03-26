@@ -312,6 +312,19 @@ async def lifespan(app: FastAPI):
     orchestrator.set_broadcast_callback(manager.broadcast)
     await orchestrator.load_agents_from_db()
 
+    # Seed default agents if office is empty
+    if not orchestrator.get_all_agents():
+        from models import AgentRole
+        defaults = [
+            ("Investigadora", AgentRole.RESEARCHER),
+            ("Prospector",    AgentRole.PLANNER),
+            ("Redactora",     AgentRole.WRITER),
+            ("Analista",      AgentRole.REVIEWER),
+        ]
+        for name, role in defaults:
+            await orchestrator.create_agent(name=name, role=role)
+        print(f"Seeded {len(defaults)} default agent(s)")
+
     # HiveAdapter: real multi-agent engine for prospecting
     from hive_adapter import HiveAdapter
     hive_adapter = HiveAdapter(send_to_user_callback=manager.send_to_user)
