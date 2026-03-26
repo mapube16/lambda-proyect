@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useOfficeStore } from '../store/officeStore';
+import { apiFetch } from '../lib/apiFetch';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = '';
 
 export interface LandaHandoverLead {
   leadId: string;
@@ -49,7 +50,7 @@ export function HandoverModal({ lead, onClose }: HandoverModalProps) {
     setLoading(true);
     setError(null);
 
-    fetch(`${API_URL}/api/leads/${lead.leadId}/handover`, {
+    apiFetch(`${API_URL}/api/leads/${lead.leadId}/handover`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     })
       .then(r => {
@@ -76,7 +77,7 @@ export function HandoverModal({ lead, onClose }: HandoverModalProps) {
     setSubmitting(true);
     setActionError(null);
     try {
-      const res = await fetch(`${API_URL}/api/leads/${lead.leadId}/handover/tomar`, {
+      const res = await apiFetch(`${API_URL}/api/leads/${lead.leadId}/handover/tomar`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
