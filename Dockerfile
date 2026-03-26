@@ -14,6 +14,10 @@ WORKDIR /app
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install local framework package (vendor/hive/core)
+COPY vendor/hive/core/ ./vendor/hive/core/
+RUN pip install --no-cache-dir ./vendor/hive/core/
+
 # Copy backend source
 COPY backend/ ./backend/
 
