@@ -4,8 +4,9 @@ import type { Lead as StoreLead } from '../store/officeStore';
 import type { AgentRole } from '../types';
 import { CheckpointModal } from './CheckpointModal';
 import { HandoverModal } from './HandoverModal';
+import { apiFetch } from '../lib/apiFetch';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = '';
 
 interface AgentPanelProps {
   createAgent: (name: string, role: string) => void;
@@ -337,11 +338,11 @@ function CampaignChat({ onCampaignReady, resetKey }: {
       if (!token) {
         // Quick register+login
         const email = `chat-${Math.random().toString(36).slice(7)}@example.com`;
-        await fetch(`${API_URL}/auth/register`, {
+        await apiFetch(`${API_URL}/auth/register`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password: 'demo-password-123' }),
         });
-        const res = await fetch(`${API_URL}/auth/login`, {
+        const res = await apiFetch(`${API_URL}/auth/login`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password: 'demo-password-123' }),
         });
@@ -350,7 +351,7 @@ function CampaignChat({ onCampaignReady, resetKey }: {
         if (token) sessionStorage.setItem(tokenKey, token);
       }
 
-      const res = await fetch(`${API_URL}/api/chat`, {
+      const res = await apiFetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ messages: next }),
@@ -391,7 +392,7 @@ function CampaignChat({ onCampaignReady, resetKey }: {
   const startChat = () => {
     setStarted(true);
     setLoading(true);
-    fetch(`${API_URL}/auth/register`, {
+    apiFetch(`${API_URL}/auth/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: `chat-${Math.random().toString(36).slice(7)}@example.com`, password: 'demo-password-123' }),
     }).catch(() => {});
@@ -399,11 +400,11 @@ function CampaignChat({ onCampaignReady, resetKey }: {
     (async () => {
       try {
         const email = `chat-init-${Math.random().toString(36).slice(7)}@example.com`;
-        await fetch(`${API_URL}/auth/register`, {
+        await apiFetch(`${API_URL}/auth/register`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password: 'demo-password-123' }),
         });
-        const loginRes = await fetch(`${API_URL}/auth/login`, {
+        const loginRes = await apiFetch(`${API_URL}/auth/login`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password: 'demo-password-123' }),
         });
@@ -411,7 +412,7 @@ function CampaignChat({ onCampaignReady, resetKey }: {
         const token = loginData.access_token;
         if (token) sessionStorage.setItem('hive_token', token);
 
-        const res = await fetch(`${API_URL}/api/chat`, {
+        const res = await apiFetch(`${API_URL}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify({ messages: [] }),
@@ -553,7 +554,7 @@ function LeadsChat() {
     setApplying(prev => ({ ...prev, [idx]: true }));
     try {
       const token = useOfficeStore.getState().authToken;
-      const res = await fetch(`${API_URL}/api/campaign/apply-intent`, {
+      const res = await apiFetch(`${API_URL}/api/campaign/apply-intent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ intent_type: intent.type, payload: intent.payload }),
@@ -578,7 +579,7 @@ function LeadsChat() {
 
     try {
       const token = useOfficeStore.getState().authToken;
-      const res = await fetch(`${API_URL}/api/chat/leads`, {
+      const res = await apiFetch(`${API_URL}/api/chat/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ messages: next }),

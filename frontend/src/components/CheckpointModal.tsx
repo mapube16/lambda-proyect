@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useOfficeStore } from '../store/officeStore';
+import { apiFetch } from '../lib/apiFetch';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = '';
 
 export interface LandaCheckpointLead {
   leadId: string;
@@ -45,7 +46,7 @@ export function CheckpointModal({ lead, onClose }: CheckpointModalProps) {
     setLoading(true);
     setError(null);
 
-    fetch(`${API_URL}/api/leads/checkpoint`, {
+    apiFetch(`${API_URL}/api/leads/checkpoint`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     })
       .then(r => {
@@ -91,7 +92,7 @@ export function CheckpointModal({ lead, onClose }: CheckpointModalProps) {
       if (decision === 'aprobar' && selectedCanal) body.canal_elegido = selectedCanal;
       if (decision === 'rechazar') body.motivo = 'rechazado_humano';
 
-      const res = await fetch(`${API_URL}/api/leads/${lead.leadId}/decision`, {
+      const res = await apiFetch(`${API_URL}/api/leads/${lead.leadId}/decision`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
