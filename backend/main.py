@@ -3,6 +3,11 @@ Lambda Office - Backend Server
 FastAPI server with WebSocket support for real-time agent visualization
 """
 import os
+import sys
+# Add backend/ to sys.path so bare imports (from auth, from database, etc.) work
+# when running from project root as: python -m uvicorn backend.main:app
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import json
 import asyncio
 from typing import Dict, Optional
@@ -22,7 +27,7 @@ for _logger in ("hive_adapter", "hive_llm", "hive_tools", "hive_graph",
                  "framework.graph.event_loop_node", "framework.graph.executor"):
     logging.getLogger(_logger).setLevel(logging.INFO)
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, HTTPException, Depends, Query, status, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, HTTPException, Depends, Query, status, Request, Body
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo.errors import DuplicateKeyError
@@ -46,7 +51,48 @@ from database import (
     get_prospecting_excluded_domains,
     upsert_whatsapp_agent, get_whatsapp_agent, list_whatsapp_agents, delete_whatsapp_agent,
     create_registration_request, get_all_registration_requests, update_registration_request_status,
+    add_phone_to_user
 )
+from fastapi import APIRouter
+
+from pydantic import BaseModel
+
+from fastapi import FastAPI
+
+
+# --- Lifespan context manager (debe ir antes de la app) ---
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize DB, orchestrator, and HiveAdapter on startup"""
+    global orchestrator, hive_adapter
+    await init_db()
+    from auth import hash_password as _hash
+    await seed_users([
+        {"email": "staff@lambda.com",   "hashed_password": _hash("lambda2026"), "role": "staff"},
+        {"email": "dpg.seguros@gmail.com", "hashed_password": _hash("seguros2026"),  "role": "client"},
+    ])
+
+    # Legacy orchestrator (kept for non-prospect agent ops)
+    api_key = os.getenv("OPENAI_API_KEY", "demo-key")
+    print("Isomorph Office started!")
+    yield
+    shutdown_scheduler()
+    print("Shutting down...")
+
+# --- Configuración de logging global para FastAPI/Uvicorn ---
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logging.getLogger().setLevel(logging.INFO)
+
+# --- Modelo para request de agregar teléfono ---
+class AddPhoneRequest(BaseModel):
+    phone: str
 from models import (
     Agent, AgentState, AgentRole,
     CreateAgentRequest, TaskRequest, AgentResponse,
@@ -292,6 +338,20 @@ app.add_middleware(
 
 
 # ============ REST API Endpoints ============
+
+@app.patch("/api/users/{user_id}/phones", status_code=200)
+async def api_add_phone_to_user(user_id: str, req: AddPhoneRequest, current_user=Depends(get_current_user)):
+    """Agrega un número a la lista de phones del usuario (sin duplicados)."""
+    logging.info(f"[api_add_phone_to_user] PATCH /api/users/{user_id}/phones body={req.dict()} current_user={current_user}")
+    if current_user["user_id"] != user_id and current_user.get("role") != "staff":
+        logging.warning(f"[api_add_phone_to_user] No autorizado: current_user={current_user} user_id={user_id}")
+        raise HTTPException(status_code=403, detail="No autorizado")
+    ok = await add_phone_to_user(user_id, req.phone)
+    if not ok:
+        logging.error(f"[api_add_phone_to_user] Fallo al agregar teléfono: user_id={user_id} phone={req.phone}")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    logging.info(f"[api_add_phone_to_user] Teléfono agregado: user_id={user_id} phone={req.phone}")
+    return {"success": True, "added": req.phone}
 
 @app.get("/")
 async def root():
@@ -2436,7 +2496,10 @@ async def whatsapp_incoming(request: Request):
     Routing: strip 'whatsapp:' prefix from From, lookup in company_voice or users.
     """
     import wa_handler
+    from debug_logger import get_payload_logger
 
+    debug_log = get_payload_logger()
+    
     form = await request.form()
     from_raw = str(form.get("From", ""))
     to_number = str(form.get("To", ""))
@@ -2444,26 +2507,47 @@ async def whatsapp_incoming(request: Request):
     num_media = int(form.get("NumMedia", "0"))
     media_url = str(form.get("MediaUrl0", "")) if num_media > 0 else ""
 
+    # Log incoming webhook payload
+    from_phone = from_raw.replace("whatsapp:", "")
+    debug_log.log_event("webhook_received", {
+        "from_phone": from_phone,
+        "to_number": to_number,
+        "body": body,
+        "has_media": num_media > 0,
+        "media_url": media_url if media_url else None,
+        "body_length": len(body),
+    }, level="DEBUG")
+
     # Validate Twilio signature (skip in test env if not configured)
     url = str(request.url)
     signature = request.headers.get("X-Twilio-Signature", "")
     post_data = dict(form)
     if not wa_handler.validate_twilio_signature(url, signature, post_data):
         logging.warning("[WA] Invalid Twilio signature from %s — ignoring", from_raw)
+        debug_log.log_error(from_phone, "invalid_signature", "Twilio signature validation failed", {})
         return Response(content="<Response/>", media_type="text/xml")
-
-    # Strip whatsapp: prefix before lookup
-    from_phone = from_raw.replace("whatsapp:", "")
 
     # Identify caller profile (non-blocking lookup, then async processing)
     profile = await wa_handler.get_profile(from_phone)
     if profile is None:
         logging.warning("[WA] Unknown number %s — ignoring message", from_phone)
+        debug_log.log_error(from_phone, "unknown_profile", "Profile not found in system", {})
         return Response(content="<Response/>", media_type="text/xml")
 
     # Route by bot_mode (MongoDB flag — change via Compass without redeploy)
     from database import get_wa_bot_mode
-    bot_mode = await get_wa_bot_mode(from_phone)
+    
+    # Force legacy mode for specific numbers (SECOP prospector bot)
+    if from_phone in ("+573123528153",):  # Maximiliano's number
+        bot_mode = "legacy"
+    else:
+        bot_mode = await get_wa_bot_mode(from_phone)
+
+    debug_log.log_event("router_decision", {
+        "phone": from_phone,
+        "bot_mode": bot_mode,
+        "profile_name": profile.get("name") if profile else "unknown",
+    }, level="DEBUG")
 
     if bot_mode == "legacy":
         # Original SECOP prospector bot
@@ -2474,6 +2558,7 @@ async def whatsapp_incoming(request: Request):
                 await handle_inbound_message(from_phone, body, to_number, agent_config)
             except Exception as e:
                 logging.error("[WA] legacy bot error: %s", e)
+                debug_log.log_error(from_phone, "legacy_bot_error", str(e), {"body": body})
         asyncio.create_task(_legacy())
 
     elif bot_mode == "calendar":

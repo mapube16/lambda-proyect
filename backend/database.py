@@ -82,6 +82,8 @@ async def get_user_by_email(email: str) -> Optional[dict]:
         "hashed_password": doc["hashed_password"],
         "role": doc.get("role", "client"),
         "created_at": doc.get("created_at"),
+        "phones": doc.get("phones", []),
+        "phone": doc.get("phone"),
     }
 
 
@@ -98,6 +100,8 @@ async def get_user_by_id(user_id: str) -> Optional[dict]:
         "email": doc["email"],
         "role": doc.get("role", "client"),
         "created_at": doc.get("created_at"),
+        "phones": doc.get("phones", []),
+        "phone": doc.get("phone"),
     }
 
 
@@ -148,6 +152,7 @@ async def create_user(
         user_doc["company_name"] = company_name
     if phone:
         user_doc["phone"] = phone
+        user_doc["phones"] = [phone]
     if country:
         user_doc["country"] = country
     
@@ -166,9 +171,45 @@ async def get_all_users() -> list:
             "email": d["email"],
             "role": d.get("role", "client"),
             "created_at": d.get("created_at"),
+            "phones": d.get("phones", []),
+            "phone": d.get("phone"),
         }
         for d in docs
     ]
+
+# --- NUEVAS FUNCIONES PARA SOPORTE MULTI-NÚMERO ---
+async def get_user_by_phone(phone: str) -> Optional[dict]:
+    """Busca usuario por cualquier número en phones o phone principal."""
+    db = get_db()
+    doc = await db.users.find_one({"$or": [
+        {"phones": phone},
+        {"phone": phone}
+    ]})
+    if not doc:
+        return None
+    doc["id"] = str(doc["_id"])
+    return doc
+
+async def add_phone_to_user(user_id: str, new_phone: str) -> bool:
+    """Agrega un nuevo número a la lista phones del usuario (sin duplicados)."""
+    import logging
+    db = get_db()
+    logging.info(f"[add_phone_to_user] user_id={user_id} new_phone={new_phone}")
+    try:
+        obj_id = ObjectId(user_id)
+    except Exception as e:
+        logging.error(f"[add_phone_to_user] Invalid ObjectId: {e}")
+        return False
+    user_before = await db.users.find_one({"_id": obj_id})
+    logging.info(f"[add_phone_to_user] User before update: {user_before}")
+    result = await db.users.update_one(
+        {"_id": obj_id},
+        {"$addToSet": {"phones": new_phone}}
+    )
+    user_after = await db.users.find_one({"_id": obj_id})
+    logging.info(f"[add_phone_to_user] Update result: matched={result.matched_count} modified={result.modified_count}")
+    logging.info(f"[add_phone_to_user] User after update: {user_after}")
+    return result.matched_count == 1
 
 
 async def delete_user_by_id(user_id: str) -> bool:
