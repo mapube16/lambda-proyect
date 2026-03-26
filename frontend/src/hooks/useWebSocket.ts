@@ -3,7 +3,7 @@ import { useOfficeStore } from '../store/officeStore';
 import type { Lead, LandaCheckpointLead, LandaHandoverLead } from '../store/officeStore';
 import type { WSMessage, AgentUpdateMessage, InitialStateMessage, Agent } from '../types';
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || '';
+const BACKEND = (import.meta as any).env?.VITE_BACKEND_URL || '';
 const API_URL = BACKEND;
 const WS_URL_BASE = BACKEND
   ? BACKEND.replace(/^https/, 'wss').replace(/^http/, 'ws') + '/ws'
@@ -35,6 +35,8 @@ export function useWebSocket() {
     setActiveCampaign,
     addCheckpointLead,
     setHandoverLead,
+    setCurrentRunId,
+    setAgentLogs,
     isAuthenticated,
     authToken,
   } = useOfficeStore();
@@ -173,12 +175,14 @@ export function useWebSocket() {
       case 'campaign_complete': {
         const msg = data as unknown as {
           total_analyzed: number; total_approved: number; total_rejected: number;
+          agent_logs?: Record<string, string[]>;
         };
         setCampaignSummary({
           total_analyzed: msg.total_analyzed,
           total_approved: msg.total_approved,
           total_rejected: msg.total_rejected,
         });
+        if (msg.agent_logs) setAgentLogs(msg.agent_logs);
         setProspecting(false);
         break;
       }
@@ -295,18 +299,24 @@ export function useWebSocket() {
     const token = useOfficeStore.getState().authToken;
     if (!token) return;
     clearLeads();
+    setAgentLogs({});
+    setCurrentRunId(null);
     setProspecting(true);
     try {
-      await fetch(`${API_URL}/api/prospect`, {
+      const res = await fetch(`${API_URL}/api/prospect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ campaign, max_results }),
       });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.run_id) setCurrentRunId(data.run_id);
+      }
     } catch (e) {
       console.error('Prospect error:', e);
       setProspecting(false);
     }
-  }, [setProspecting, clearLeads]);
+  }, [setProspecting, clearLeads, setCurrentRunId, setAgentLogs]);
 
   return { createAgent, runTask, sendMessage, startProspect, approveLead, rejectLead };
 }

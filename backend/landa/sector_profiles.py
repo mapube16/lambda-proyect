@@ -15,7 +15,7 @@ from database import get_db
 logger = logging.getLogger("landa.sector_profiles")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o")
+OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-5.4-2026-03-05")
 CACHE_DAYS = 30
 
 SECTOR_PROFILE_KEYS = [

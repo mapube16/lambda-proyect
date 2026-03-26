@@ -1,3 +1,4 @@
+venv/
 backend/venv/
 backend/__pycache__/
 backend/tests/__pycache__/
@@ -9,4 +10,6 @@ backend/.env
 node_modules/
 frontend/dist/
 .env
+.logs/
 Instagram-automation-AI-generated-content/
+google_service_account.json

@@ -58,7 +58,7 @@ class OpenRouterProvider(LLMProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "openai/gpt-4o-mini",
+        model: str = "openai/gpt-5.4-2026-03-05",
         base_url: str = "https://openrouter.ai/api/v1",
         max_output_tokens: int = 4096,
     ):
@@ -104,7 +104,7 @@ class OpenRouterProvider(LLMProvider):
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": oai_messages,
-            "max_tokens": max_tokens,
+            "extra_body": {"max_completion_tokens": max_tokens},
         }
         if tools:
             kwargs["tools"] = [_tool_to_openai(t) for t in tools]
@@ -135,7 +135,7 @@ class OpenRouterProvider(LLMProvider):
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": oai_messages,
-            "max_tokens": min(max_tokens, self._max_output_tokens),
+            "extra_body": {"max_completion_tokens": min(max_tokens, self._max_output_tokens)},
             "stream": True,
         }
         if tools:

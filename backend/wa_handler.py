@@ -21,10 +21,26 @@ import logging
 import os
 from typing import Optional
 
+import time
+
 from database import get_db
 from landa.state_machine import update_lead_estado
 
 logger = logging.getLogger(__name__)
+
+
+def _ms(start: float) -> str:
+    return f"{int((time.monotonic() - start) * 1000)}ms"
+
+# Module-level OpenAI client — avoid recreating on every request
+_openai_client = None
+
+def _get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        from openai import AsyncOpenAI
+        _openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+    return _openai_client
 
 # ── Signature Validation (WA-01) ─────────────────────────────────────────────
 
@@ -115,26 +131,41 @@ async def process_inbound(
     """
     from database import get_or_create_wa_session, update_wa_session
 
+    t0 = time.monotonic()
     user_id = profile["user_id"]
     profile_type = profile["profile"]
+    short_phone = from_phone[-6:]  # last 6 digits for log readability
+
+    logger.info("[WA:%s] ▶ inbound profile=%s body=%r", short_phone, profile_type, body[:80])
 
     # Step 1: Session
+    t1 = time.monotonic()
     session = await get_or_create_wa_session(
         phone=from_phone,
         profile=profile_type,
         user_id=user_id,
     )
+    logger.info("[WA:%s] session=%s history_turns=%d (%s)",
+                short_phone, session.get("_id", "new"), len(session.get("history", [])), _ms(t1))
 
-    # Step 2: Transcribe voice note if present (implemented in Plan 04)
+    # Step 2: Transcribe voice note if present
     text = body
     if media_url:
+        await _send_reply(from_phone, "🎙 Transcribiendo audio...")
+        t2 = time.monotonic()
         transcribed = await _transcribe_voice_note(media_url)
+        logger.info("[WA:%s] whisper (%s)", short_phone, _ms(t2))
         text = transcribed if transcribed else body
         if not transcribed:
             await _send_reply(from_phone, "No pude entender el audio, ¿puedes escribirlo?")
             return
+    else:
+        t_ack = time.monotonic()
+        await _send_reply(from_phone, "...")
+        logger.info("[WA:%s] ack (%s)", short_phone, _ms(t_ack))
 
-    # Step 3: LLM tool calling (implemented in Plans 04-05)
+    # Step 3: LLM tool calling
+    t3 = time.monotonic()
     reply = await _call_llm_with_tools(
         message=text,
         history=session.get("history", []),
@@ -142,13 +173,22 @@ async def process_inbound(
         user_id=user_id,
         from_phone=from_phone,
     )
+    logger.info("[WA:%s] llm+tools (%s) reply=%r", short_phone, _ms(t3), reply[:60])
 
-    # Step 4: Send reply (skip if we already sent ack + this is the real result)
+    # Step 4: Send real reply
+    t4 = time.monotonic()
     await _send_reply(from_phone, reply)
+    logger.info("[WA:%s] send_reply (%s)", short_phone, _ms(t4))
 
-    # Step 5: Update session history
-    await update_wa_session(from_phone, {"role": "user", "content": text})
-    await update_wa_session(from_phone, {"role": "assistant", "content": reply})
+    # Step 5: Update session history in parallel
+    t5 = time.monotonic()
+    await asyncio.gather(
+        update_wa_session(from_phone, {"role": "user", "content": text}),
+        update_wa_session(from_phone, {"role": "assistant", "content": reply}),
+    )
+    logger.info("[WA:%s] session_update (%s)", short_phone, _ms(t5))
+
+    logger.info("[WA:%s] ✓ total (%s)", short_phone, _ms(t0))
 
 
 # ── Tool Definitions (WA-03) ──────────────────────────────────────────────────
@@ -157,8 +197,16 @@ TOOLS_CLIENTE = [
     {
         "type": "function",
         "function": {
+            "name": "ver_resumen",
+            "description": "Ver el resumen general de leads y campañas: cuántos hay por estado. Usar cuando el usuario: saluda, pregunta cómo va todo, pregunta por sus leads, campañas, prospectos, o el estado general del pipeline.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "ver_leads_checkpoint",
-            "description": "Ver los leads listos para revisión en checkpoint. Muestra empresa, puntaje y canales recomendados.",
+            "description": "Ver los leads listos para revisión en checkpoint. Muestra empresa, puntaje y canales recomendados. Usar solo cuando el usuario quiere ver específicamente los leads pendientes de aprobación.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -361,13 +409,68 @@ async def dispatch_tool_cliente(tool_name: str, args: dict, user_id: str) -> str
     """Execute a cliente tool and return a WhatsApp-friendly result string."""
     db = get_db()
 
-    if tool_name == "ver_leads_checkpoint":
+    if tool_name == "ver_resumen":
+        # Count by hitl_status (SECOP pipeline) and by estado (Landa CRM)
+        total = await db.leads.count_documents({"user_id": user_id})
+        if total == 0:
+            return "Aún no tienes leads generados. Inicia una campaña desde el panel web."
+
+        # hitl_status counts (SECOP pipeline state)
+        hitl_pipeline = [
+            {"$match": {"user_id": user_id}},
+            {"$group": {"_id": "$hitl_status", "count": {"$sum": 1}}},
+        ]
+        hitl_stats = await db.leads.aggregate(hitl_pipeline).to_list(length=20)
+
+        # estado counts (Landa CRM state — only leads that have been through state machine)
+        landa_pipeline = [
+            {"$match": {"user_id": user_id, "estado": {"$ne": None}}},
+            {"$group": {"_id": "$estado", "count": {"$sum": 1}}},
+        ]
+        landa_stats = await db.leads.aggregate(landa_pipeline).to_list(length=20)
+
+        lines = [f"📊 Resumen de tus {total} leads:"]
+        hitl_label_map = {
+            "pending":  "⏳ Pendientes de revisión",
+            "approved": "✅ Aprobados para contacto",
+            "rejected": "🚫 Descartados",
+        }
+        landa_label_map = {
+            "checkpoint": "🔔 Listos para revisar",
+            "aprobado":   "👍 Aprobados",
+            "contactado": "📧 En contacto",
+            "handover":   "🤝 En negociación",
+            "rechazado":  "❌ Rechazados",
+            "nurturing":  "⏸️ En espera",
+            "prospecto":  "🔍 Prospectados",
+        }
+        for s in sorted(hitl_stats, key=lambda x: -x["count"]):
+            key = s["_id"] or "sin estado"
+            label = hitl_label_map.get(key, key)
+            lines.append(f"  {label}: {s['count']}")
+        for s in sorted(landa_stats, key=lambda x: -x["count"]):
+            key = s["_id"] or "sin estado"
+            label = landa_label_map.get(key, key)
+            lines.append(f"  {label}: {s['count']}")
+        # Show pending SECOP leads awaiting review
+        pending = await db.leads.find(
+            {"user_id": user_id, "hitl_status": "pending"}
+        ).sort("created_at", -1).to_list(length=3)
+        if pending:
+            lines.append("\nRecientes pendientes:")
+            for lead in pending:
+                empresa = lead.get("company_name", lead.get("empresa", "Empresa"))
+                puntaje = lead.get("puntaje") or lead.get("score", "—")
+                lines.append(f"  • {empresa} (puntaje: {puntaje})")
+        return "\n".join(lines)
+
+    elif tool_name == "ver_leads_checkpoint":
         leads = await db.leads.find(
-            {"user_id": user_id, "estado": "checkpoint"}
-        ).to_list(length=5)
+            {"user_id": user_id, "$or": [{"estado": "checkpoint"}, {"hitl_status": "pending"}]}
+        ).sort("created_at", -1).to_list(length=5)
         if not leads:
-            return "No tienes leads en checkpoint en este momento."
-        lines = ["Leads listos para revisión:"]
+            return "No tienes leads pendientes de revisión en este momento."
+        lines = ["Leads listos para revisar:"]
         for i, lead in enumerate(leads, 1):
             empresa = lead.get("company_name", lead.get("empresa", "Empresa"))
             puntaje = lead.get("puntaje", 0)
@@ -409,12 +512,16 @@ async def dispatch_tool_cliente(tool_name: str, args: dict, user_id: str) -> str
 
     elif tool_name == "ver_handover":
         lead_id = args.get("lead_id", "")
-        lead = await db.leads.find_one({"user_id": user_id})
+        try:
+            from bson import ObjectId
+            lead = await db.leads.find_one({"_id": ObjectId(lead_id), "user_id": user_id})
+        except Exception:
+            lead = await db.leads.find_one({"user_id": user_id, "estado": "handover"})
         if not lead:
-            return f"No encontré el lead {lead_id[:8]}."
-        empresa = lead.get("company_name", lead.get("empresa", ""))
-        puntaje = lead.get("puntaje", 0)
-        decisor = lead.get("decisor", "el decisor")
+            return "No encontré ese prospecto."
+        empresa = lead.get("company_name", lead.get("empresa", "Empresa"))
+        puntaje = lead.get("puntaje") or lead.get("score", "—")
+        decisor = lead.get("decisor") or lead.get("contacto") or "sin contacto registrado"
         return f"📊 {empresa} — puntaje {puntaje}. Contacto: {decisor}. Escribe 'tomar control' para proceder."
 
     elif tool_name == "tomar_control":
@@ -430,8 +537,12 @@ async def dispatch_tool_cliente(tool_name: str, args: dict, user_id: str) -> str
         lead_id = args.get("lead_id", "")
         resultado = args.get("resultado", "")
         detalle = args.get("detalle", "")
-        lead = await db.leads.find_one({"user_id": user_id})
-        empresa = lead.get("company_name", lead_id) if lead else lead_id
+        try:
+            from bson import ObjectId
+            lead = await db.leads.find_one({"_id": ObjectId(lead_id), "user_id": user_id})
+        except Exception:
+            lead = None
+        empresa = lead.get("company_name", lead.get("empresa", lead_id)) if lead else lead_id
         await db.leads.update_one(
             {"user_id": user_id},
             {"$set": {"ultimo_resultado_llamada": resultado, "detalle_llamada": detalle}},
@@ -488,7 +599,7 @@ async def _transcribe_voice_note(media_url: str) -> Optional[str]:
         return None
 
     try:
-        openai_client = AsyncOpenAI(api_key=api_key)
+        openai_client = _get_openai_client()
         ext_map = {"audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "mp4",
                    "audio/amr": "amr", "audio/wav": "wav", "audio/webm": "webm"}
         ext = ext_map.get(content_type, "ogg")
@@ -517,14 +628,13 @@ async def _call_llm_with_tools(
     Multi-tool: second LLM call to merge results.
     Sends "Buscando..." ack before heavy tool execution so user gets instant feedback.
     """
-    from openai import AsyncOpenAI
-
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         return "Sistema no disponible en este momento."
 
-    client = AsyncOpenAI(api_key=api_key)
+    client = _get_openai_client()
     tools = TOOLS_CLIENTE if profile == "cliente" else TOOLS_ASESOR
+    t_llm0 = time.monotonic()
 
     if profile == "asesor_interno":
         system_prompt = (
@@ -546,16 +656,26 @@ async def _call_llm_with_tools(
         )
     else:
         system_prompt = (
-            "Eres Landa, asistente B2B en WhatsApp para gestión de prospectos. "
-            "Ayudas a revisar el estado de tus leads y tomar decisiones de seguimiento. "
-            "ACTÚA INMEDIATAMENTE cuando el usuario pide datos — llama la herramienta sin preguntar. "
-            "Responde en español colombiano conciso. Sin markdown. Listas con 1. 2. 3. "
-            "Máximo 1600 caracteres."
+            "Eres Landa, asistente comercial B2B en WhatsApp de Maximiliano. "
+            "Ayudas a gestionar su pipeline de prospectos: revisar leads, aprobarlos, contactarlos, pausarlos o descartarlos. "
+            "\n\nREGLAS:"
+            "\n1. ACTÚA INMEDIATAMENTE — cuando piden datos llama la herramienta SIN preguntar."
+            "\n2. Interpreta los resultados de las herramientas de forma útil. No copies datos crudos."
+            "   Ejemplo: si hay 80 leads pendientes di '80 leads esperando tu revisión en el panel'."
+            "\n3. Después de dar info, sugiere la acción natural siguiente."
+            "   Ejemplo: 'Escribe el ID de un lead para aprobarlo o descartarlo'."
+            "\n4. Si el usuario saluda o pregunta cómo va todo, usa ver_resumen para dar contexto real."
+            "\n5. Responde en español colombiano natural y conciso. Sin markdown. Sin negrillas."
+            "\n6. Listas con 1. 2. 3. Máximo 1400 caracteres."
+            "\n\nFLUJO TÍPICO: leads pendientes → revisar → aprobar → outreach → negociación."
         )
 
     messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(history[-6:])  # reduced from 8 to save tokens
+    messages.extend(history[-6:])  # last 3 turns for context
     messages.append({"role": "user", "content": message})
+
+    # For asesor_interno allow longer responses (conversational + tool results)
+    max_tok = 500 if profile == "asesor_interno" else 400
 
     try:
         response = await client.chat.completions.create(
@@ -563,31 +683,35 @@ async def _call_llm_with_tools(
             messages=messages,
             tools=tools if tools else None,
             tool_choice="auto" if tools else None,
-            max_tokens=400,
+            max_tokens=max_tok,
         )
 
         choice = response.choices[0]
+        logger.info("[WA-LLM] first_call (%s) tools_requested=%d",
+                    _ms(t_llm0), len(choice.message.tool_calls or []))
 
         if not choice.message.tool_calls:
             return (choice.message.content or "No tengo respuesta en este momento.")[:1600]
 
         tool_calls = choice.message.tool_calls
 
-        # Send ack immediately — user knows bot is working while tools run
-        if from_phone:
-            await _send_reply(from_phone, "Buscando...")
-
         # Execute all tool calls in parallel
         async def _run_tool(tc):
+            t_tool = time.monotonic()
             try:
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
                 args = {}
             if profile == "cliente":
-                return await dispatch_tool_cliente(tc.function.name, args, user_id)
-            return await dispatch_tool_asesor(tc.function.name, args, user_id)
+                result = await dispatch_tool_cliente(tc.function.name, args, user_id)
+            else:
+                result = await dispatch_tool_asesor(tc.function.name, args, user_id)
+            logger.info("[WA-LLM] tool=%s args=%s (%s)", tc.function.name, args, _ms(t_tool))
+            return result
 
+        t_tools = time.monotonic()
         results = await asyncio.gather(*[_run_tool(tc) for tc in tool_calls])
+        logger.info("[WA-LLM] all_tools (%s)", _ms(t_tools))
 
         # Fast path: single tool → return result directly (skip second LLM call)
         if len(tool_calls) == 1:
@@ -601,11 +725,13 @@ async def _call_llm_with_tools(
         messages.append(choice.message.model_dump(exclude_none=True))
         messages.extend(tool_results)
 
+        t_llm2 = time.monotonic()
         final_response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             max_tokens=300,
         )
+        logger.info("[WA-LLM] second_call (%s)", _ms(t_llm2))
         return (final_response.choices[0].message.content or "Listo.")[:1600]
 
     except Exception as e:

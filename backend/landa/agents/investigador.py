@@ -101,7 +101,7 @@ async def run_investigador(
         system_prompt=system_prompt,
         user_message=user_message,
         temperature=TEMP_INVESTIGADOR,
-        model="gpt-4o",
+        model="gpt-5.4-2026-03-05",
     )
 
     # Parse LLM response

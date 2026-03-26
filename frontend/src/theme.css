@@ -1,0 +1,23 @@
+/*
+  Precision Cyber-Organicism Design Tokens
+  Usage: import or reference these CSS variables in your components/styles.
+*/
+:root {
+  /* Core Palette */
+  --color-bg-surface: #12121d; /* Deep Navy-Black */
+  --color-primary: #78dce8;    /* High-tech Cyan */
+  --color-secondary: #ab9df2;  /* Neon Purple */
+  --color-tertiary: #a9dc76;   /* Vibrant Green */
+  --color-error: #ff6188;      /* Electric Pink */
+  --color-on-surface: #e3e0f1; /* Soft White for text */
+
+  /* Surface Hierarchy */
+  --surface-container-lowest: #10101a;
+  --surface: #12121d;
+  --surface-container-low: #181828;
+  --surface-container-high: #23233a;
+  --surface-container-highest: #2a2a4a;
+
+  /* Outline Variant (for ghost borders, etc) */
+  --outline-variant: #78dce8;
+}

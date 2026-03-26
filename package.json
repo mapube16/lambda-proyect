@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Isomorph Office - A collaborative pixel art office environment",
   "scripts": {
+    "start": "cd frontend && npm install && npm run build && cd .. && cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000",
     "dev": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
     "preview": "cd frontend && npm run preview"

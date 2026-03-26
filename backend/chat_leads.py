@@ -201,10 +201,10 @@ async def leads_chat_turn(
 
     client = AsyncOpenAI(api_key=openai_api_key)
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.4-2026-03-05",
         messages=[{"role": "system", "content": system_prompt}] + messages,
         temperature=0.4,
-        max_tokens=900,
+        extra_body={"max_completion_tokens": 900},
     )
     raw = response.choices[0].message.content or ""
     clean_reply, intent = _parse_intent(raw)

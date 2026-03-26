@@ -221,10 +221,51 @@ isomorph-office/
 | GET | `/api/staff/clients/{id}/knowledge` | Listar fuentes del RAG |
 | POST | `/api/staff/onboard/propose/{id}` | Reina genera propuesta de configuración |
 
-### Perfil de configuración del cliente
+
+### Usuarios — Teléfonos múltiples
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | `/api/client/profile` | Perfil del cliente autenticado (prompt + agentes + campaña) |
+| PATCH | `/api/users/{user_id}/phones` | Agrega un número a la lista de teléfonos del usuario (requiere JWT) |
+
+**Request:**
+```json
+{
+  "phone": "+573001112233"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "added": "+573001112233"
+}
+```
+
+**Autenticación:** Requiere JWT Bearer Token.
+
+#### Ejemplo cURL
+
+```bash
+curl -X PATCH "http://localhost:8001/api/users/<user_id>/phones" \
+  -H "Authorization: Bearer <JWT_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{ "phone": "+573001112233" }'
+```
+
+#### Ejemplo Postman
+
+1. Método: PATCH
+2. URL: `http://localhost:8001/api/users/<user_id>/phones`
+3. Headers:
+   - `Authorization: Bearer <JWT_TOKEN>`
+   - `Content-Type: application/json`
+4. Body (raw, JSON):
+   ```json
+   {
+     "phone": "+573001112233"
+   }
+   ```
 
 ### WebSocket
 ```
@@ -444,6 +485,114 @@ Responde ÚNICAMENTE en JSON:
 | Chat de retroalimentación | `gpt-4o-mini` | OpenAI directo |
 | Detección de patrones | `gpt-4o-mini` | OpenAI directo |
 | Embeddings (RAG + learning) | `text-embedding-3-small` | OpenAI directo |
+
+---
+
+## Agente WhatsApp SECOP — Pólizas de Cumplimiento
+
+Módulo independiente que convierte datos públicos de contratación del Estado colombiano en leads accionables para aseguradoras, operado 100% desde WhatsApp.
+
+### Cómo funciona
+
+```
+Asesor: "construccion bogota"
+  → Bot consulta SECOP II en tiempo real
+  → Enriquece NITs con 3 fuentes en paralelo (RUES, SECOP Proveedores, Supersociedades)
+  → GPT-4o-mini genera pitch personalizado por empresa
+  → Bot responde con 3 prospectos + teléfono + email + razón de contacto
+
+Asesor: "1"
+  → Bot muestra detalle del prospecto seleccionado
+  → Pregunta canal: E (Email) / W (WhatsApp) / C (Cancelar)
+
+Asesor: "W"
+  → Bot envía WhatsApp profesional al representante legal de la empresa
+  → Confirma al asesor con ✅
+```
+
+### Arquitectura de datos
+
+| Dataset | ID | Qué aporta |
+|---------|-----|-----------|
+| SECOP II Contratos | `jbjy-vk9h` | Empresas que han ganado contratos públicos |
+| SECOP II Procesos | `p6dx-8zbt` | Licitaciones abiertas ahora mismo |
+| SECOP Proveedores | `qmzu-gj57` | Teléfono, email, dirección, rep. legal |
+| RUES | `c82u-588k` | Razón social, cámara de comercio |
+| Supersociedades | `6cat-2gcs` | Ingresos, activos, patrimonio |
+
+Todo open data. Costo de datos: $0.
+
+### Archivos clave
+
+```
+backend/
+├── secop.py           # Consulta SECOP II contratos adjudicados
+├── secop_radar.py     # Orquestador: procesos abiertos + proponentes probables
+├── nit_enricher.py    # NIT → expediente completo (4 fuentes en paralelo)
+└── whatsapp_agent.py  # Agente conversacional con máquina de estados
+```
+
+### Configuración
+
+Variables de entorno en `backend/.env`:
+
+```env
+TWILIO_ACCOUNT_SID=ACxxxxxxx
+TWILIO_AUTH_TOKEN=xxxxxxx
+TWILIO_FROM_NUMBER=whatsapp:+14155238886
+
+SENDER_NAME=Nombre Asesor
+SENDER_COMPANY=Nombre Aseguradora
+SENDER_PHONE=3001234567
+
+MAILERSEND_API_KEY=mlsn.xxx        # para envío de emails
+MAILERSEND_FROM_EMAIL=noreply@tudominio.com
+```
+
+### Multi-tenant via MongoDB
+
+Cada asesor tiene su propia configuración en la colección `whatsapp_agents`:
+
+```json
+{
+  "phone_number": "+573001234567",
+  "twilio_from": "whatsapp:+14155238886",
+  "nombre_asesor": "Carlos Pérez",
+  "empresa": "Seguros XYZ",
+  "sectores": ["construccion", "tecnologia"],
+  "ciudad_default": "bogota",
+  "activo": true
+}
+```
+
+Un solo webhook maneja N asesores. La identidad del mensaje (nombre, empresa) se resuelve desde MongoDB por número de teléfono.
+
+#### Endpoints de gestión (requiere rol staff)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/whatsapp-agents` | Crear/actualizar agente |
+| GET | `/api/whatsapp-agents` | Listar todos los agentes |
+| GET | `/api/whatsapp-agents/{phone}` | Obtener config de un agente |
+| DELETE | `/api/whatsapp-agents/{phone}` | Eliminar agente |
+
+### Levantar en desarrollo
+
+```bash
+# Terminal 1 — backend
+cd backend
+python main.py
+
+# Terminal 2 — tunnel para Twilio
+ngrok http --domain=tu-dominio.ngrok-free.app 8000
+```
+
+Configurar en Twilio Console → Messaging → WhatsApp Sandbox → **When a message comes in**:
+```
+https://tu-dominio.ngrok-free.app/api/whatsapp/webhook   [POST]
+```
+
+---
 
 ## Licencia
 

@@ -1,7 +1,25 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useOfficeStore } from '../store/officeStore';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = '';
+
+// Design tokens
+const bg     = '#0d0d18';
+const s0     = '#12121d';
+const s1     = '#1b1a26';
+const s2     = '#22212e';
+const s3     = '#2c2b3a';
+const s4     = '#343440';
+const text   = '#e3e0f1';
+const muted  = 'rgba(227,224,241,0.5)';
+const faint  = 'rgba(227,224,241,0.25)';
+const cyan   = '#78dce8';
+const purple = '#ab9df2';
+const green  = '#a9dc76';
+const pink   = '#ff6188';
+const grad   = 'linear-gradient(135deg,#7c3aed 0%,#06b6d4 100%)';
+const SG     = "'Space Grotesk',system-ui,sans-serif";
+const IN     = "'Inter',system-ui,sans-serif";
 
 // Pipeline agents definition (mirrors hive_graph.py PIPELINE_AGENTS)
 const PIPELINE_AGENTS = [
@@ -14,14 +32,15 @@ const PIPELINE_AGENTS = [
 const PALETTE_COLORS = ['#78dce8', '#a9dc76', '#ffd866', '#ff6188'];
 
 const CAMPAIGN_LABELS: Record<string, string> = {
-  nombre_remitente:    'Remitente',
-  empresa_remitente:   'Empresa',
-  industria_objetivo:  'Industria objetivo',
-  ciudad_objetivo:     'Ciudad',
-  dolor_operativo:     'Dolor operativo',
-  solucion_ofrecida:   'Solución',
-  software_clave:      'Software clave',
-  jerarquia_decisores: 'Decisores',
+  nombre_remitente:     'Remitente',
+  empresa_remitente:    'Empresa',
+  sector_propio_cliente:'Nuestro sector (excluir competidores)',
+  industria_objetivo:   'Industria objetivo',
+  ciudad_objetivo:      'Ciudad',
+  dolor_operativo:      'Dolor operativo',
+  solucion_ofrecida:    'Solución',
+  software_clave:       'Software clave',
+  jerarquia_decisores:  'Decisores',
 };
 
 function humanizeCampaignKey(key: string): string {
@@ -42,6 +61,9 @@ interface ClientData {
   last_run_status: string | null;
   active_campaign: Record<string, string> | null;
   fuentes_habilitadas?: string[];
+  notification_channel?: string;
+  wa_phone_number?: string;
+  wa_phone_id?: string;
 }
 
 interface Lead {
@@ -483,13 +505,13 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
       <div style={wz.modal}>
         {/* Header */}
         <div style={wz.header}>
-          <div style={wz.title}>🐝 Onboarding de nuevo cliente</div>
+          <div style={wz.title}>Onboarding de nuevo cliente</div>
           <div style={wz.steps}>
             {(() => {
               const ORDER: WizardStep[] = ['account','conversation','upload','analyze','review','done'];
               const cur = ORDER.indexOf(step);
               return ORDER.map((s, i) => (
-                <div key={s} style={{ ...wz.stepDot, background: i === cur ? '#78dce8' : i < cur ? '#a9dc76' : '#2a2a4a' }} />
+                <div key={s} style={{ ...wz.stepDot, background: i === cur ? cyan : i < cur ? green : s4 }} />
               ));
             })()}
           </div>
@@ -501,7 +523,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
 
           {step !== 'done' && (
             <button style={wz.cancelBtn} onClick={closeWizard}>
-              🗑 Cancelar onboarding y borrar borrador
+              Cancelar onboarding y borrar borrador
             </button>
           )}
 
@@ -512,7 +534,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
                 onClick={fetchKnowledgeDebug}
                 disabled={knowledgeDebugLoading}
               >
-                {knowledgeDebugLoading ? '⏳ Cargando contexto...' : '👁 Ver contexto que verá la Reina'}
+                {knowledgeDebugLoading ? 'Cargando contexto...' : 'Ver contexto que verá la Reina'}
               </button>
 
               {showKnowledgeDebug && knowledgeDebug && (
@@ -569,7 +591,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
                   flex: 1,
                   minHeight: 180,
                   resize: 'vertical',
-                  fontFamily: 'inherit',
+                  fontFamily: IN,
                   fontSize: 13,
                   lineHeight: 1.5,
                   padding: '10px 12px',
@@ -585,7 +607,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
                 disabled={transcriptSaving}
                 onClick={handleTranscriptNext}
               >
-                {transcriptSaving ? '⏳ Guardando transcripción...' : transcript.trim() ? 'Guardar y continuar →' : 'Continuar sin transcripción →'}
+                {transcriptSaving ? 'Guardando transcripción...' : transcript.trim() ? 'Guardar y continuar →' : 'Continuar sin transcripción →'}
               </button>
             </div>
           )}
@@ -604,9 +626,9 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
                   style={{ display: 'none' }}
                   onChange={handleFileUpload} />
                 <button style={wz.uploadBtn} onClick={() => fileRef.current?.click()} disabled={uploading}>
-                  {uploading ? '⏳ Procesando...' : '📎 Subir archivos'}
+                  {uploading ? 'Procesando...' : 'Subir archivos'}
                 </button>
-                <span style={{ fontSize: 11, color: '#666', alignSelf: 'center' }}>Puedes seleccionar varios a la vez</span>
+                <span style={{ fontSize: 11, color: muted, alignSelf: 'center' }}>Puedes seleccionar varios a la vez</span>
               </div>
 
               {/* URL ingest: Empresa */}
@@ -616,7 +638,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
                   placeholder="https://web-oficial-de-la-empresa.com"
                   onKeyDown={e => e.key === 'Enter' && handleCompanyUrlIngest()} />
                 <button style={wz.uploadBtn} onClick={handleCompanyUrlIngest} disabled={uploading || !companyUrlInput.trim() || companyUrlInvalid}>
-                  🏢 Agregar web empresa
+                  Agregar web empresa
                 </button>
               </div>
               {companyUrlInvalid && (
@@ -664,11 +686,11 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
                   onClick={handleCompetitorUrlsIngest}
                   disabled={uploading || !competitorUrlFields.some(v => v.trim()) || competitorUrlFields.some(v => v.trim() && !isValidHttpUrl(v.trim()))}
                 >
-                  🥊 Agregar competencia (lote)
+                  Agregar competencia (lote)
                 </button>
               </div>
 
-              <div style={{ fontSize: 11, color: '#555', marginTop: -4 }}>
+              <div style={{ fontSize: 11, color: faint, marginTop: -4 }}>
                 La web oficial va separada. En competencia agrega un campo por URL.
               </div>
 
@@ -684,7 +706,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
                             : s.source_type.includes('url') ? '🌐' : '📄'}
                       </span>
                       <span style={wz.sourceName}>{s.filename}</span>
-                      <span style={{ ...wz.chunkBadge, background: '#1e1e35', borderColor: '#2a2a4e' }}>
+                      <span style={{ ...wz.chunkBadge, background: s1, borderColor: s3 }}>
                         {s.source_type === 'url_empresa' ? 'Empresa'
                           : s.source_type === 'url_competencia' ? 'Competencia'
                             : s.source_type}
@@ -717,12 +739,12 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
               {analyzing ? (
                 <div style={wz.analyzingBox}>
                   <div style={{ fontSize: 40, marginBottom: 16 }}>🐝</div>
-                  <div style={{ color: '#ffd866', fontWeight: 600 }}>Analizando documentación...</div>
-                  <div style={{ color: '#888', fontSize: 12, marginTop: 8 }}>Esto tarda ~15 segundos</div>
+                  <div style={{ color: '#ffd866', fontWeight: 600, fontFamily: SG }}>Analizando documentación...</div>
+                  <div style={{ color: muted, fontSize: 12, marginTop: 8, fontFamily: IN }}>Esto tarda ~15 segundos</div>
                 </div>
               ) : (
                 <button style={wz.primaryBtn} onClick={handleAnalyze}>
-                  🐝 Analizar con la Reina
+                  Analizar con la Reina
                 </button>
               )}
             </div>
@@ -778,7 +800,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
               </div>
 
               <button style={wz.primaryBtn} onClick={handleApprove} disabled={creating}>
-                {creating ? '⏳ Creando cuenta...' : '✅ Aprobar y crear cuenta'}
+                {creating ? 'Creando cuenta...' : 'Aprobar y crear cuenta'}
               </button>
             </div>
           )}
@@ -787,8 +809,8 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
           {step === 'done' && (
             <div style={{ ...wz.stepBody, alignItems: 'center', textAlign: 'center' }}>
               <div style={{ fontSize: 56, marginBottom: 16 }}>🎉</div>
-              <div style={{ color: '#a9dc76', fontWeight: 700, fontSize: 18 }}>¡Cliente onboardado!</div>
-              <div style={{ color: '#888', fontSize: 13, marginTop: 8 }}>{email}</div>
+              <div style={{ color: green, fontWeight: 700, fontSize: 18, fontFamily: SG }}>Cliente onboardado!</div>
+              <div style={{ color: muted, fontSize: 13, marginTop: 8, fontFamily: IN }}>{email}</div>
             </div>
           )}
         </div>
@@ -799,56 +821,65 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
 
 const wz: Record<string, React.CSSProperties> = {
   overlay: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     zIndex: 1000,
   },
   modal: {
-    width: 540, maxHeight: '85vh', background: '#1a1a2e',
-    border: '1px solid #2a2a4a', borderRadius: 16,
+    width: 540, maxHeight: '85vh',
+    background: 'rgba(18,18,29,0.97)',
+    backdropFilter: 'blur(12px)',
+    border: '0.5px solid rgba(120,220,232,0.15)',
+    boxShadow: '0 0 60px rgba(171,157,242,0.1)',
+    borderRadius: 14,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
   header: {
     display: 'flex', alignItems: 'center', gap: 12,
-    padding: '16px 20px', borderBottom: '1px solid #2a2a4a',
+    padding: '16px 20px',
+    borderBottom: '1px solid transparent',
+    backgroundImage: 'linear-gradient(rgba(18,18,29,0.97),rgba(18,18,29,0.97)),linear-gradient(to right,transparent,rgba(120,220,232,0.2),transparent)',
+    backgroundOrigin: 'border-box',
     flexShrink: 0,
   },
-  title: { fontSize: 16, fontWeight: 700, color: '#e0e0e0', flex: 1 },
+  title: { fontSize: 16, fontWeight: 700, color: text, flex: 1, fontFamily: SG },
   steps: { display: 'flex', gap: 6, alignItems: 'center' },
   stepDot: { width: 10, height: 10, borderRadius: '50%', transition: 'background 0.3s' },
-  closeBtn: { background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: 16 },
+  closeBtn: { background: 'transparent', border: 'none', color: muted, cursor: 'pointer', fontSize: 16, fontFamily: SG },
   body: { flex: 1, overflowY: 'auto', padding: '20px 24px' },
   error: {
-    background: '#2a1a1a', border: '1px solid #ff618844', borderRadius: 8,
-    color: '#ff6188', fontSize: 13, padding: '10px 14px', marginBottom: 16,
+    background: 'rgba(255,97,136,0.08)', border: '1px solid rgba(255,97,136,0.3)', borderRadius: 8,
+    color: pink, fontSize: 13, padding: '10px 14px', marginBottom: 16, fontFamily: IN,
   },
   cancelBtn: {
     width: '100%',
     padding: '9px 0',
     marginBottom: 10,
     background: 'transparent',
-    border: '1px solid #ff618855',
+    border: '1px solid rgba(255,97,136,0.3)',
     borderRadius: 8,
-    color: '#ff9ab0',
+    color: 'rgba(255,97,136,0.7)',
     fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
+    fontFamily: SG,
   },
   debugBtn: {
     width: '100%',
     padding: '9px 0',
     marginBottom: 10,
-    background: '#1a1a30',
-    border: '1px solid #2a2a4a',
+    background: s1,
+    border: '1px solid rgba(120,220,232,0.15)',
     borderRadius: 8,
-    color: '#78dce8',
+    color: cyan,
     fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
+    fontFamily: SG,
   },
   debugPanel: {
-    background: '#101022',
-    border: '1px solid #2a2a4a',
+    background: bg,
+    border: '1px solid rgba(120,220,232,0.12)',
     borderRadius: 8,
     padding: '10px 12px',
     marginBottom: 12,
@@ -856,8 +887,8 @@ const wz: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 6,
   },
-  debugTitle: { fontSize: 11, color: '#78dce8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8 },
-  debugMeta: { fontSize: 11, color: '#999' },
+  debugTitle: { fontSize: 11, color: cyan, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, fontFamily: SG },
+  debugMeta: { fontSize: 11, color: muted, fontFamily: IN },
   debugText: {
     margin: 0,
     maxHeight: 220,
@@ -865,57 +896,67 @@ const wz: Record<string, React.CSSProperties> = {
     whiteSpace: 'pre-wrap',
     fontSize: 11,
     lineHeight: 1.4,
-    color: '#cfcfe6',
-    background: '#0a0a16',
-    border: '1px solid #222238',
+    color: text,
+    background: s0,
+    border: '1px solid rgba(120,220,232,0.1)',
     borderRadius: 6,
     padding: '8px 9px',
+    fontFamily: IN,
   },
   stepBody: { display: 'flex', flexDirection: 'column', gap: 14 },
-  stepTitle: { fontSize: 15, fontWeight: 700, color: '#78dce8' },
-  hint: { color: '#888', fontSize: 13, lineHeight: 1.5 },
+  stepTitle: { fontSize: 15, fontWeight: 700, color: cyan, fontFamily: SG },
+  hint: { color: muted, fontSize: 13, lineHeight: 1.5, fontFamily: IN },
   field: { display: 'flex', flexDirection: 'column', gap: 4 },
-  label: { fontSize: 12, color: '#888' },
+  label: { fontSize: 12, color: muted, fontFamily: SG },
   input: {
-    padding: '9px 12px', background: '#252540', border: '1px solid #2a2a4a',
-    borderRadius: 8, color: '#e0e0e0', fontSize: 13,
+    padding: '9px 12px',
+    background: s2,
+    border: 'none',
+    borderBottom: '1px solid rgba(120,220,232,0.25)',
+    borderRadius: 0,
+    color: text,
+    fontSize: 13,
+    fontFamily: IN,
+    outline: 'none',
   },
   inputError: {
-    border: '1px solid #ff6188',
-    boxShadow: '0 0 0 1px #ff618833 inset',
+    borderBottom: '1px solid rgba(255,97,136,0.7)',
+    boxShadow: '0 0 0 1px rgba(255,97,136,0.15) inset',
   },
   inlineError: {
-    color: '#ff6188',
+    color: pink,
     fontSize: 11,
     marginTop: -8,
+    fontFamily: IN,
   },
   primaryBtn: {
-    padding: '11px 0', background: 'linear-gradient(135deg, #7c3aed, #06b6d4)',
+    padding: '11px 0', background: grad,
     border: 'none', borderRadius: 8, color: '#fff', fontWeight: 700,
-    fontSize: 14, cursor: 'pointer',
+    fontSize: 14, cursor: 'pointer', fontFamily: SG,
   },
   uploadRow: { display: 'flex', gap: 8 },
   urlRow: { display: 'flex', gap: 8 },
   uploadBtn: {
-    padding: '9px 14px', background: '#252540', border: '1px solid #2a2a4a',
-    borderRadius: 8, color: '#78dce8', cursor: 'pointer', fontSize: 13,
-    whiteSpace: 'nowrap',
+    padding: '9px 14px', background: s2, border: '1px solid rgba(120,220,232,0.15)',
+    borderRadius: 8, color: cyan, cursor: 'pointer', fontSize: 13,
+    whiteSpace: 'nowrap', fontFamily: SG,
   },
   sourcesList: {
-    background: '#131326', borderRadius: 8, padding: '10px 12px',
+    background: s0, borderRadius: 8, padding: '10px 12px',
     display: 'flex', flexDirection: 'column', gap: 6,
+    border: '1px solid rgba(120,220,232,0.1)',
   },
-  sourcesTitle: { fontSize: 11, color: '#888', fontWeight: 600, marginBottom: 4 },
+  sourcesTitle: { fontSize: 11, color: muted, fontWeight: 600, marginBottom: 4, fontFamily: SG },
   sourceRow: { display: 'flex', alignItems: 'center', gap: 8 },
-  sourceName: { flex: 1, fontSize: 12, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  chunkBadge: { fontSize: 10, color: '#888', background: '#2a2a4a', padding: '2px 6px', borderRadius: 4 },
-  deleteBtn: { background: 'transparent', border: 'none', color: '#ff6188', cursor: 'pointer', fontSize: 13 },
+  sourceName: { flex: 1, fontSize: 12, color: text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: IN },
+  chunkBadge: { fontSize: 10, color: muted, background: s3, padding: '2px 6px', borderRadius: 4, fontFamily: SG },
+  deleteBtn: { background: 'transparent', border: 'none', color: pink, cursor: 'pointer', fontSize: 13 },
   convBox: {
     flex: 1,
     minHeight: 200,
     maxHeight: 280,
     overflowY: 'auto',
-    background: '#131326',
+    background: s0,
     borderRadius: 10,
     padding: '12px',
     display: 'flex',
@@ -923,41 +964,43 @@ const wz: Record<string, React.CSSProperties> = {
     gap: 10,
   },
   convBubbleBot: {
-    background: '#1e2a3a',
-    border: '1px solid #2a3a4a',
+    background: s1,
+    border: '1px solid rgba(120,220,232,0.1)',
     borderRadius: '12px 12px 12px 4px',
     padding: '10px 14px',
     fontSize: 13,
-    color: '#ccc',
+    color: text,
     maxWidth: '85%',
     lineHeight: 1.5,
     whiteSpace: 'pre-wrap',
+    fontFamily: IN,
   },
   convBubbleUser: {
-    background: '#2a1a4a',
-    border: '1px solid #3a2a5a',
+    background: 'rgba(171,157,242,0.08)',
+    border: '1px solid rgba(171,157,242,0.2)',
     borderRadius: '12px 12px 4px 12px',
     padding: '10px 14px',
     fontSize: 13,
-    color: '#e0e0e0',
+    color: text,
     maxWidth: '85%',
     lineHeight: 1.5,
     whiteSpace: 'pre-wrap',
+    fontFamily: IN,
   },
   analyzingBox: {
-    background: '#131326', borderRadius: 12, padding: '32px 24px',
+    background: s0, borderRadius: 12, padding: '32px 24px',
     display: 'flex', flexDirection: 'column', alignItems: 'center',
+    border: '1px solid rgba(120,220,232,0.1)',
   },
   proposalSection: {
-    background: '#131326', borderRadius: 10, padding: '12px 14px',
+    background: s1, borderRadius: 8, padding: '12px 16px',
     display: 'flex', flexDirection: 'column', gap: 8,
   },
-  proposalLabel: { fontSize: 11, fontWeight: 600, color: '#78dce8', textTransform: 'uppercase', letterSpacing: 1 },
-  proposalText: { fontSize: 13, color: '#ccc', lineHeight: 1.5 },
+  proposalLabel: { fontSize: 9, fontWeight: 700, color: cyan, textTransform: 'uppercase', letterSpacing: 1, fontFamily: SG },
+  proposalText: { fontSize: 13, color: text, lineHeight: 1.5, fontFamily: IN },
   agentCard: {
-    background: '#1a1a30',
-    border: '1px solid #2a2a4a',
-    borderRadius: 8,
+    background: s2,
+    borderRadius: 6,
     padding: '8px 10px',
     display: 'flex',
     flexDirection: 'column',
@@ -966,25 +1009,27 @@ const wz: Record<string, React.CSSProperties> = {
   agentRow: { display: 'flex', alignItems: 'center', gap: 8 },
   agentDot: { width: 10, height: 10, borderRadius: '50%', flexShrink: 0 },
   agentNameInput: {
-    padding: '5px 9px', background: '#1e1e35', border: '1px solid #2a2a4a',
-    borderRadius: 6, color: '#e0e0e0', fontSize: 13, flex: 1,
+    padding: '5px 9px', background: s3, border: 'none',
+    borderBottom: '1px solid rgba(120,220,232,0.2)',
+    borderRadius: 0, color: text, fontSize: 13, flex: 1, fontFamily: IN, outline: 'none',
   },
   agentRole: {
     fontSize: 10,
-    color: '#78dce8',
-    background: '#131326',
-    border: '1px solid #2a2a4a',
+    color: cyan,
+    background: 'rgba(120,220,232,0.08)',
     borderRadius: 999,
     padding: '2px 8px',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    fontFamily: SG,
   },
-  agentPersona: { fontSize: 12, color: '#aaa', lineHeight: 1.45, whiteSpace: 'normal', wordBreak: 'break-word' },
+  agentPersona: { fontSize: 12, color: muted, lineHeight: 1.45, whiteSpace: 'normal', wordBreak: 'break-word', fontFamily: IN },
   campRow: { display: 'flex', alignItems: 'center', gap: 8 },
-  campLabel: { fontSize: 11, color: '#888', minWidth: 110 },
+  campLabel: { fontSize: 11, color: muted, minWidth: 110, fontFamily: SG },
   campInput: {
-    flex: 1, padding: '5px 9px', background: '#1e1e35', border: '1px solid #2a2a4a',
-    borderRadius: 6, color: '#e0e0e0', fontSize: 12,
+    flex: 1, padding: '5px 9px', background: s3, border: 'none',
+    borderBottom: '1px solid rgba(120,220,232,0.2)',
+    borderRadius: 0, color: text, fontSize: 12, fontFamily: IN, outline: 'none',
   },
 };
 
@@ -1102,10 +1147,9 @@ export function StaffDashboard() {
       {/* Header */}
       <header style={s.header}>
         <div style={s.logoRow}>
-          <span style={{ fontSize: 28 }}>🐝</span>
           <div>
-            <div style={s.logoText}>Isomorph Staff</div>
-            <div style={s.logoSub}>Panel de control</div>
+            <div style={s.logoText}>Landa</div>
+            <div style={s.logoSub}>STAFF_CONSOLE</div>
           </div>
         </div>
         <div style={s.headerRight}>
@@ -1115,31 +1159,45 @@ export function StaffDashboard() {
           <button style={s.diagBtn} onClick={checkMapsDiagnostics} disabled={checkingMaps}>
             {checkingMaps ? 'Revisando Maps...' : 'Diagnóstico Maps'}
           </button>
-          <span style={s.emailBadge}>🛡️ {userEmail}</span>
+          <span style={s.emailBadge}>{userEmail}</span>
           <button style={s.logoutBtn} onClick={clearAuth}>Salir</button>
         </div>
+        <div style={s.headerGradSep} />
       </header>
 
       <div style={s.body}>
         {/* Client list */}
         <div style={s.sidebar}>
-          <div style={s.sidebarTitle}>Clientes ({clients.length})</div>
+          <div style={s.sidebarStatus}>SYSTEM_READY</div>
+          <div style={s.sidebarTitle}>CLIENTES_ACTIVOS</div>
           {loadingClients ? (
             <div style={s.loading}>Cargando...</div>
           ) : clients.length === 0 ? (
-            <div style={{ color: '#555', fontSize: 12, padding: '12px 4px' }}>
+            <div style={{ color: faint, fontSize: 12, padding: '12px 4px', fontFamily: IN }}>
               Sin clientes activos. Onboarda el primero →
             </div>
           ) : (
             clients.map(client => (
               <div
                 key={client.id}
-                style={{ ...s.clientCard, ...(selectedClient?.id === client.id ? s.clientCardActive : {}) }}
+                style={{
+                  ...s.clientCard,
+                  ...(selectedClient?.id === client.id ? s.clientCardActive : {}),
+                }}
                 onClick={() => selectClient(client)}
               >
-                <div style={s.clientEmail}>{client.email}</div>
-                <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-                  {new Date(client.created_at).toLocaleDateString('es-CO')}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={selectedClient?.id === client.id ? s.clientEmailActive : s.clientEmail}>
+                    {client.email}
+                  </div>
+                  <div style={{
+                    width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                    background: client.active_campaign ? green : faint,
+                    boxShadow: client.active_campaign ? `0 0 6px ${green}` : 'none',
+                  }} />
+                </div>
+                <div style={s.clientCampaignLabel}>
+                  CAMPAIGN: {client.active_campaign ? 'ACTIVE' : 'NONE'}
                 </div>
               </div>
             ))
@@ -1150,20 +1208,32 @@ export function StaffDashboard() {
         <div style={s.detail}>
           {!selectedClient ? (
             <div style={s.emptyState}>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>👈</div>
-              <div style={{ color: '#888', fontSize: 15 }}>Selecciona un cliente</div>
+              <div style={s.emptyStateText}>Selecciona un cliente para ver su pipeline</div>
             </div>
           ) : (
             <>
               <div style={s.detailHeader}>
+                <div style={s.detailNodeRow}>
+                  <span style={s.detailNodeLabel}>
+                    Nodo de Monitoreo: {selectedClient.id.slice(0, 5).toUpperCase()}-{selectedClient.id.slice(5, 8).toUpperCase()}
+                  </span>
+                  <span style={s.activeChip}>ACTIVO</span>
+                </div>
                 <div style={s.detailEmail}>{selectedClient.email}</div>
                 {clientDetail && (
                   <div style={s.detailSubRow}>
-                    <span style={s.statPill}>{clientDetail.total_runs} runs</span>
-                    <span style={s.statPill}>{clientDetail.total_leads} leads totales</span>
-                    <span style={{ ...s.statPill, background: '#1a3a1a', color: '#a9dc76' }}>
-                      {clientDetail.approved_leads} aprobados
-                    </span>
+                    <div style={{ ...s.statCard, borderLeftColor: cyan }}>
+                      <div style={s.statCardValue}>{clientDetail.total_runs}</div>
+                      <div style={s.statCardLabel}>runs</div>
+                    </div>
+                    <div style={{ ...s.statCard, borderLeftColor: cyan }}>
+                      <div style={s.statCardValue}>{clientDetail.total_leads}</div>
+                      <div style={s.statCardLabel}>leads totales</div>
+                    </div>
+                    <div style={{ ...s.statCard, borderLeftColor: green }}>
+                      <div style={{ ...s.statCardValue, color: green }}>{clientDetail.approved_leads}</div>
+                      <div style={s.statCardLabel}>aprobados</div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1184,17 +1254,26 @@ export function StaffDashboard() {
                       }))
                     : PIPELINE_AGENTS);
 
+                  const barWidths = ['0%', '30%', '65%', '90%'];
+
                   return (
                 <div style={s.agentGrid}>
-                  {runtimeAgents.map((agent, i) => (
+                  {runtimeAgents.map((agent, i) => {
+                    const color = PALETTE_COLORS[i % PALETTE_COLORS.length];
+                    return (
                     <div key={agent.id} style={s.agentCard}>
-                      <div style={{ ...s.agentDot, background: PALETTE_COLORS[i % PALETTE_COLORS.length] }} />
-                      <div>
-                        <div style={s.agentName}>{agent.name}</div>
-                        <div style={s.agentRole}>{agent.role}</div>
+                      <div style={{ ...s.agentStatusDot, background: cyan, boxShadow: `0 0 6px ${cyan}` }} />
+                      <div style={{ ...s.agentIcon, background: `${color}15`, color }}>
+                        {agent.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div style={s.agentName}>{agent.name}</div>
+                      <div style={s.agentRole}>{agent.role}</div>
+                      <div style={s.agentProgressTrack}>
+                        <div style={{ ...s.agentProgressBar, background: color, width: barWidths[i % barWidths.length] }} />
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                   );
                 })()}
@@ -1236,7 +1315,7 @@ export function StaffDashboard() {
                     )}
                   </>
                 ) : (
-                  <div style={{ color: '#888', fontSize: 13 }}>Sin snapshot onboarding en raíz de usuario</div>
+                  <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin snapshot onboarding en raíz de usuario</div>
                 )}
               </Section>
 
@@ -1256,7 +1335,7 @@ export function StaffDashboard() {
                     })}
                   </div>
                 ) : (
-                  <div style={{ color: '#888', fontSize: 13 }}>Sin campaña configurada</div>
+                  <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin campaña configurada</div>
                 )}
               </Section>
 
@@ -1268,7 +1347,7 @@ export function StaffDashboard() {
               {/* Leads */}
               <Section title={`Leads (${clientLeads.length})`}>
                 {clientLeads.length === 0 ? (
-                  <div style={{ color: '#888', fontSize: 13 }}>Sin leads aún</div>
+                  <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin leads aún</div>
                 ) : (
                   <div style={s.leadsList}>
                     {clientLeads.map(lead => {
@@ -1277,18 +1356,18 @@ export function StaffDashboard() {
                       const decisor = lead.expediente_json?.decisor as Record<string, string> | null;
                       return (
                         <div key={lead._id} style={s.leadRow}>
-                          <div style={{ ...s.leadDot, background: approved ? '#a9dc76' : '#ff6188' }} />
+                          <div style={{ ...s.leadDot, background: approved ? green : pink }} />
                           <div style={s.leadInfo}>
                             <div style={s.leadName}>{lead.company_name || lead.url}</div>
                             <div style={s.leadUrl}>{lead.url.replace(/^https?:\/\//, '').slice(0, 45)}</div>
                             {decisor?.email && (
-                              <div style={s.leadDecissor}>✉️ {decisor.email}</div>
+                              <div style={s.leadDecissor}>{decisor.email}</div>
                             )}
                           </div>
                           <div style={s.leadMeta}>
                             {score != null && <span style={s.scoreBadge}>{score}pts</span>}
-                            <span style={{ ...s.hitlBadge, color: lead.hitl_status === 'approved' ? '#a9dc76' : lead.hitl_status === 'rejected' ? '#ff6188' : '#888' }}>
-                              {lead.hitl_status === 'approved' ? '✓ aprobado' : lead.hitl_status === 'rejected' ? '✗ rechazado' : '⏳ pendiente'}
+                            <span style={{ ...s.hitlBadge, color: lead.hitl_status === 'approved' ? green : lead.hitl_status === 'rejected' ? pink : muted }}>
+                              {lead.hitl_status === 'approved' ? '✓ aprobado' : lead.hitl_status === 'rejected' ? '✗ rechazado' : 'pendiente'}
                             </span>
                             {decisor?.email && !!((lead.expediente_json?.borradores as Record<string,unknown> | null)?.email_cuerpo) && (
                               <button
@@ -1296,7 +1375,7 @@ export function StaffDashboard() {
                                 onClick={() => !lead.email_sent && sendLeadEmail(lead._id)}
                                 title={lead.email_sent ? 'Correo enviado' : `Enviar a ${decisor.email}`}
                               >
-                                {lead.email_sent ? '✅ enviado' : '📧 enviar'}
+                                {lead.email_sent ? 'enviado' : 'enviar'}
                               </button>
                             )}
                           </div>
@@ -1309,26 +1388,33 @@ export function StaffDashboard() {
 
               {/* Learning — Tu cliente ideal */}
               {clientLearning && (clientLearning.ideal_count > 0 || clientLearning.patterns.length > 0) && (
-                <Section title="Tu cliente ideal 🧬">
+                <Section title="Tu cliente ideal">
                   <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                     <span style={s.statPill}>{clientLearning.ideal_count} aprobados analizados</span>
-                    <span style={{ ...s.statPill, color: '#ff6188' }}>{clientLearning.rejected_count} rechazados</span>
+                    <span style={{ ...s.statPill, color: pink }}>{clientLearning.rejected_count} rechazados</span>
                   </div>
                   {clientLearning.patterns.length === 0 ? (
-                    <div style={{ color: '#555', fontSize: 12 }}>
+                    <div style={{ color: faint, fontSize: 12, fontFamily: IN }}>
                       Se necesitan al menos 3 leads aprobados para detectar patrones.
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {clientLearning.patterns.map((p, i) => (
-                        <div key={i} style={s.patternCard}>
+                        <div key={i} style={{
+                          ...s.patternCard,
+                          borderLeft: `2px solid ${p.confidence === 'alta' ? green : purple}`,
+                        }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span style={{ fontSize: 16 }}>{['🥇','🥈','🥉'][i]}</span>
                             <span style={s.patternText}>{p.description}</span>
                           </div>
                           <div style={{ display: 'flex', gap: 6, marginTop: 4, paddingLeft: 24 }}>
-                            <span style={{ ...s.statPill, fontSize: 10 }}>
-                              {p.confidence === 'alta' ? '🔥 Alta confianza' : '📊 Confianza media'}
+                            <span style={{
+                              ...s.statPill, fontSize: 10,
+                              background: p.confidence === 'alta' ? `${green}1a` : `${purple}1a`,
+                              color: p.confidence === 'alta' ? green : purple,
+                            }}>
+                              {p.confidence === 'alta' ? 'Alta confianza' : 'Confianza media'}
                             </span>
                             {p.evidence_count > 0 && (
                               <span style={{ ...s.statPill, fontSize: 10 }}>{p.evidence_count} evidencias</span>
@@ -1353,7 +1439,21 @@ export function StaffDashboard() {
 function FuentesPanel({ client }: { client: ClientData }) {
   const token = useOfficeStore.getState().authToken;
   const [fuentes, setFuentes] = useState<string[]>(client.fuentes_habilitadas ?? ['google_maps']);
+  const [notificationChannel, setNotificationChannel] = useState<string>(client.notification_channel ?? 'web');
+  const [waPhoneNumber, setWaPhoneNumber] = useState<string>(client.wa_phone_number ?? '');
+  const [waPhoneId] = useState<string>(client.wa_phone_id ?? '');
+  const [waBots, setWaBots] = useState<Record<string, boolean>>({ landa: true, secop: false });
   const [saving, setSaving] = useState(false);
+
+  // Load bot flags from backend on mount
+  React.useEffect(() => {
+    if (!client.wa_phone_number) return;
+    fetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(client.wa_phone_number)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => r.ok ? r.json() : null).then(d => {
+      if (d?.bots) setWaBots(d.bots);
+    }).catch(() => {});
+  }, [client.wa_phone_number]);
 
   const toggleFuente = async (fuente: string) => {
     const updated = fuentes.includes(fuente)
@@ -1362,12 +1462,28 @@ function FuentesPanel({ client }: { client: ClientData }) {
     // Always keep google_maps
     const final = updated.includes('google_maps') ? updated : ['google_maps', ...updated];
     setFuentes(final);
+    await saveSources(final, notificationChannel, waPhoneNumber, waPhoneId);
+  };
+
+  const saveSources = async (
+    fuentesList: string[],
+    channel: string,
+    phoneNum: string,
+    phoneId: string,
+  ) => {
     setSaving(true);
     try {
+      const body: Record<string, any> = {
+        fuentes_habilitadas: fuentesList,
+        notification_channel: channel,
+      };
+      if (phoneNum) body.wa_phone_number = phoneNum;
+      if (phoneId) body.wa_phone_id = phoneId;
+
       await fetch(`${API_URL}/api/staff/clients/${client.id}/sources`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ fuentes_habilitadas: final }),
+        body: JSON.stringify(body),
       });
     } catch (e) {
       console.error('[FuentesPanel]', e);
@@ -1376,6 +1492,17 @@ function FuentesPanel({ client }: { client: ClientData }) {
     }
   };
 
+  const handleChannelChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newChannel = e.target.value;
+    setNotificationChannel(newChannel);
+    await saveSources(fuentes, newChannel, waPhoneNumber, waPhoneId);
+  };
+
+  const handleWaPhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setWaPhoneNumber(e.target.value);
+  };
+
+
   const FUENTE_LABELS: Record<string, string> = {
     google_maps: 'Google Maps + Web scraping',
     secop_adjudicados: 'SECOP — Empresas adjudicadas (premium)',
@@ -1383,21 +1510,116 @@ function FuentesPanel({ client }: { client: ClientData }) {
   };
 
   return (
-    <div style={{ marginTop: 16, padding: 12, background: '#252535', borderRadius: 6 }}>
-      <div style={{ color: '#ffd866', fontFamily: 'monospace', fontSize: 11, marginBottom: 8 }}>
+    <div style={{
+      marginTop: 12, padding: '16px', background: s1, borderRadius: 10,
+    }}>
+      <div style={{ color: cyan, fontFamily: SG, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
         Fuentes de descubrimiento {saving && '(guardando...)'}
       </div>
       {Object.entries(FUENTE_LABELS).map(([key, label]) => (
-        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: key === 'google_maps' ? 'default' : 'pointer' }}>
+        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: key === 'google_maps' ? 'default' : 'pointer' }}>
           <input
             type="checkbox"
             checked={fuentes.includes(key)}
             disabled={key === 'google_maps'}
             onChange={() => key !== 'google_maps' && toggleFuente(key)}
           />
-          <span style={{ color: '#ccc', fontSize: 11, fontFamily: 'monospace' }}>{label}</span>
+          <span style={{ color: text, fontSize: 12, fontFamily: IN }}>{label}</span>
         </label>
       ))}
+
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${faint}` }}>
+        <div style={{ color: cyan, fontFamily: SG, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+          Canal de notificación
+        </div>
+        <select
+          value={notificationChannel}
+          onChange={handleChannelChange}
+          style={{
+            width: '100%',
+            padding: '6px 8px',
+            background: s2,
+            color: text,
+            border: 'none',
+            borderBottom: '1px solid rgba(120,220,232,0.2)',
+            borderRadius: 0,
+            fontFamily: IN,
+            fontSize: 12,
+            marginBottom: 8,
+            outline: 'none',
+          }}
+        >
+          <option value="web">Web (panel)</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="both">Web + WhatsApp</option>
+        </select>
+
+        {(notificationChannel === 'whatsapp' || notificationChannel === 'both') && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ color: muted, fontSize: 10, marginBottom: 4, fontFamily: SG }}>Número WhatsApp del cliente (p.ej. +57300...)</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                type="text"
+                placeholder="+5730012345678"
+                value={waPhoneNumber}
+                onChange={handleWaPhoneChange}
+                style={{
+                  flex: 1,
+                  padding: '6px 8px',
+                  background: s2,
+                  color: text,
+                  border: 'none',
+                  borderBottom: '1px solid rgba(120,220,232,0.2)',
+                  borderRadius: 0,
+                  fontFamily: IN,
+                  fontSize: 12,
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => saveSources(fuentes, notificationChannel, waPhoneNumber, waPhoneId)}
+                disabled={saving}
+                style={{
+                  padding: '6px 14px',
+                  background: saving ? s3 : grad,
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontFamily: SG,
+                  fontSize: 12,
+                  cursor: saving ? 'default' : 'pointer',
+                  fontWeight: 700,
+                }}
+              >
+                {saving ? '...' : 'Guardar'}
+              </button>
+            </div>
+
+            {/* Bot flags */}
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${faint}` }}>
+              <div style={{ color: muted, fontSize: 10, marginBottom: 6, fontFamily: SG }}>Bots habilitados</div>
+              {[{ key: 'landa', label: 'Landa (leads y gestión)' }, { key: 'secop', label: 'SECOP (prospección)' }].map(({ key, label }) => (
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!waBots[key]}
+                    onChange={async (e) => {
+                      const updated = { ...waBots, [key]: e.target.checked };
+                      setWaBots(updated);
+                      await fetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(waPhoneNumber)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({ bots: updated }),
+                      });
+                    }}
+                  />
+                  <span style={{ color: text, fontSize: 12, fontFamily: IN }}>{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1405,16 +1627,28 @@ function FuentesPanel({ client }: { client: ClientData }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={sectionStyles.wrap}>
-      <div style={sectionStyles.title}>{title}</div>
+      <div style={sectionStyles.title}>
+        <span>{title}</span>
+        <div style={sectionStyles.titleLine} />
+      </div>
       <div style={sectionStyles.body}>{children}</div>
     </div>
   );
 }
 
 const sectionStyles: Record<string, React.CSSProperties> = {
-  wrap: { marginBottom: 24 },
-  title: { fontSize: 12, fontWeight: 600, color: '#78dce8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 },
-  body: {},
+  wrap: { marginBottom: 28 },
+  title: {
+    fontSize: 13, fontWeight: 700, color: cyan,
+    textTransform: 'uppercase', letterSpacing: '0.08em',
+    fontFamily: SG,
+    display: 'flex', alignItems: 'center', gap: 8,
+  },
+  titleLine: {
+    flex: 1, height: 1,
+    background: 'linear-gradient(to right,rgba(120,220,232,0.3),transparent)',
+  },
+  body: { paddingTop: 14 },
 };
 
 const s: Record<string, React.CSSProperties> = {
@@ -1422,134 +1656,231 @@ const s: Record<string, React.CSSProperties> = {
     height: '100vh',
     display: 'flex',
     flexDirection: 'column',
-    background: 'linear-gradient(180deg, #1a1a2e 0%, #16162a 100%)',
-    color: '#e0e0e0',
-    fontFamily: "'Segoe UI', system-ui, sans-serif",
+    background: bg,
+    color: text,
+    fontFamily: IN,
     overflow: 'hidden',
   },
   header: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '14px 24px',
-    borderBottom: '1px solid #2a2a4a',
+    padding: '0 24px',
+    height: 64,
+    background: s0,
     flexShrink: 0,
+    position: 'relative',
+  },
+  headerGradSep: {
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    height: 1,
+    background: 'linear-gradient(to right,transparent,rgba(120,220,232,0.2),transparent)',
   },
   logoRow: { display: 'flex', alignItems: 'center', gap: 12 },
   logoText: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 700,
-    background: 'linear-gradient(90deg, #78dce8, #a9dc76)',
-    WebkitBackgroundClip: 'text',
-    WebkitTextFillColor: 'transparent',
+    color: cyan,
+    fontFamily: SG,
+    lineHeight: 1,
   },
-  logoSub: { fontSize: 11, color: '#888' },
+  logoSub: {
+    fontSize: 10, color: purple, fontFamily: SG,
+    textTransform: 'uppercase', letterSpacing: '0.1em',
+    marginTop: 2,
+  },
   headerRight: { display: 'flex', alignItems: 'center', gap: 12 },
   onboardBtn: {
-    padding: '7px 14px', borderRadius: 7, border: '1px solid #7c3aed',
-    background: 'transparent', color: '#ab9df2', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+    padding: '7px 16px', borderRadius: 7, border: 'none',
+    background: grad, color: '#fff', cursor: 'pointer',
+    fontSize: 13, fontWeight: 700, fontFamily: SG,
   },
   diagBtn: {
-    padding: '7px 12px', borderRadius: 7, border: '1px solid #2a4a6a',
-    background: 'transparent', color: '#78dce8', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+    padding: '7px 12px', borderRadius: 7,
+    border: '0.5px solid rgba(120,220,232,0.3)',
+    background: 'transparent', color: cyan, cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: SG,
   },
-  emailBadge: { fontSize: 13, color: '#ffd866', background: '#2a2a1a', padding: '4px 10px', borderRadius: 20 },
+  emailBadge: { fontSize: 12, color: muted, fontFamily: SG },
   logoutBtn: {
-    padding: '6px 14px', borderRadius: 6, border: '1px solid #2a2a4a',
-    background: 'transparent', color: '#888', cursor: 'pointer', fontSize: 13,
+    padding: '6px 14px', borderRadius: 6,
+    border: '0.5px solid rgba(120,220,232,0.2)',
+    background: 'transparent', color: muted, cursor: 'pointer', fontSize: 12, fontFamily: SG,
   },
   body: { display: 'flex', flex: 1, overflow: 'hidden' },
   sidebar: {
     width: 260,
     flexShrink: 0,
-    borderRight: '1px solid #2a2a4a',
+    background: s0,
     overflowY: 'auto',
-    padding: '16px 12px',
+    padding: '20px 12px',
     display: 'flex',
     flexDirection: 'column',
-    gap: 8,
+    gap: 4,
   },
-  sidebarTitle: { fontSize: 11, fontWeight: 600, color: '#78dce8', textTransform: 'uppercase', letterSpacing: 1, padding: '0 4px 8px' },
+  sidebarStatus: {
+    fontSize: 9, color: purple, fontFamily: SG, fontStyle: 'italic',
+    textTransform: 'uppercase', letterSpacing: '0.12em',
+    padding: '0 4px', marginBottom: 2,
+  },
+  sidebarTitle: {
+    fontSize: 13, fontWeight: 700, color: cyan, fontFamily: SG,
+    padding: '0 4px', marginBottom: 10,
+  },
   clientCard: {
-    padding: '12px 14px',
-    borderRadius: 10,
-    border: '1px solid #2a2a4a',
-    background: '#1e1e32',
+    padding: '10px 12px',
+    borderRadius: 8,
+    background: 'transparent',
     cursor: 'pointer',
-    transition: 'border-color 0.15s',
+    borderRight: '2px solid transparent',
+    transition: 'background 0.15s, border-color 0.15s',
   },
-  clientCardActive: { borderColor: '#78dce8', background: '#1e2a3a' },
-  clientEmail: { fontSize: 13, fontWeight: 600, color: '#e0e0e0', marginBottom: 6 },
-  clientStats: { display: 'flex', gap: 8, flexWrap: 'wrap' },
-  stat: { fontSize: 11, color: '#888', background: '#16162a', padding: '2px 7px', borderRadius: 10 },
-  clientLastRun: { fontSize: 11, color: '#666', marginTop: 6 },
-  detail: { flex: 1, overflowY: 'auto', padding: '24px 28px' },
-  emptyState: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' },
-  detailHeader: { marginBottom: 28 },
-  detailEmail: { fontSize: 22, fontWeight: 700, color: '#e0e0e0', marginBottom: 10 },
-  detailSubRow: { display: 'flex', gap: 8 },
-  statPill: { fontSize: 12, padding: '4px 10px', borderRadius: 12, background: '#2a2a4a', color: '#aaa' },
-  agentGrid: { display: 'flex', gap: 10, flexWrap: 'wrap' },
+  clientCardActive: {
+    background: 'rgba(120,220,232,0.06)',
+    borderRight: `2px solid ${cyan}`,
+    boxShadow: '0 0 10px rgba(120,220,232,0.15)',
+  },
+  clientEmail: {
+    fontSize: 11, fontWeight: 700, color: muted,
+    fontFamily: SG, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  clientEmailActive: {
+    fontSize: 11, fontWeight: 700, color: cyan,
+    fontFamily: SG, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  clientCampaignLabel: {
+    fontSize: 9, color: faint, fontFamily: SG,
+    textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 3,
+  },
+  detail: { flex: 1, overflowY: 'auto', padding: '28px 32px', background: bg },
+  emptyState: {
+    height: '100%', display: 'flex',
+    flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+  },
+  emptyStateText: {
+    color: muted, fontSize: 14, fontFamily: SG,
+  },
+  detailHeader: { marginBottom: 32 },
+  detailNodeRow: {
+    display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6,
+  },
+  detailNodeLabel: {
+    fontSize: 10, color: purple, fontFamily: SG,
+    textTransform: 'uppercase', letterSpacing: '0.1em',
+  },
+  activeChip: {
+    fontSize: 10, color: green, fontFamily: SG,
+    background: 'rgba(169,220,118,0.1)',
+    padding: '2px 8px', borderRadius: 4,
+    textTransform: 'uppercase', letterSpacing: '0.08em',
+  },
+  detailEmail: {
+    fontSize: 32, fontWeight: 700, color: text,
+    fontFamily: SG, marginBottom: 14, lineHeight: 1.1,
+    wordBreak: 'break-all',
+  },
+  detailSubRow: { display: 'flex', gap: 10 },
+  statCard: {
+    background: s1, borderRadius: 8, padding: '10px 16px',
+    borderLeft: '2px solid transparent',
+    minWidth: 80,
+  },
+  statCardValue: {
+    fontSize: 22, fontWeight: 700, color: cyan, fontFamily: SG, lineHeight: 1,
+  },
+  statCardLabel: {
+    fontSize: 10, color: muted, fontFamily: SG,
+    textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 4,
+  },
+  statPill: {
+    fontSize: 12, padding: '4px 10px', borderRadius: 12,
+    background: s3, color: muted, fontFamily: IN,
+  },
+  agentGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))',
+    gap: 12,
+  },
   agentCard: {
-    display: 'flex', alignItems: 'center', gap: 10,
-    padding: '10px 14px', borderRadius: 10, border: '1px solid #2a2a4a',
-    background: '#1e1e32', minWidth: 150,
+    background: s1,
+    borderRadius: 10,
+    padding: '16px',
+    position: 'relative',
+    overflow: 'hidden',
   },
-  agentDot: { width: 10, height: 10, borderRadius: '50%', flexShrink: 0 },
-  agentName: { fontSize: 13, fontWeight: 600, color: '#e0e0e0' },
-  agentRole: { fontSize: 11, color: '#888' },
-  runtimeLimitNote: { fontSize: 11, color: '#ffd866', marginTop: 8 },
+  agentStatusDot: {
+    position: 'absolute', top: 12, right: 12,
+    width: 6, height: 6, borderRadius: '50%',
+  },
+  agentIcon: {
+    width: 36, height: 36, borderRadius: 8,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 16, fontWeight: 700, fontFamily: SG,
+    marginBottom: 10,
+  },
+  agentName: { fontSize: 13, fontWeight: 700, color: text, fontFamily: SG, marginBottom: 2 },
+  agentRole: { fontSize: 10, color: muted, textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: SG, marginBottom: 10 },
+  agentProgressTrack: {
+    height: 3, background: s4, borderRadius: 2, overflow: 'hidden',
+  },
+  agentProgressBar: {
+    height: '100%', borderRadius: 2, transition: 'width 0.5s ease',
+  },
+  runtimeLimitNote: { fontSize: 11, color: '#ffd866', marginTop: 10, fontFamily: IN },
   rootPromptBox: {
     fontSize: 12,
-    color: '#cfcfcf',
-    background: '#1e1e32',
-    border: '1px solid #2a2a4a',
+    color: text,
+    background: s1,
+    border: '1px solid rgba(120,220,232,0.1)',
     borderRadius: 8,
     padding: '10px 12px',
     whiteSpace: 'pre-wrap',
     lineHeight: 1.45,
     marginBottom: 10,
+    fontFamily: IN,
   },
   rootAgentsList: { display: 'flex', flexDirection: 'column', gap: 8 },
   rootAgentRow: {
     padding: '8px 10px',
     borderRadius: 8,
-    border: '1px solid #2a2a4a',
-    background: '#1e1e32',
+    background: s1,
+    border: '1px solid rgba(120,220,232,0.08)',
   },
-  rootAgentName: { fontSize: 12, fontWeight: 600, color: '#e0e0e0' },
-  rootAgentMeta: { fontSize: 11, color: '#888', marginTop: 2 },
+  rootAgentName: { fontSize: 12, fontWeight: 600, color: text, fontFamily: SG },
+  rootAgentMeta: { fontSize: 11, color: muted, marginTop: 2, fontFamily: IN },
   campaignGrid: { display: 'flex', flexDirection: 'column', gap: 8 },
   campaignRow: { display: 'flex', gap: 12, alignItems: 'flex-start' },
-  campaignLabel: { fontSize: 11, color: '#78dce8', minWidth: 130, flexShrink: 0, paddingTop: 1 },
-  campaignValue: { fontSize: 13, color: '#ccc', flex: 1 },
-  leadsList: { display: 'flex', flexDirection: 'column', gap: 8 },
+  campaignLabel: { fontSize: 11, color: cyan, minWidth: 130, flexShrink: 0, paddingTop: 1, fontFamily: SG },
+  campaignValue: { fontSize: 13, color: text, flex: 1, fontFamily: IN },
+  leadsList: { display: 'flex', flexDirection: 'column', gap: 0 },
   leadRow: {
-    display: 'flex', alignItems: 'flex-start', gap: 10,
-    padding: '10px 14px', borderRadius: 10, border: '1px solid #2a2a4a',
-    background: '#1e1e32',
+    display: 'flex', alignItems: 'flex-start', gap: 12,
+    padding: '12px 0',
   },
   leadDot: { width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 5 },
   leadInfo: { flex: 1, minWidth: 0 },
-  leadName: { fontSize: 13, fontWeight: 600, color: '#e0e0e0', marginBottom: 2 },
-  leadUrl: { fontSize: 11, color: '#888' },
-  leadDecissor: { fontSize: 11, color: '#78dce8', marginTop: 3 },
+  leadName: { fontSize: 13, fontWeight: 700, color: text, marginBottom: 2, fontFamily: SG },
+  leadUrl: { fontSize: 11, color: muted, fontFamily: IN },
+  leadDecissor: { fontSize: 11, color: cyan, marginTop: 3, fontFamily: IN },
   leadMeta: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 },
-  scoreBadge: { fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#2a3a2a', color: '#a9dc76' },
-  hitlBadge: { fontSize: 11 },
+  scoreBadge: {
+    fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+    background: 'rgba(120,220,232,0.1)', color: cyan, fontFamily: SG,
+  },
+  hitlBadge: { fontSize: 11, fontFamily: SG },
   sendEmailBtn: {
-    fontSize: 11, padding: '3px 8px', borderRadius: 8,
-    background: '#1a2a3a', border: '1px solid #2a4a6a',
-    color: '#78dce8', cursor: 'pointer',
+    fontSize: 11, padding: '3px 8px', borderRadius: 4,
+    background: 'rgba(120,220,232,0.08)', border: '1px solid rgba(120,220,232,0.2)',
+    color: cyan, cursor: 'pointer', fontFamily: SG,
   },
   sendEmailBtnSent: {
-    background: '#1a3a1a', border: '1px solid #2a5a2a',
-    color: '#a9dc76', cursor: 'default',
+    background: 'rgba(169,220,118,0.08)', border: '1px solid rgba(169,220,118,0.2)',
+    color: green, cursor: 'default',
   },
-  loading: { color: '#888', fontSize: 13 },
+  loading: { color: muted, fontSize: 13, fontFamily: IN },
   patternCard: {
-    background: '#1e1e32', border: '1px solid #2a2a4a', borderRadius: 8,
-    padding: '10px 12px',
+    background: s1, borderRadius: 10,
+    padding: '16px 18px',
   },
-  patternText: { fontSize: 13, color: '#e0e0e0', flex: 1, lineHeight: 1.4 },
+  patternText: { fontSize: 13, color: text, flex: 1, lineHeight: 1.4, fontFamily: IN },
 };

@@ -29,6 +29,7 @@ _SYSTEM_PROMPT_TEMPLATE = _PERSONALIDAD_PATH.read_text(encoding="utf-8")
 DEFAULT_CAMPAIGN = {
     "nombre_remitente": "Maximiliano Pulido",
     "empresa_remitente": "Isomorph",
+    "sector_propio_cliente": "",
     "industria_objetivo": "Logística y Transporte",
     "ciudad_objetivo": "Bogotá",
     "dolor_operativo": "gestión manual de rutas y despachos",
@@ -52,18 +53,87 @@ BLOCKED_DOMAINS = {
     "facebook.com", "instagram.com", "twitter.com", "x.com", "linkedin.com",
     "youtube.com", "wikipedia.org", "elempleo.com", "computrabajo.com",
     "reddit.com", "tripadvisor", "yelp.com", "google.com", "maps.google",
+    "bing.com", "web.archive.org",
 }
 
 LOW_QUALITY_DISCOVERY_DOMAINS = {
-    "rappi.com", "ubereats.com", "restaurantguru.com", "minube.com", "paginasamarillas.com.co",
-    "consultaamarillas.com", "opcionempleo.com.co", "tiendeo.com.co", "tiktok.com",
-    "yellowpages.ar", "carta.menu", "nexdu.com", "imigra.net", "wokiapp.com",
-    "archivoespana.com", "colombiaguide.co", "polomap.com", "fincasturisticasdelquindio.com",
+    # Delivery / food
+    "rappi.com", "ubereats.com", "restaurantguru.com", "carta.menu",
+    # Directories / classifieds
+    "paginasamarillas.com.co", "consultaamarillas.com", "yellowpages.ar",
+    "tiendeo.com.co", "nexdu.com", "polomap.com",
+    "infoisinfo.com.co", "latinoplaces.com", "co.latinoplaces.com",
+    "empresite.eleconomistaamerica.co", "eleconomistaamerica.co",
+    "enviotodo.com.co",
+    "kompass.com", "merco.info", "encolombia.com", "hospitales.com.co",
+    "enfermera.io", "clinica-web.com.ar",
+    # Real estate portals / classifieds (not prospectable companies)
+    "fincaraiz.com.co", "estrenarvivienda.com", "metrocuadrado.com",
+    "vivienda.com.co", "finca-raiz.com.co", "habi.co",
+    # Agency/vendor ranking directories (not prospectable companies)
+    "clutch.co", "sortlist.com", "goodfirms.co", "designrush.com",
+    "agenciasdemarketingdigital.com", "linkatomic.com",
+    # Jobs
+    "opcionempleo.com.co", "elempleo.com", "computrabajo.com",
+    "saludjobs.com", "bumeran.com.co", "indeed.com",
+    "empleocalihoy.com",
+    # News / media (not companies)
+    "elpais.com.co", "eltiempo.com", "semana.com", "portafolio.co",
+    "dinero.com", "larepublica.co", "altonivel.com.mx",
+    "monserratenoticias.co", "segurilatam.com",
+    # Tourism / city guides
+    "discoverbogota.city", "colombia.travel", "minube.com",
+    # Low-signal misc
+    "imigra.net", "wokiapp.com", "archivoespana.com",
+    "colombiaguide.co", "fincasturisticasdelquindio.com", "tiktok.com",
+    # Editorial / media / blogs about startups
+    "socialgeek.co", "nicoramos.co", "entorno.vc", "lastopdelatam.com",
+    "cidei.net", "tusdatos.co", "tiendanube.com",
+    # Ecosystem orgs (not prospectable companies)
+    "investinbogota.org", "ccb.org.co", "apps.co",
+    # Medical/health job boards and directories
+    "medicosdoc.com", "saludcolombia.com", "clinicasyhospitales.com.co",
+    # Job boards
+    "jooble.org", "mifuturoempleo.co",
+    # Blogs / low-signal
+    "blogspot.com", "blogger.com",
+    # Health system portals
+    "epsenlinea.com.co",
+    # Foreign hospital groups / directories (not Colombian)
+    "grupohla.com", "hcbhospitales.com", "achpm.es",
+    # Foreign/non-Colombian B2B directories
+    "adventuresincre.com",
+    # Detected in live scan
+    "pinterest.com", "ar.pinterest.com",      # social/ideas board
+    "correosexpress.es",                       # Spanish courier, not Colombian
+    "ccl.com.co",                              # Cámara Colombiana de la Logística (gremio, no empresa)
 }
 
+LOW_QUALITY_DOMAIN_SUFFIXES = (
+    ".gov.co", ".gov", ".edu.co", ".edu", ".org.co",
+)
+
+# Subdomains or paths that indicate a portal/service, not a company homepage
+LOW_QUALITY_SUBDOMAINS = (
+    "virtual.", "banca.", "banking.", "app.", "portal.",
+)
+
 LOW_QUALITY_PATH_MARKERS = (
-    "/restaurantes", "/restaurant", "/delivery", "/list", "/directorio", "/empleo",
+    # Generic noise
+    "/restaurantes", "/restaurant", "/delivery", "/directorio", "/empleo",
     "/discover", "/noticias/", "/catalogo", "/tiendas/", "/metro/", "/phone-",
+    # Blog / article paths
+    "/blog/", "/blog-detalle/", "/articulo", "/articulos/", "/post/", "/posts/",
+    "/emprendimiento/", "/informe-", "/ranking-", "/casos-de-exito",
+    "/trabajo/", "/busqueda/", "/directorio-empresas/",
+    "/oferta-de-empleo/", "/trabajo-empresas-", "/empleos/", "/vacantes/",
+    # "Top N" list articles
+    "/las-", "/los-", "/top-", "/mejores-", "/best-",
+    # Startup ecosystem editorial
+    "/startups-", "/startup-", "/ecosistema-",
+    # Vendor directories
+    "/agencias/", "/agencies/", "/marketing-online/", "/supply-chain-management/",
+    "/logistics/supply", "/co/logistics",
 )
 
 
@@ -75,13 +145,19 @@ def _is_low_quality_candidate(url: str, title: str = "") -> bool:
     path = (parsed.path or "").lower()
     title_l = (title or "").lower()
 
-    if any(host.endswith(d) for d in LOW_QUALITY_DISCOVERY_DOMAINS):
+    if any(host == d or host.endswith("." + d) for d in LOW_QUALITY_DISCOVERY_DOMAINS):
+        return True
+    if any(host.endswith(s) for s in LOW_QUALITY_DOMAIN_SUFFIXES):
+        return True
+    if any(host.startswith(sub) for sub in LOW_QUALITY_SUBDOMAINS):
         return True
     if any(marker in path for marker in LOW_QUALITY_PATH_MARKERS):
         return True
     if any(token in title_l for token in (
         "páginas amarillas", "consulta amarillas", "top restaurantes", "trabajo", "ofertas de empleo",
         "delivery", "domicilio", "directorio", "listado", "mejores restaurantes",
+        "las mejores", "los mejores", "top 10", "top 5", "más prometedoras",
+        "informe top", "ecosistema startup", "mejores startups",
     )):
         return True
     return False
@@ -89,50 +165,76 @@ def _is_low_quality_candidate(url: str, title: str = "") -> bool:
 
 # ── Discovery: Google Maps Places API ────────────────────────────────────────
 
+async def _gmaps_place_details(
+    client: httpx.AsyncClient, place_id: str, place_data: dict, api_key: str
+) -> dict:
+    """Fetch website + phone from old Place Details API for a single place_id."""
+    try:
+        resp = await client.get(
+            "https://maps.googleapis.com/maps/api/place/details/json",
+            params={
+                "place_id": place_id,
+                "fields": "name,website,formatted_phone_number,formatted_address",
+                "language": "es",
+                "key": api_key,
+            },
+        )
+        result = resp.json().get("result", {})
+        return {
+            "title": result.get("name") or place_data.get("name", ""),
+            "url": result.get("website", "").rstrip("/"),
+            "phone": result.get("formatted_phone_number", ""),
+            "address": result.get("formatted_address") or place_data.get("formatted_address", ""),
+            "rating": place_data.get("rating"),
+            "source": "google_maps",
+        }
+    except Exception:
+        return {}
+
+
 async def discover_companies_gmaps(
     industria: str, ciudad: str, max_results: int, api_key: str
 ) -> list[dict]:
     """
-    Use Google Maps Places Text Search (new API v1) to find real businesses.
+    Use Google Maps Places Text Search (legacy API) + Place Details to find real businesses.
     Returns list of {title, url, phone, address, rating}.
     """
-    endpoint = "https://places.googleapis.com/v1/places:searchText"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": api_key,
-        "X-Goog-FieldMask": (
-            "places.displayName,places.websiteUri,"
-            "places.nationalPhoneNumber,places.formattedAddress,places.rating"
-        ),
-    }
-    body = {
-        "textQuery": f"{industria} en {ciudad}",
-        "languageCode": "es",
-        "maxResultCount": min(max_results, 20),
-        "regionCode": "CO",
-    }
-
     results = []
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(endpoint, json=body, headers=headers)
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                params={
+                    "query": f"{industria} en {ciudad}",
+                    "language": "es",
+                    "region": "co",
+                    "key": api_key,
+                },
+            )
             data = resp.json()
-            print(f"[Google Maps] status={resp.status_code} places={len(data.get('places', []))} keys={list(data.keys())}")
+            api_status = data.get("status", "ERROR")
+            places = data.get("results", [])
+            print(f"[Google Maps] status={resp.status_code} api_status={api_status} places={len(places)}")
 
-            for place in data.get("places", []):
-                url = place.get("websiteUri", "")
+            if resp.status_code != 200 or api_status not in ("OK", "ZERO_RESULTS"):
+                return results
+
+            # Fetch details in parallel (website + phone per place)
+            detail_tasks = [
+                _gmaps_place_details(client, p["place_id"], p, api_key)
+                for p in places[:min(max_results, 20)]
+                if p.get("place_id")
+            ]
+            details = await asyncio.gather(*detail_tasks, return_exceptions=True)
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                url = detail.get("url", "")
                 if not url:
                     continue
                 if any(b in url.lower() for b in BLOCKED_DOMAINS):
                     continue
-                results.append({
-                    "title": place.get("displayName", {}).get("text", ""),
-                    "url": url.rstrip("/"),
-                    "phone": place.get("nationalPhoneNumber", ""),
-                    "address": place.get("formattedAddress", ""),
-                    "rating": place.get("rating"),
-                    "source": "google_maps",
-                })
+                results.append(detail)
     except Exception as e:
         print(f"[Google Maps error] {e}")
 
@@ -432,9 +534,16 @@ async def scrape_url(url: str, timeout: int = 12) -> str:
     html = ""
     last_error = "no response"
     candidates = build_candidates(url)
+    # Status codes where retrying with a different User-Agent is pointless
+    _NO_RETRY_CODES = {400, 401, 403, 404, 405, 410, 429, 451, 500, 502, 503, 504}
+    # Status codes that mean the whole domain is blocked — skip remaining candidates too
+    _HARD_BLOCK_CODES = {403, 429, 451}
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+            hard_blocked = False
             for candidate in candidates:
+                if hard_blocked:
+                    break
                 for headers in ua_profiles:
                     try:
                         resp = await client.get(candidate, headers=headers)
@@ -444,6 +553,10 @@ async def scrape_url(url: str, timeout: int = 12) -> str:
 
                     if resp.status_code >= 400:
                         last_error = f"{candidate}: HTTP {resp.status_code}"
+                        if resp.status_code in _HARD_BLOCK_CODES:
+                            hard_blocked = True
+                        if resp.status_code in _NO_RETRY_CODES:
+                            break  # don't try other UA profiles for this candidate
                         continue
 
                     html = resp.text or ""
@@ -458,91 +571,205 @@ async def scrape_url(url: str, timeout: int = 12) -> str:
         return f"[SCRAPING_ERROR: {last_error}]"
 
     soup = BeautifulSoup(html, "html.parser")
+
+    # ── Extract contact signals from raw HTML before stripping ────────────────
+    contact_emails: list[str] = []
+    contact_phones: list[str] = []
+
+    # mailto: links
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if href.startswith("mailto:"):
+            email = href[7:].split("?")[0].strip()
+            if email and email not in contact_emails:
+                contact_emails.append(email)
+        elif href.startswith("tel:"):
+            phone = re.sub(r"[^\d+]", "", href[4:])
+            if len(phone) >= 7 and phone not in contact_phones:
+                contact_phones.append(phone)
+
+    # Regex scan of full HTML for emails and Colombian phones
+    html_emails = re.findall(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", html)
+    for e in html_emails:
+        if e not in contact_emails and not e.endswith((".png", ".jpg", ".gif", ".css", ".js")):
+            contact_emails.append(e)
+    html_phones = re.findall(r"(?:\+57[\s\-]?)?(?:3\d{2}[\s\-]?\d{3}[\s\-]?\d{4}|[1-9]\d{6,7})", html)
+    for p in html_phones:
+        cleaned = re.sub(r"[\s\-]", "", p)
+        if len(cleaned) >= 7 and cleaned not in contact_phones:
+            contact_phones.append(cleaned)
+
+    contact_section = ""
+    if contact_emails or contact_phones:
+        parts = []
+        if contact_emails:
+            parts.append("Emails encontrados: " + ", ".join(contact_emails[:5]))
+        if contact_phones:
+            parts.append("Teléfonos encontrados: " + ", ".join(contact_phones[:5]))
+        contact_section = "[CONTACTOS]\n" + "\n".join(parts) + "\n\n"
+    # ──────────────────────────────────────────────────────────────────────────
+
     for tag in soup(["script", "style", "nav", "footer", "header",
                      "aside", "form", "noscript", "svg", "img"]):
         tag.decompose()
     text = soup.get_text(separator=" ", strip=True)
     text = re.sub(r"\s{2,}", " ", text)
-    return text[:8000]
+    return (contact_section + text)[:8000]
 
 
 # ── Prompt building ───────────────────────────────────────────────────────────
+
+_CONTENT_FOOTER = """
+
+=======================================================================
+EMPRESA A ANALIZAR: {{input_empresa_url}}
+CONTENIDO DEL SITIO WEB:
+{{contenido_scrapeado}}
+=======================================================================
+
+⚠ PARÁMETROS ACTIVOS DE CAMPAÑA (tienen prioridad sobre cualquier criterio anterior):
+- Industria objetivo: {{industria_objetivo}} → es_sector_correcto=true SOLO si la empresa opera en esta industria o equivalente cercano
+- Sector propio del cliente (excluir): {{sector_propio_cliente}} → es_competidor_directo=true si la empresa VENDE este tipo de producto/servicio como negocio principal; false si lo USA como herramienta
+- Ciudad objetivo: {{ciudad_objetivo}}
+
+Devuelve ÚNICAMENTE un objeto JSON válido, sin bloques de código ni texto adicional:
+{
+  "analisis_previo": "1-2 líneas sobre a qué se dedica la empresa",
+  "nombre_empresa": "nombre extraído o null",
+  "es_sector_correcto": true,
+  "razon_sector": "por qué encaja o no en {{industria_objetivo}}",
+  "es_competidor_directo": false,
+  "tamano_estimado": "micro|pequeña|mediana|grande|desconocido",
+  "sintomas_de_dolor": true,
+  "evidencia_dolor": "indicador concreto o null",
+  "decisor": {"nombre": null, "cargo": null, "email": null},
+  "en_ciudad_objetivo": true,
+  "datos_extra": null
+}"""
+
 
 def _build_prompt(url: str, scraped: str, campaign: dict, override_template: str = "") -> str:
     variables = {**DEFAULT_CAMPAIGN, **campaign,
                  "input_empresa_url": url,
                  "contenido_scrapeado": scraped}
-    prompt = override_template if override_template.strip() else _SYSTEM_PROMPT_TEMPLATE
+    if override_template.strip():
+        # If the custom template doesn't include the content placeholder, append a standard footer
+        template = override_template
+        if "{{contenido_scrapeado}}" not in template:
+            template = template + _CONTENT_FOOTER
+    else:
+        template = _SYSTEM_PROMPT_TEMPLATE
     for key, value in variables.items():
-        prompt = prompt.replace("{{" + key + "}}", str(value))
-    return prompt
+        template = template.replace("{{" + key + "}}", str(value))
+    return template
 
 
 # ── Agent prompts ─────────────────────────────────────────────────────────────
 
 def _analista_prompt(url: str, scraped: str, c: dict) -> str:
-    return f"""Eres un analista Senior de inteligencia comercial B2B. Tu objetivo es auditar el contenido extraído del sitio web de una empresa y calificar si es un prospecto válido para nuestra campaña de ventas.
+    sector_propio = c.get("sector_propio_cliente", "").strip()
+    competitor_context = (
+        f"\n- Nuestro sector (NO PROSPECTAR — son competidores): {sector_propio}"
+        f"\n  REGLA CRÍTICA: La pregunta clave es ¿esta empresa VENDE el mismo tipo de producto/servicio que nosotros, compitiendo por los mismos clientes? Si sí → es_competidor_directo=true. Si la empresa es un CLIENTE POTENCIAL que usa o necesita nuestros servicios → no es competidor. Busca señales en el contenido aunque no usen exactamente las mismas palabras (ej: si nuestro sector es 'seguros' y la empresa es corredora de pólizas → competidor; si nuestro sector es 'desarrollo de software' y la empresa vende plataformas SaaS → competidor)."
+        if sector_propio else ""
+    )
+    competitor_field = (
+        f'\n  "es_competidor_directo": true si la empresa VENDE (como negocio principal) el mismo tipo de producto/servicio que "{sector_propio}", compitiendo por los mismos clientes; poner también es_sector_correcto=false. false si la empresa es un cliente potencial que usa/necesita nuestros servicios,'
+        if sector_propio else ""
+    )
+    return f"""Eres un analista Senior de inteligencia comercial B2B para el mercado colombiano. \
+Tu único objetivo es determinar si una empresa es un prospecto calificado y, si lo es, extraer los datos necesarios para iniciar contacto comercial.
 
-PERFIL DE LA CAMPAÑA:
-- Industria Objetivo: {c.get('industria_objetivo')} (INTERPRETA CON AMPLITUD: busca sinónimos, sub-nichos o modelos de negocio equivalentes. Ej: si buscamos "clínicas", un "centro odontológico" es válido).
+═══════════════════════════════════════
+PERFIL DE LA CAMPAÑA
+═══════════════════════════════════════
+- Industria Objetivo: {c.get('industria_objetivo')}
+  INTERPRETA CON AMPLITUD — acepta sinónimos, sub-nichos y modelos de negocio equivalentes.
+  Ej: si buscamos "clínicas", un centro odontológico, IPS o centro de medicina estética es válido.
+  Si buscamos "logística", una transportadora, operador 3PL, agencia de carga o empresa de última milla es válida.{competitor_context}
 - Dolor que resolvemos: {c.get('dolor_operativo')}
 - Nuestra Solución: {c.get('solucion_ofrecida')}
-- Señales Tecnológicas / Presupuesto: uso de {c.get('software_clave')} o equivalentes.
-- Decisores Clave: {c.get('jerarquia_decisores')}
-- Ciudad/Región: {c.get('ciudad_objetivo')}
+- Señales de presupuesto / tech: {c.get('software_clave')} o equivalentes
+- Decisores clave a buscar: {c.get('jerarquia_decisores')}
+- Ciudad / Región objetivo: {c.get('ciudad_objetivo')}
 
-REGLAS ESTRICTAS DE EXTRACCIÓN:
-1. NO INVENTES DATOS. Si un nombre, email, o cargo no está explícitamente en el texto, el valor debe ser estrictamente null.
-2. El dolor operativo rara vez se menciona explícitamente. Busca "síntomas" u oportunidades de mejora relacionadas con el dolor que resolvemos.
-3. El texto proporcionado es un scrape en bruto, puede contener ruido o estar cortado. Haz tu mejor esfuerzo con la información disponible.
+═══════════════════════════════════════
+REGLAS DE EXTRACCIÓN
+═══════════════════════════════════════
+1. NO INVENTES DATOS. Nombre, email y cargo deben estar explícitamente en el texto — si no están, null.
+2. El dolor rara vez se menciona explícitamente. Busca SÍNTOMAS: menciones de procesos manuales, crecimiento acelerado sin tecnología, quejas implícitas, escala que implica el problema.
+3. El scraping puede estar incompleto o cortado — haz tu mejor esfuerzo con lo disponible.
 
+CONTENIDO INSUFICIENTE: Si el scraping tiene < 200 palabras útiles o es solo menú de navegación sin contexto de negocio → tamano_estimado="desconocido", sintomas_de_dolor=false, razon_sector="contenido insuficiente para determinar".
+
+CALIBRACIÓN DE TAMAÑO (Colombia):
+- micro: emprendimiento, negocio familiar, freelancer, solo WhatsApp como contacto, sin sedes mencionadas
+- pequeña: <50 empleados, una sede, estructura comercial básica
+- mediana: 50-200 empleados, varias sedes o cobertura regional, usa software como Siigo/World Office/sectorial
+- grande: >200 empleados, cobertura nacional/internacional, menciona SAP/Oracle/tecnología enterprise o gran infraestructura
+
+GEOGRAFÍA: en_ciudad_objetivo=true si la empresa OPERA en la región objetivo, aunque su sede principal esté en otra ciudad. false si la empresa es claramente de otro país (Argentina, España, México) sin operaciones en Colombia.
+
+CALIBRACIÓN DE DOLOR (sintomas_de_dolor):
+- true CON evidencia real: menciona proceso manual, problema específico, busca solución, tiene escala que implica el dolor
+- true SIN evidencia directa: tamaño y sector indican que probablemente sufre el dolor, aunque no lo mencione
+- false: empresa demasiado pequeña, sector incorrecto, o contenido insuficiente para inferir
+
+═══════════════════════════════════════
 EMPRESA A ANALIZAR: {url}
 CONTENIDO DEL SITIO WEB:
 {scraped[:6000]}
+═══════════════════════════════════════
 
-Devuelve ÚNICAMENTE un objeto JSON válido, sin bloques de código (```json), sin markdown y sin texto previo o posterior. Usa esta estructura exacta:
+Devuelve ÚNICAMENTE un objeto JSON válido, sin bloques de código, sin markdown y sin texto adicional:
 {{
-  "analisis_previo": "1-2 líneas razonando sobre a qué se dedica la empresa y si hay indicios de que sufren el dolor operativo",
+  "analisis_previo": "2-3 líneas: a qué se dedica la empresa, escala estimada, y si hay señales del dolor que resolvemos",
   "nombre_empresa": "nombre real extraído, o null",
   "es_sector_correcto": true,
-  "razon_sector": "justificación breve de por qué encaja o no en la industria objetivo",
-  "tech_stack": ["lista", "de", "software", "detectado"] o null,
+  "razon_sector": "por qué encaja en la industria objetivo — o por qué no",{competitor_field}
+  "tech_stack": ["software detectado"] o null,
   "tamano_estimado": "micro|pequeña|mediana|grande|desconocido",
-  "razon_tamano": "evidencia concreta (ej: 'menciona 3 sedes', 'lista 50 empleados') o null",
+  "razon_tamano": "evidencia concreta: 'menciona 3 sedes', '50+ empleados en equipo', 'cobertura nacional' — o null",
   "sintomas_de_dolor": true,
-  "evidencia_dolor": "indicador encontrado en la web que sugiere que necesitan nuestra solución, o null",
+  "evidencia_dolor": "cita o paráfrasis del indicador que sugiere el dolor — o null si no hay",
   "decisor": {{
-    "nombre": "nombre real o null",
-    "cargo": "cargo extraído o null",
-    "email": "email encontrado o null"
+    "nombre": "nombre real extraído o null",
+    "cargo": "cargo exacto extraído o null",
+    "email": "email encontrado o null",
+    "telefono": "teléfono del decisor extraído del sitio o null"
   }},
+  "nit": "NIT de la empresa si aparece en el sitio, sin puntos ni guion verificacion, o null",
   "en_ciudad_objetivo": true,
-  "datos_extra": "sedes, años de experiencia, clientes mencionados, o null"
+  "datos_extra": "sedes adicionales, años en el mercado, clientes mencionados, certificaciones — o null"
 }}"""
 
 def _motor_scoring_prompt(analysis: dict, c: dict) -> str:
     import json as _json
     nombre = c.get('nombre_remitente', '')
     empresa = c.get('empresa_remitente', '')
-    return f"""Eres el Motor de Scoring y Redactor Comercial B2B. Recibes el análisis de una empresa y debes:
-1. Calcular el score de calificación
-2. Si aprueba, redactar un correo de prospección que realmente convierta
+    return f"""Eres el Motor de Scoring y Redactor Comercial B2B para el mercado colombiano. \
+Recibes el análisis de una empresa y debes:
+1. Calcular el score de calificación con criterio comercial real
+2. Si aprueba, redactar un correo de prospección que la persona realmente abra y responda
 
 ═══════════════════════════════════════
-REGLAS DE SCORING (máx 100 pts):
-- B2B válido: +20 si es_sector_correcto = true
-- Tensión operativa: +30 si dolor_detectado = true con evidencia real, +15 si solo probable
-- Escala y presupuesto: +30 grande/mediana con tech, +20 mediana sin tech, 0 micro
-- Poder de decisión: +10 email nominal, +5 email genérico, 0 sin contacto
-- Bono geográfico: +10 si en_ciudad_objetivo = true
-
-VETOS AUTOMÁTICOS (rechazo inmediato):
-- tamano = "micro" → MICRO_BUSINESS_LOW_BUDGET
-- es_sector_correcto = false → WRONG_SECTOR_OR_NO_DATA
-- Score < 60 → LOW_SCORE_QUALIFICATION
+SCORING (máx 100 pts)
 ═══════════════════════════════════════
+- Sector válido:          +20 si es_sector_correcto = true
+- Tensión operativa:      +30 con evidencia concreta de dolor | +15 si es probable por escala
+- Escala y presupuesto:   +30 grande/mediana con tech stack | +20 mediana sin tech | +0 micro o pequeña sin señales
+- Poder de decisión:      +10 email nominal de decisor | +5 email genérico | +0 sin contacto
+- Bono geográfico:        +10 si en_ciudad_objetivo = true
 
-CAMPAÑA:
+VETOS AUTOMÁTICOS (en orden de prioridad — no calcules score si aplica):
+- es_competidor_directo = true  → KILL_DIRECT_COMPETITOR
+- tamano = "micro"              → MICRO_BUSINESS_LOW_BUDGET
+- es_sector_correcto = false    → WRONG_SECTOR_OR_NO_DATA
+- Score < 60                    → LOW_SCORE_QUALIFICATION
+
+═══════════════════════════════════════
+CONTEXTO DE CAMPAÑA
+═══════════════════════════════════════
 - Vendemos: {c.get('solucion_ofrecida')}
 - A quién: {c.get('industria_objetivo')} en {c.get('ciudad_objetivo')}
 - El dolor: {c.get('dolor_operativo')}
@@ -552,21 +779,38 @@ ANÁLISIS DEL ANALISTA B2B:
 {_json.dumps(analysis, ensure_ascii=False, indent=2)}
 
 ═══════════════════════════════════════
-INSTRUCCIONES DE CORREO (solo si aprueba):
-- Abre con una observación ESPECÍFICA del sitio (usa datos_extra o evidencia_dolor del análisis)
-- Conecta esa observación con el dolor operativo de la campaña
-- Explica la solución en 1 oración concreta, no genérica
-- Cierra con una pregunta de 10 minutos
-- Tono: directo, humano, sin bullshit corporativo
-- Longitud: 4-5 párrafos cortos
+INSTRUCCIONES DE CORREO (solo si aprueba el scoring)
+═══════════════════════════════════════
+OPENER — Empieza con UNA observación específica sobre LA EMPRESA, no sobre ti.
+  PROHIBIDO comenzar con: "Espero que estés bien", "Mi nombre es", "Le escribo para presentarme",
+  "Quisiera presentarte", "Soy X de Y", "Me permito contactarte", "Hola, soy".
+  CORRECTO: "Vi que [empresa] maneja X rutas de distribución / tiene Y sedes / trabaja con Z clientes..."
+  Conecta la observación con una CONSECUENCIA de negocio concreta: "eso usualmente implica...", "lo que significa que..."
+
+PÁRRAFO 2 — El dolor específico que genera ESA situación. En términos de plata, tiempo perdido o riesgo operativo. Nada abstracto.
+
+PÁRRAFO 3 — Cómo lo resolvemos (1 oración máximo, sin jerga: nada de "sinergias", "potenciar", "soluciones integrales", "ecosistema").
+
+CIERRE — Una sola pregunta corta y sin presión. Propón una conversación de 15 min en la que tú llevas algo útil, no solo "quiero presentarme".
+  Ejemplo bueno: "¿Tiene sentido hablar 15 min esta semana para mostrarte cómo lo estamos haciendo con [empresa-similar]?"
+  Ejemplo malo: "¿Estarías dispuesto a considerar una reunión para explorar posibles sinergias?"
+
+ASUNTO — Específico, no genérico. El receptor debe entender de qué trata sin abrir el correo.
+  PROHIBIDO: "Una idea para [empresa]", "Oportunidad de mejora", "Optimización de procesos".
+  CORRECTO: "X rutas manuales → eso tiene un costo escondido", "[empresa]: cómo [cliente-similar] redujo el tiempo de despacho 40%"
+
+REGLAS GENERALES:
+- Tono: directo, conversacional, como alguien que sabe del tema — no corporativo, no robótico
+- Longitud: 4 párrafos cortos. Sin saludo largo. Sin firma corporativa extendida.
 - Firma: {nombre} / {empresa}
+- Si hay nombre del decisor en el análisis, úsalo en el saludo de apertura
 ═══════════════════════════════════════
 
 Si RECHAZADO → responde SOLO con este JSON exacto:
 {{"system_state": "REJECTED_BY_AI", "empresa": "nombre", "score": 0, "motivo_descalificacion": "CODIGO", "evidencia_encontrada": "frase corta específica", "resumen_empresa": "a qué se dedica en 1 línea"}}
 
 Si APROBADO → responde SOLO con este JSON exacto:
-{{"system_state": "SUCCESS_READY_FOR_REVIEW", "empresa": "nombre", "score": 85, "es_visitable_zona_objetivo": true, "decisor": {{"nombre": "nombre o null", "cargo": "cargo", "email": "email o null"}}, "datos_tecnicos": {{"tech_stack": "software detectado o null", "perfil": "A_REZAGO o B_FRICCION"}}, "borradores": {{"email_asuntos": ["Asunto directo y específico 1", "Asunto alternativo 2"], "email_cuerpo": "Correo completo. Usa \\n\\n entre párrafos."}}}}
+{{"system_state": "SUCCESS_READY_FOR_REVIEW", "empresa": "nombre", "score": 85, "es_visitable_zona_objetivo": true, "decisor": {{"nombre": "nombre o null", "cargo": "cargo", "email": "email o null", "telefono": "telefono del decisor extraído o null"}}, "datos_tecnicos": {{"tech_stack": "software detectado o null", "perfil": "A_REZAGO o B_FRICCION"}}, "borradores": {{"email_asuntos": ["Asunto directo y específico 1", "Asunto alternativo 2"], "email_cuerpo": "Correo completo. Usa \\n\\n entre párrafos."}}}}
 
 SOLO JSON. Cero texto antes o después."""
 
@@ -588,7 +832,7 @@ def _parse_json_safe(raw: str) -> dict | None:
             return None
 
 
-def _normalize_openai_model_name(model_name: str, fallback: str = "gpt-4o-mini") -> str:
+def _normalize_openai_model_name(model_name: str, fallback: str = "gpt-5.4-2026-03-05") -> str:
     value = str(model_name or "").strip()
     if not value:
         return fallback
@@ -752,7 +996,7 @@ async def analyze_company(
 
     # ── Stage 2: Analista B2B ─────────────────────────────────────────────────
     await stage("analista", f"Analizando perfil: {company['title'][:30]}...")
-    analista_model = _normalize_openai_model_name(merged.get("llm_analista", ""), "gpt-4o-mini")
+    analista_model = _normalize_openai_model_name(merged.get("llm_analista", ""), "gpt-5.4-2026-03-05")
     if personality_prompt and personality_prompt.strip():
         # Use client-specific analyst prompt from Queen onboarding
         analista_content = _build_prompt(url, scraped, merged, override_template=personality_prompt)
@@ -763,7 +1007,7 @@ async def analyze_company(
             model=analista_model,
             messages=[{"role": "user", "content": analista_content}],
             temperature=0.15,
-            max_tokens=600,
+            extra_body={"max_completion_tokens": 1200},
         )
         analysis = _parse_json_safe(r1.choices[0].message.content or "")
         if not analysis:
@@ -778,13 +1022,13 @@ async def analyze_company(
 
     # ── Stage 3: Motor de Scoring + Redactor ──────────────────────────────────
     await stage("redactor", f"Evaluando y calificando: {nombre[:30]}...")
-    redactor_model = _normalize_openai_model_name(merged.get("llm_redactor", ""), "gpt-4o-mini")
+    redactor_model = _normalize_openai_model_name(merged.get("llm_redactor", ""), "gpt-5.4-2026-03-05")
     try:
         r2 = await client.chat.completions.create(
             model=redactor_model,
             messages=[{"role": "user", "content": _motor_scoring_prompt(analysis, merged)}],
             temperature=0.15,
-            max_tokens=1200,
+            extra_body={"max_completion_tokens": 1200},
         )
         result_json = _parse_json_safe(r2.choices[0].message.content or "")
         if not result_json:
@@ -905,6 +1149,11 @@ async def run_prospect(
             result["index"] = i
             result["total"] = len(companies)
             completed += 1
+
+            # Silently drop — don't save or broadcast to the user
+            motivo = (result.get("json_payload") or {}).get("motivo_descalificacion", "")
+            if motivo in ("SCRAPING_BLOCKED", "KILL_DIRECT_COMPETITOR"):
+                return result
 
             # Persist FIRST — include lead_id in WebSocket message
             if save_lead and run_id:

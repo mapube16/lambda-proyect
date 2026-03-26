@@ -238,7 +238,7 @@ class HiveOrchestrator:
             
             try:
                 response = self.client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-5.4-2026-03-05",
                     messages=conversation,
                     tools=self.default_tools,
                     tool_choice="auto"

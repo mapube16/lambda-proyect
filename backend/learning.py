@@ -150,13 +150,13 @@ async def detect_patterns(user_id: str, openai_api_key: str) -> list[dict]:
     client = AsyncOpenAI(api_key=openai_api_key)
     try:
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-2026-03-05",
             messages=[
                 {"role": "system", "content": PATTERNS_SYSTEM},
                 {"role": "user", "content": f"Leads aprobados:\n{context}"},
             ],
             temperature=0.3,
-            max_tokens=500,
+            extra_body={"max_completion_tokens": 500},
             response_format={"type": "json_object"},
         )
         raw = response.choices[0].message.content or "{}"

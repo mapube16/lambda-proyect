@@ -26,9 +26,22 @@ const STATE_LABELS: Record<string, { label: string; color: string }> = {
   error:    { label: 'Error',      color: '#ff6188' },
 };
 
+const CAMPAIGN_LABELS: Record<string, string> = {
+  nombre_remitente:      'Remitente',
+  empresa_remitente:     'Empresa',
+  sector_propio_cliente: 'Nuestro sector (excluir competidores)',
+  industria_objetivo:    'Industria objetivo',
+  ciudad_objetivo:       'Ciudad',
+  dolor_operativo:       'Dolor operativo',
+  solucion_ofrecida:     'Solución ofrecida',
+  software_clave:        'Software clave',
+  jerarquia_decisores:   'Jerarquía de decisores',
+};
+
 const DEFAULT_CAMPAIGN = {
   nombre_remitente: 'Maximiliano Pulido',
-  empresa_remitente: 'Isomorph',
+  empresa_remitente: 'Lambda',
+  sector_propio_cliente: 'tecnología, software, inteligencia artificial',
   industria_objetivo: 'Logística y Transporte',
   ciudad_objetivo: 'Bogotá',
   dolor_operativo: 'gestión manual de rutas y despachos',
@@ -145,11 +158,11 @@ function WhyCandidateBlock({ payload, status }: {
 }
 
 const wb: Record<string, React.CSSProperties> = {
-  container: { background: '#131326', borderRadius: 6, padding: '8px 10px', marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 },
-  title: { color: '#ab9df2', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 },
+  container: { background: '#12121d', borderRadius: 7, padding: '10px 12px', marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5, border: '1px solid rgba(62,73,74,0.2)' },
+  title: { color: '#ab9df2', fontSize: 10, fontWeight: 700, fontFamily: "'Space Grotesk',system-ui,sans-serif", textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 },
   factor: { display: 'flex', alignItems: 'center', gap: 6 },
-  rejectReason: { color: '#ff6188', fontWeight: 600, fontSize: 13 },
-  evidence: { color: '#888', fontSize: 12, fontStyle: 'italic', marginTop: 2 },
+  rejectReason: { color: '#ff6188', fontWeight: 700, fontSize: 13 },
+  evidence: { color: '#8a8a9a', fontSize: 12, fontStyle: 'italic', marginTop: 2 },
 };
 
 function LeadCard({ lead, onApprove, onDiscard }: {
@@ -462,15 +475,20 @@ function CampaignChat({ onCampaignReady, resetKey }: {
 const cc: Record<string, React.CSSProperties> = {
   startBox: {
     display: 'flex', flexDirection: 'column', alignItems: 'center',
-    gap: 12, padding: '24px 16px', textAlign: 'center',
+    gap: 16, padding: '32px 20px', textAlign: 'center',
   },
-  startIcon: { fontSize: 40 },
-  startTitle: { color: '#fff', fontWeight: 700, fontSize: 15 },
-  startDesc: { color: '#888', fontSize: 13, lineHeight: 1.5 },
+  startIcon: { fontSize: 36, lineHeight: '1' },
+  startTitle: {
+    color: '#e3e0f1', fontWeight: 700, fontSize: 16,
+    fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: '-0.02em',
+  },
+  startDesc: { color: 'rgba(227,224,241,0.45)', fontSize: 13, lineHeight: 1.6, maxWidth: 280 },
   startBtn: {
-    padding: '10px 24px', border: 'none', borderRadius: 8,
-    background: 'linear-gradient(135deg, #7c3aed, #06b6d4)',
-    color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer',
+    padding: '10px 28px', border: 'none', borderRadius: 6,
+    background: 'linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%)',
+    color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: '0.02em',
+    boxShadow: '0 4px 20px rgba(120,220,232,0.15)',
   },
   container: { display: 'flex', flexDirection: 'column', height: 320, gap: 8 },
   messages: {
@@ -478,19 +496,21 @@ const cc: Record<string, React.CSSProperties> = {
     flexDirection: 'column', gap: 8, padding: '4px 0',
   },
   bubble: {
-    maxWidth: '85%', padding: '8px 12px', borderRadius: 10,
+    maxWidth: '85%', padding: '9px 13px', borderRadius: 10,
     fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap',
   },
-  bubbleAI: { background: '#363650', color: '#e5e5e5', alignSelf: 'flex-start' },
-  bubbleUser: { background: '#7c3aed', color: '#fff', alignSelf: 'flex-end' },
+  bubbleAI: { background: '#22212e', color: '#e3e0f1', alignSelf: 'flex-start' },
+  bubbleUser: { background: 'linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%)', color: '#fff', alignSelf: 'flex-end' },
   inputRow: { display: 'flex', gap: 6 },
   input: {
-    flex: 1, padding: '8px 12px', border: 'none', borderRadius: 8,
-    background: '#363650', color: '#fff', fontSize: 13,
+    flex: 1, padding: '9px 13px', border: 'none',
+    borderBottom: '1px solid rgba(120,220,232,0.25)',
+    background: '#1b1a26', color: '#e3e0f1', fontSize: 13, borderRadius: 6, outline: 'none',
   },
   sendBtn: {
-    padding: '8px 14px', border: 'none', borderRadius: 8,
-    background: '#7c3aed', color: '#fff', cursor: 'pointer', fontSize: 14,
+    padding: '9px 15px', border: 'none', borderRadius: 6,
+    background: 'linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%)',
+    color: '#fff', cursor: 'pointer', fontSize: 14,
   },
 };
 
@@ -518,13 +538,35 @@ const INTENT_LABELS: Record<string, string> = {
 function LeadsChat() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [intents, setIntents] = useState<Record<number, ChatIntent>>({});
+  const [applied, setApplied] = useState<Record<number, boolean>>({});
+  const [applying, setApplying] = useState<Record<number, boolean>>({});
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const { setActiveCampaign } = useOfficeStore();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const applyIntent = async (idx: number, intent: ChatIntent) => {
+    setApplying(prev => ({ ...prev, [idx]: true }));
+    try {
+      const token = useOfficeStore.getState().authToken;
+      const res = await fetch(`${API_URL}/api/campaign/apply-intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ intent_type: intent.type, payload: intent.payload }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.campaign) setActiveCampaign(data.campaign);
+        setApplied(prev => ({ ...prev, [idx]: true }));
+      }
+    } finally {
+      setApplying(prev => ({ ...prev, [idx]: false }));
+    }
+  };
 
   const send = async (text: string) => {
     if (!text.trim() || loading) return;
@@ -576,9 +618,21 @@ function LeadsChat() {
             </div>
             {intents[i] && (
               <div style={{ ...lc.intentBadge, borderColor: INTENT_COLORS[intents[i].type] || '#888' }}>
-                <span style={{ color: INTENT_COLORS[intents[i].type], fontSize: 11 }}>
-                  {INTENT_LABELS[intents[i].type] || intents[i].type}
-                </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: INTENT_COLORS[intents[i].type], fontSize: 11 }}>
+                    {INTENT_LABELS[intents[i].type] || intents[i].type}
+                  </span>
+                  {!applied[i] && intents[i].proposal && intents[i].type !== 'campaign_feedback' && intents[i].type !== 'clone_lead' && (
+                    <button
+                      style={{ ...lc.applyBtn, opacity: applying[i] ? 0.5 : 1 }}
+                      disabled={!!applying[i]}
+                      onClick={() => applyIntent(i, intents[i])}
+                    >
+                      {applying[i] ? '...' : 'Aplicar ✓'}
+                    </button>
+                  )}
+                  {applied[i] && <span style={{ color: '#a9dc76', fontSize: 11 }}>✓ Aplicado</span>}
+                </div>
                 {intents[i].proposal && (
                   <div style={lc.proposal}>{intents[i].proposal}</div>
                 )}
@@ -607,32 +661,39 @@ function LeadsChat() {
 const lc: Record<string, React.CSSProperties> = {
   container: { display: 'flex', flexDirection: 'column', height: '100%', gap: 8 },
   intro: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px' },
-  introText: { color: '#888', fontSize: 12 },
+  introText: { color: 'rgba(227,224,241,0.4)', fontSize: 12 },
   messages: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 },
   suggestions: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 0' },
   suggestion: {
-    padding: '7px 10px', background: '#1e1e35', border: '1px solid #2a2a4e',
-    borderRadius: 7, color: '#888', cursor: 'pointer', fontSize: 12, textAlign: 'left',
+    padding: '8px 12px', background: '#1b1a26', border: 'none',
+    borderRadius: 7, color: 'rgba(227,224,241,0.5)', cursor: 'pointer', fontSize: 12, textAlign: 'left',
+    transition: 'background 0.15s',
   },
   bubble: {
-    maxWidth: '90%', padding: '8px 11px', borderRadius: 9,
+    maxWidth: '90%', padding: '9px 12px', borderRadius: 9,
     fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap',
   },
-  bubbleAI: { background: '#363650', color: '#e5e5e5', alignSelf: 'flex-start' },
-  bubbleUser: { background: '#7c3aed', color: '#fff', alignSelf: 'flex-end' },
+  bubbleAI: { background: '#22212e', color: '#e3e0f1', alignSelf: 'flex-start' },
+  bubbleUser: { background: 'linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%)', color: '#fff', alignSelf: 'flex-end' },
   intentBadge: {
-    background: '#131326', borderRadius: 6, padding: '5px 9px',
+    background: '#12121d', borderRadius: 6, padding: '6px 10px',
     border: '1px solid', marginTop: 3, maxWidth: '90%',
   },
-  proposal: { color: '#ccc', fontSize: 11, marginTop: 4 },
+  proposal: { color: 'rgba(227,224,241,0.5)', fontSize: 11, marginTop: 4 },
+  applyBtn: {
+    padding: '3px 9px', border: 'none', borderRadius: 4,
+    background: 'rgba(169,220,118,0.1)', color: '#a9dc76', cursor: 'pointer', fontSize: 11,
+  },
   inputRow: { display: 'flex', gap: 6 },
   input: {
-    flex: 1, padding: '8px 11px', border: 'none', borderRadius: 7,
-    background: '#363650', color: '#fff', fontSize: 13,
+    flex: 1, padding: '9px 12px', border: 'none',
+    borderBottom: '1px solid rgba(120,220,232,0.25)',
+    background: '#1b1a26', color: '#e3e0f1', fontSize: 13, borderRadius: 6, outline: 'none',
   },
   sendBtn: {
-    padding: '8px 13px', border: 'none', borderRadius: 7,
-    background: '#7c3aed', color: '#fff', cursor: 'pointer', fontSize: 13,
+    padding: '9px 14px', border: 'none', borderRadius: 6,
+    background: 'linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%)',
+    color: '#fff', cursor: 'pointer', fontSize: 13,
   },
 };
 
@@ -655,11 +716,74 @@ function getSemanticWaitingText(agentName: string, checkpointCount: number): str
   return 'Listo';
 }
 
+// ── Agent Log Modal ────────────────────────────────────────────────────────────
+
+const ROLE_TO_LOG_KEY: Record<string, string> = {
+  researcher: 'buscador',
+  planner:    'buscador',
+  reviewer:   'analista',
+  writer:     'redactor',
+};
+
+const LOG_KEY_LABELS: Record<string, string> = {
+  buscador: 'Buscador — Decisiones de Discovery',
+  analista: 'Analista B2B — Decisiones por Empresa',
+  redactor: 'Redactor — Scoring & Emails',
+};
+
+function AgentLogModal({ logKey, lines, onClose }: {
+  logKey: string; lines: string[]; onClose: () => void;
+}) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 2000, padding: 16,
+    }} onClick={onClose}>
+      <div style={{
+        background: '#1e1e2e', border: '1px solid #363650',
+        borderRadius: 12, padding: 20, maxWidth: 560, width: '100%',
+        maxHeight: '80vh', display: 'flex', flexDirection: 'column', gap: 12,
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: '#78dce8', fontWeight: 700, fontSize: 13 }}>
+            {LOG_KEY_LABELS[logKey] || logKey}
+          </span>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', color: '#888',
+            cursor: 'pointer', fontSize: 16, lineHeight: 1,
+          }}>✕</button>
+        </div>
+        <div style={{
+          overflowY: 'auto', flex: 1,
+          fontFamily: 'monospace', fontSize: 12, color: '#ccc', lineHeight: 1.7,
+        }}>
+          {lines.length === 0
+            ? <span style={{ color: '#555' }}>Sin datos aún — ejecuta una campaña primero.</span>
+            : lines.map((line, i) => {
+                const isApproved = line.startsWith('APROBADO');
+                const isRejected = line.startsWith('RECHAZADO');
+                const isSummary  = line.startsWith('RESUMEN') || line.startsWith('RESULTADO');
+                const color = isApproved ? '#a9dc76' : isRejected ? '#ff6188' : isSummary ? '#ffd866' : '#ccc';
+                return (
+                  <div key={i} style={{ color, borderBottom: isSummary ? '1px solid #363650' : 'none', paddingBottom: isSummary ? 6 : 0 }}>
+                    {line || '\u00a0'}
+                  </div>
+                );
+              })
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPanelProps) {
   const {
     agents, connected, prospecting, leads, campaignSummary,
     activeTab, setActiveTab, clearLeads, activeCampaign,
     checkpointLeads, handoverLead, clearCheckpointLead, setHandoverLead,
+    agentLogs,
   } = useOfficeStore();
 
   const [campaign, setCampaign] = useState<Record<string, string>>(DEFAULT_CAMPAIGN);
@@ -669,14 +793,18 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
   const [chatResetKey, setChatResetKey] = useState(0);
   const [showCheckpoint, setShowCheckpoint] = useState(false);
   const [showHandover, setShowHandover] = useState(false);
+  const [agentLogModal, setAgentLogModal] = useState<{ logKey: string; lines: string[] } | null>(null);
 
-  const handleAgentClick = (agentState: string) => {
-    if (agentState !== 'waiting') return;
-    if (checkpointLeads.length > 0) {
-      setShowCheckpoint(true);
-    } else if (handoverLead) {
-      setShowHandover(true);
+  const handleAgentClick = (agentState: string, agentRole: string) => {
+    // If there's a checkpoint/handover waiting, show that first
+    if (agentState === 'waiting') {
+      if (checkpointLeads.length > 0) { setShowCheckpoint(true); return; }
+      if (handoverLead) { setShowHandover(true); return; }
     }
+    // Otherwise show the agent's decision log
+    const logKey = ROLE_TO_LOG_KEY[agentRole] || agentRole;
+    const lines = agentLogs?.[logKey] || [];
+    setAgentLogModal({ logKey, lines });
   };
 
   // Pre-fill campaign from DB when it loads (only once, when not yet manually configured)
@@ -717,13 +845,12 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
             style={{ ...s.tab, ...(activeTab === tab ? s.tabActive : {}) }}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === 'campaign' ? '⚙️ Campaña'
-              : tab === 'results' ? `📊${tabCount(tab) ? ` (${tabCount(tab)})` : ''}`
-              : tab === 'approved' ? `✅${tabCount(tab) ? ` (${tabCount(tab)})` : ''}`
-              : '💬'}
+            {tab === 'campaign' ? 'Campaña'
+              : tab === 'results' ? `Resultados${tabCount(tab) ? ` (${tabCount(tab)})` : ''}`
+              : tab === 'approved' ? `Aprobados${tabCount(tab) ? ` (${tabCount(tab)})` : ''}`
+              : 'Chat Reina'}
           </button>
         ))}
-        <div style={{ ...s.connDot, background: connected ? '#a9dc76' : '#ff6188' }} title={connected ? 'Conectado' : 'Desconectado'} />
       </div>
 
       {/* ── Tab: Campaña ── */}
@@ -741,9 +868,11 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
                 return (
                   <div
                     key={agent.id}
-                    style={{ ...s.agentMini, cursor: isWaiting ? 'pointer' : 'default' }}
-                    onClick={() => handleAgentClick(agent.state)}
-                    title={isWaiting ? 'Click para abrir panel de acción' : undefined}
+                    style={{ ...s.agentMini, cursor: 'pointer' }}
+                    onClick={() => handleAgentClick(agent.state, agent.role)}
+                    title="Click para ver bitácora del agente"
+                    onMouseEnter={e => (e.currentTarget.style.background = '#22212e')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                   >
                     <span>{ROLE_ICONS[agent.role]}</span>
                     <span style={{ flex: 1, fontSize: 12, color: '#ccc' }}>{agent.name}</span>
@@ -765,55 +894,77 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
 
           {/* Chat OR ready state */}
           {!campaignReady ? (
-            <CampaignChat onCampaignReady={handleCampaignReady} resetKey={chatResetKey} />
+            <>
+              <div style={s.campaignHeader}>
+                <div style={s.campaignHeaderTitle}>Configurar Campaña</div>
+                <div style={s.campaignHeaderSub}>PARÁMETROS_DE_EJECUCIÓN_v4.0</div>
+              </div>
+              <CampaignChat onCampaignReady={handleCampaignReady} resetKey={chatResetKey} />
+            </>
           ) : (
             <>
-              {/* Campaign summary */}
-              <div style={s.section}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={s.sectionTitle}>✅ Campaña configurada</div>
-                  <button style={s.toggleBtn} onClick={() => setShowForm(v => !v)}>
-                    {showForm ? 'Ocultar' : 'Editar'}
-                  </button>
-                </div>
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={s.summaryRow}><span style={s.summaryKey}>Industria</span><span style={s.summaryVal}>{campaign.industria_objetivo}</span></div>
-                  <div style={s.summaryRow}><span style={s.summaryKey}>Ciudad</span><span style={s.summaryVal}>{campaign.ciudad_objetivo}</span></div>
-                  <div style={s.summaryRow}><span style={s.summaryKey}>Dolor</span><span style={s.summaryVal}>{campaign.dolor_operativo}</span></div>
-                  <div style={s.summaryRow}><span style={s.summaryKey}>Solución</span><span style={s.summaryVal}>{campaign.solucion_ofrecida}</span></div>
-                </div>
-                {showForm && (
-                  <div style={{ ...s.campaignForm, marginTop: 10 }}>
-                    {Object.entries(campaign).map(([key, val]) => (
-                      <div key={key} style={s.fieldGroup}>
-                        <label style={s.fieldLabel}>{key}</label>
+              {/* Campaign header */}
+              <div style={s.campaignHeader}>
+                <div style={s.campaignHeaderTitle}>Configuración de Campaña</div>
+                <div style={s.campaignHeaderSub}>PARÁMETROS_DE_EJECUCIÓN_v4.0</div>
+              </div>
+
+              {/* Parameter cards grid */}
+              <div style={s.paramGrid}>
+                {Object.entries(campaign).map(([key, val]) => {
+                  const fullWidth = ['dolor_operativo', 'solucion_ofrecida', 'software_clave', 'jerarquia_decisores'].includes(key);
+                  return (
+                    <div key={key} style={{ ...s.paramCard, ...(fullWidth ? { gridColumn: '1 / -1' } : {}) }}>
+                      <div style={s.paramLabel}>{CAMPAIGN_LABELS[key] ?? key}</div>
+                      <div style={s.paramValue} title={val}>{val || '—'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Edit toggle */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button style={s.toggleBtn} onClick={() => setShowForm(v => !v)}>
+                  {showForm ? '↑ Ocultar' : '✎ Editar parámetros'}
+                </button>
+              </div>
+              {showForm && (
+                <div style={s.campaignForm}>
+                  {Object.entries(campaign).map(([key, val]) => {
+                    const fullWidth = ['dolor_operativo', 'solucion_ofrecida', 'software_clave', 'jerarquia_decisores'].includes(key);
+                    return (
+                      <div key={key} style={{ ...s.fieldGroup, ...(fullWidth ? { gridColumn: '1 / -1' } : {}) }}>
+                        <label style={s.fieldLabel}>{CAMPAIGN_LABELS[key] ?? key}</label>
                         <input style={s.fieldInput} value={val}
                           onChange={e => updateCampaign(key, e.target.value)} />
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
 
-              {/* Max results */}
-              <div style={s.section}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={s.sectionTitle}>Empresas a analizar</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input type="range" min={5} max={50} step={5} value={maxResults}
-                      onChange={e => setMaxResults(Number(e.target.value))}
-                      style={{ width: 80 }} />
-                    <span style={{ color: '#ffd866', fontWeight: 700, fontSize: 16 }}>{maxResults}</span>
-                  </div>
+              {/* MAX PROSPECTS slider */}
+              <div style={s.sliderSection}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={s.paramLabel}>MAX PROSPECTS</span>
+                  <span style={s.sliderNum}>{maxResults}</span>
+                </div>
+                <input type="range" min={5} max={50} step={5} value={maxResults}
+                  onChange={e => setMaxResults(Number(e.target.value))}
+                  style={{ width: '100%', accentColor: '#78dce8', margin: '8px 0 4px', cursor: 'pointer' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={s.sliderRange}>5</span>
+                  <span style={s.sliderRange}>50</span>
                 </div>
               </div>
 
+              {/* Launch button */}
               <button
                 style={{ ...s.launchBtn, opacity: prospecting ? 0.5 : 1, cursor: prospecting ? 'not-allowed' : 'pointer' }}
                 disabled={prospecting}
                 onClick={() => startProspect(campaign, maxResults)}
               >
-                {prospecting ? '⏳ Agentes trabajando...' : '🚀 Lanzar campaña'}
+                {prospecting ? 'AGENTES TRABAJANDO...' : 'INICIAR PROSPECCIÓN 🚀'}
               </button>
 
               <button style={s.resetBtn} onClick={() => { setCampaignReady(false); setChatResetKey(k => k + 1); }}>
@@ -823,6 +974,23 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
               {prospecting && leads.length > 0 && (
                 <div style={s.progressInfo}>Analizando empresa {leads.length} de ~{maxResults}...</div>
               )}
+
+              {/* Bee preview */}
+              <div style={s.beePreview}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={s.beeAvatar}>🐝</div>
+                  <div>
+                    <div style={s.beeName}>Technological Drone Bee</div>
+                    <div style={s.beeStatus}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#a9dc76', display: 'inline-block', boxShadow: '0 0 4px #a9dc76' }} />
+                      Online | System Queen
+                    </div>
+                  </div>
+                </div>
+                <div style={s.beeMessage}>
+                  Saludos, Administrador. La colmena de datos está lista. ¿Desea que inicie el escaneo de prospectos de alta fidelidad?
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -891,26 +1059,6 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
         </div>
       )}
 
-      {/* ── Landa modals ── */}
-      {showCheckpoint && checkpointLeads.length > 0 && (
-        <CheckpointModal
-          lead={checkpointLeads[0]}
-          onClose={() => {
-            clearCheckpointLead(checkpointLeads[0].leadId);
-            setShowCheckpoint(false);
-          }}
-        />
-      )}
-      {showHandover && handoverLead && (
-        <HandoverModal
-          lead={handoverLead}
-          onClose={() => {
-            setHandoverLead(null);
-            setShowHandover(false);
-          }}
-        />
-      )}
-
       {/* ── Tab: Aprobados ── */}
       {activeTab === 'approved' && (
         <div style={s.tabContent}>
@@ -973,6 +1121,41 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
           )}
         </div>
       )}
+
+      {/* ── Landa modals ── */}
+      {showCheckpoint && checkpointLeads.length > 0 && (
+        <CheckpointModal
+          lead={checkpointLeads[0]}
+          onClose={() => {
+            clearCheckpointLead(checkpointLeads[0].leadId);
+            setShowCheckpoint(false);
+          }}
+        />
+      )}
+      {showHandover && handoverLead && (
+        <HandoverModal
+          lead={handoverLead}
+          onClose={() => {
+            setHandoverLead(null);
+            setShowHandover(false);
+          }}
+        />
+      )}
+      {agentLogModal && (
+        <AgentLogModal
+          logKey={agentLogModal.logKey}
+          lines={agentLogModal.lines}
+          onClose={() => setAgentLogModal(null)}
+        />
+      )}
+
+      {/* ── Footer ── */}
+      <div style={s.footer}>
+        <div style={{ ...s.connDot, background: connected ? '#a9dc76' : '#ff6188', boxShadow: connected ? '0 0 5px #a9dc76' : 'none' }} title={connected ? 'Conectado' : 'Desconectado'} />
+        <span style={s.footerLabel}>{connected ? 'API Status: Stable' : 'API Status: Offline'}</span>
+        <div style={{ flex: 1 }} />
+        <span style={s.footerVersion}>v2.8.4-stable</span>
+      </div>
     </div>
   );
 }
@@ -982,8 +1165,7 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
 const s: Record<string, React.CSSProperties> = {
   container: {
     width: '100%',
-    background: '#2a2a3e',
-    borderRadius: 12,
+    background: '#1b1a26',
     display: 'flex',
     flexDirection: 'column',
     height: '100%',
@@ -992,9 +1174,10 @@ const s: Record<string, React.CSSProperties> = {
   tabs: {
     display: 'flex',
     gap: 2,
-    padding: '10px 10px 0',
+    padding: '10px 12px 0',
     alignItems: 'center',
-    borderBottom: '1px solid #3a3a5e',
+    background: '#12121d',
+    borderBottom: '1px solid rgba(120,220,232,0.06)',
   },
   tab: {
     flex: 1,
@@ -1002,43 +1185,68 @@ const s: Record<string, React.CSSProperties> = {
     border: 'none',
     borderRadius: '6px 6px 0 0',
     background: 'transparent',
-    color: '#888',
-    fontSize: 11,
-    fontWeight: 500,
+    color: 'rgba(227,224,241,0.4)',
+    fontSize: 10,
+    fontWeight: 700,
     cursor: 'pointer',
     transition: 'all 0.2s',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
   },
   tabActive: {
-    background: '#363650',
-    color: '#fff',
+    background: 'rgba(120,220,232,0.07)',
+    color: '#78dce8',
+    boxShadow: '0 -2px 0 #78dce8 inset',
   },
   connDot: {
-    width: 8,
-    height: 8,
+    width: 7,
+    height: 7,
     borderRadius: '50%',
     flexShrink: 0,
-    marginLeft: 4,
   },
   tabContent: {
     flex: 1,
     overflowY: 'auto',
-    padding: 12,
+    padding: 14,
     display: 'flex',
     flexDirection: 'column',
     gap: 10,
   },
+  footer: {
+    padding: '8px 14px',
+    background: '#12121d',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    borderTop: '1px solid rgba(120,220,232,0.06)',
+    flexShrink: 0,
+  },
+  footerLabel: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 9, color: 'rgba(227,224,241,0.3)',
+    textTransform: 'uppercase', letterSpacing: '0.1em',
+  },
+  footerVersion: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 9, color: 'rgba(227,224,241,0.18)',
+    letterSpacing: '0.06em',
+  },
   agentsMini: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 4,
+    gap: 2,
     padding: 8,
-    background: '#1e1e35',
+    background: '#12121d',
     borderRadius: 8,
   },
   agentMini: {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
+    padding: '5px 8px',
+    borderRadius: 6,
+    transition: 'background 0.15s',
   },
   miniDot: {
     width: 6,
@@ -1046,9 +1254,9 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
   },
   section: {
-    background: '#1e1e35',
-    borderRadius: 8,
-    padding: 10,
+    background: '#12121d',
+    borderRadius: 10,
+    padding: 12,
   },
   sectionHeader: {
     display: 'flex',
@@ -1057,22 +1265,24 @@ const s: Record<string, React.CSSProperties> = {
   },
   sectionTitle: {
     color: '#ab9df2',
-    fontSize: 12,
-    fontWeight: 600,
+    fontSize: 10,
+    fontWeight: 700,
     textTransform: 'uppercase',
-    letterSpacing: '0.06em',
+    letterSpacing: '0.1em',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
   },
   toggleBtn: {
     background: 'transparent',
     border: 'none',
-    color: '#888',
+    color: 'rgba(227,224,241,0.35)',
     cursor: 'pointer',
-    fontSize: 12,
+    fontSize: 11,
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
   },
   campaignForm: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 12,
     marginTop: 10,
   },
   fieldGroup: {
@@ -1089,68 +1299,84 @@ const s: Record<string, React.CSSProperties> = {
     marginBottom: 2,
   },
   fieldLabel: {
-    color: '#888',
-    fontSize: 11,
+    color: 'rgba(227,224,241,0.4)',
+    fontSize: 9,
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
   },
   fieldInput: {
-    padding: '6px 10px',
+    padding: '7px 0',
     border: 'none',
-    borderRadius: 5,
-    background: '#252538',
-    color: '#fff',
+    borderBottom: '1px solid rgba(120,220,232,0.2)',
+    borderRadius: 0,
+    background: 'transparent',
+    color: '#e3e0f1',
     fontSize: 12,
+    outline: 'none',
   },
   launchBtn: {
     padding: 12,
     border: 'none',
-    borderRadius: 8,
-    background: 'linear-gradient(135deg, #7c3aed, #06b6d4)',
+    borderRadius: 6,
+    background: 'linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%)',
     color: '#fff',
     fontWeight: 700,
-    fontSize: 14,
+    fontSize: 13,
     transition: 'opacity 0.2s',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    letterSpacing: '0.03em',
+    boxShadow: '0 4px 24px rgba(120,220,232,0.12)',
+    cursor: 'pointer',
   },
   progressInfo: {
     color: '#ffd866',
-    fontSize: 12,
+    fontSize: 10,
     textAlign: 'center',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    letterSpacing: '0.04em',
   },
   summary: {
     display: 'flex',
-    gap: 8,
-    padding: '10px 0',
+    gap: 6,
+    padding: '8px 0',
   },
   summaryItem: {
     flex: 1,
-    background: '#1e1e35',
+    background: '#12121d',
     borderRadius: 8,
-    padding: '8px 4px',
+    padding: '10px 4px',
     textAlign: 'center',
   },
   summaryNum: {
     fontSize: 22,
     fontWeight: 800,
-    color: '#fff',
+    color: '#e3e0f1',
     lineHeight: 1,
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
   },
   summaryLabel: {
-    fontSize: 10,
-    color: '#888',
-    marginTop: 3,
+    fontSize: 9,
+    color: 'rgba(227,224,241,0.35)',
+    marginTop: 4,
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
   },
   emptyState: {
-    color: '#888',
+    color: 'rgba(227,224,241,0.3)',
     fontSize: 13,
     textAlign: 'center',
-    padding: '24px 8px',
+    padding: '32px 8px',
+    lineHeight: 1.6,
   },
   leadList: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 6,
+    gap: 4,
   },
   leadCard: {
-    background: '#363650',
+    background: '#22212e',
     borderRadius: 8,
     border: '2px solid transparent',
     overflow: 'hidden',
@@ -1164,13 +1390,13 @@ const s: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   leadDot: {
-    width: 8,
-    height: 8,
+    width: 7,
+    height: 7,
     borderRadius: '50%',
     flexShrink: 0,
   },
   leadTitle: {
-    color: '#fff',
+    color: '#e3e0f1',
     fontSize: 13,
     fontWeight: 500,
     whiteSpace: 'nowrap',
@@ -1179,7 +1405,7 @@ const s: Record<string, React.CSSProperties> = {
     maxWidth: 140,
   },
   leadUrl: {
-    color: '#888',
+    color: 'rgba(227,224,241,0.32)',
     fontSize: 10,
     marginTop: 1,
   },
@@ -1188,49 +1414,53 @@ const s: Record<string, React.CSSProperties> = {
     gap: 4,
   },
   approveBtn: {
-    width: 24,
-    height: 24,
+    width: 26,
+    height: 26,
     border: 'none',
     borderRadius: 4,
-    background: '#a9dc76',
-    color: '#000',
+    background: 'rgba(169,220,118,0.18)',
+    color: '#a9dc76',
     cursor: 'pointer',
     fontWeight: 700,
     fontSize: 13,
   },
   discardBtn: {
-    width: 24,
-    height: 24,
+    width: 26,
+    height: 26,
     border: 'none',
     borderRadius: 4,
-    background: '#ff6188',
-    color: '#fff',
+    background: 'rgba(255,97,136,0.15)',
+    color: '#ff6188',
     cursor: 'pointer',
     fontWeight: 700,
     fontSize: 13,
   },
   approvedTag: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#a9dc76',
-    background: '#a9dc7622',
-    padding: '2px 6px',
+    background: 'rgba(169,220,118,0.1)',
+    padding: '2px 7px',
     borderRadius: 4,
     whiteSpace: 'nowrap',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    letterSpacing: '0.04em',
   },
   discardedTag: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#ff6188',
-    background: '#ff618822',
-    padding: '2px 6px',
+    background: 'rgba(255,97,136,0.1)',
+    padding: '2px 7px',
     borderRadius: 4,
     whiteSpace: 'nowrap',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    letterSpacing: '0.04em',
   },
   leadDetail: {
     padding: '0 12px 12px',
     display: 'flex',
     flexDirection: 'column',
     gap: 10,
-    borderTop: '1px solid #2a2a4e',
+    borderTop: '1px solid rgba(62,73,74,0.25)',
   },
   detailBlock: {
     display: 'flex',
@@ -1240,19 +1470,20 @@ const s: Record<string, React.CSSProperties> = {
   },
   detailLabel: {
     color: '#ab9df2',
-    fontSize: 11,
-    fontWeight: 600,
+    fontSize: 10,
+    fontWeight: 700,
     textTransform: 'uppercase',
-    letterSpacing: '0.05em',
+    letterSpacing: '0.08em',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
   },
   detailValue: {
-    color: '#fff',
+    color: '#e3e0f1',
     fontSize: 13,
   },
   summaryText: {
-    color: '#c9c9d6',
+    color: 'rgba(227,224,241,0.6)',
     fontSize: 12,
-    lineHeight: 1.5,
+    lineHeight: 1.6,
   },
   sourceList: {
     display: 'flex',
@@ -1262,22 +1493,23 @@ const s: Record<string, React.CSSProperties> = {
   sourceLink: {
     color: '#78dce8',
     fontSize: 12,
-    textDecoration: 'underline',
+    textDecoration: 'none',
     wordBreak: 'break-all',
+    opacity: 0.75,
   },
   emailBox: {
-    background: '#252538',
+    background: '#12121d',
     borderRadius: 6,
     padding: '10px 12px',
-    color: '#e5e5e5',
+    color: 'rgba(227,224,241,0.7)',
     fontSize: 12,
     lineHeight: 1.6,
     maxHeight: 160,
     overflowY: 'auto',
   },
   copyBtn: {
-    padding: '2px 10px',
-    border: '1px solid #78dce8',
+    padding: '3px 10px',
+    border: '1px solid rgba(120,220,232,0.25)',
     borderRadius: 4,
     background: 'transparent',
     color: '#78dce8',
@@ -1286,44 +1518,50 @@ const s: Record<string, React.CSSProperties> = {
   },
   approveFullBtn: {
     flex: 1,
-    padding: '8px 0',
+    padding: '9px 0',
     border: 'none',
     borderRadius: 6,
-    background: '#a9dc76',
-    color: '#000',
-    fontWeight: 600,
+    background: 'rgba(169,220,118,0.14)',
+    color: '#a9dc76',
+    fontWeight: 700,
     fontSize: 12,
     cursor: 'pointer',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
   },
   discardFullBtn: {
     flex: 1,
-    padding: '8px 0',
+    padding: '9px 0',
     border: 'none',
     borderRadius: 6,
-    background: '#ff618844',
+    background: 'rgba(255,97,136,0.1)',
     color: '#ff6188',
-    fontWeight: 600,
+    fontWeight: 700,
     fontSize: 12,
     cursor: 'pointer',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
   },
   analyzing: {
     color: '#ffd866',
-    fontSize: 12,
+    fontSize: 10,
     textAlign: 'center',
     padding: '8px 0',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
   },
   approvedHeader: {
     color: '#a9dc76',
-    fontWeight: 600,
-    fontSize: 13,
+    fontWeight: 700,
+    fontSize: 10,
     textAlign: 'center',
     padding: '4px 0',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
   },
   approvedCard: {
-    background: '#363650',
+    background: '#22212e',
     borderRadius: 8,
     padding: 12,
-    border: '1px solid #a9dc7633',
+    border: '1px solid rgba(169,220,118,0.15)',
   },
   approvedCardHeader: {
     display: 'flex',
@@ -1332,8 +1570,8 @@ const s: Record<string, React.CSSProperties> = {
   },
   copyEmailBtn: {
     marginTop: 8,
-    padding: '6px 12px',
-    border: '1px solid #78dce8',
+    padding: '7px 12px',
+    border: '1px solid rgba(120,220,232,0.18)',
     borderRadius: 6,
     background: 'transparent',
     color: '#78dce8',
@@ -1342,21 +1580,86 @@ const s: Record<string, React.CSSProperties> = {
     width: '100%',
   },
   clearBtn: {
-    padding: '4px 10px', border: '1px solid #4a4a6a', borderRadius: 6,
-    background: 'transparent', color: '#888', cursor: 'pointer', fontSize: 11,
+    padding: '4px 10px', border: '1px solid rgba(120,220,232,0.12)', borderRadius: 6,
+    background: 'transparent', color: 'rgba(227,224,241,0.35)', cursor: 'pointer', fontSize: 11,
   },
   summaryRow: { display: 'flex', gap: 6, fontSize: 12 },
-  summaryKey: { color: '#888', minWidth: 70 },
-  summaryVal: { color: '#fff', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  summaryKey: { color: 'rgba(227,224,241,0.4)', minWidth: 70, fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 11 },
+  summaryVal: { color: '#e3e0f1', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   resetBtn: {
-    padding: '6px 0', border: '1px solid #4a4a6a', borderRadius: 6,
-    background: 'transparent', color: '#888', cursor: 'pointer', fontSize: 12,
+    padding: '7px 0', border: '1px solid rgba(120,220,232,0.12)', borderRadius: 6,
+    background: 'transparent', color: 'rgba(227,224,241,0.35)', cursor: 'pointer', fontSize: 11,
   },
   automateHint: {
-    color: '#888',
+    color: 'rgba(227,224,241,0.3)',
     fontSize: 12,
     textAlign: 'center',
     padding: '12px 0 4px',
-    borderTop: '1px solid #2a2a4e',
+    borderTop: '1px solid rgba(62,73,74,0.2)',
+  },
+  campaignHeader: {
+    paddingBottom: 4,
+  },
+  campaignHeaderTitle: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 22, fontWeight: 700, color: '#e3e0f1', letterSpacing: '-0.02em',
+  },
+  campaignHeaderSub: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 9, color: 'rgba(227,224,241,0.3)',
+    letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 3,
+  },
+  paramGrid: {
+    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+  },
+  paramCard: {
+    background: '#12121d', borderRadius: 8, padding: '10px 12px',
+    display: 'flex', flexDirection: 'column', gap: 5,
+    border: '1px solid rgba(120,220,232,0.05)',
+  },
+  paramLabel: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 9, fontWeight: 600, color: 'rgba(227,224,241,0.35)',
+    textTransform: 'uppercase', letterSpacing: '0.1em',
+  },
+  paramValue: {
+    color: '#e3e0f1', fontSize: 14, fontWeight: 500,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  sliderSection: {
+    background: '#12121d', borderRadius: 8, padding: '12px 14px',
+    border: '1px solid rgba(120,220,232,0.05)',
+  },
+  sliderNum: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 26, fontWeight: 800, color: '#78dce8', lineHeight: 1,
+  },
+  sliderRange: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 9, color: 'rgba(227,224,241,0.2)', letterSpacing: '0.06em',
+  },
+  beePreview: {
+    background: '#12121d', borderRadius: 10, padding: '12px 14px',
+    display: 'flex', flexDirection: 'column', gap: 10,
+    border: '1px solid rgba(120,220,232,0.05)',
+  },
+  beeAvatar: {
+    width: 38, height: 38, borderRadius: '50%',
+    background: '#22212e', border: '1px solid rgba(120,220,232,0.1)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 18, flexShrink: 0,
+  },
+  beeName: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 13, fontWeight: 700, color: '#e3e0f1',
+  },
+  beeStatus: {
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontSize: 10, color: 'rgba(227,224,241,0.4)',
+    display: 'flex', alignItems: 'center', gap: 5, marginTop: 2,
+  },
+  beeMessage: {
+    color: 'rgba(227,224,241,0.6)', fontSize: 12, lineHeight: 1.7,
+    padding: '9px 11px', background: '#1b1a26', borderRadius: 7,
   },
 };

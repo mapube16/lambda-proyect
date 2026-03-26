@@ -946,26 +946,42 @@ async def update_wa_session(phone: str, new_turn: dict) -> None:
         )
 
 
-# ── wa_config: bot_mode per phone (MongoDB-driven routing) ────────────────────
+# ── wa_config: bot flags + active mode per phone ──────────────────────────────
+# Schema: { phone, bots: { secop: bool, landa: bool }, active: str }
+# 'active' is the currently selected bot. Only bots with flag=true are accessible.
+
+async def get_wa_bot_config(phone: str) -> dict:
+    """Return full bot config for a phone. Defaults: landa enabled+active."""
+    db = get_db()
+    doc = await db.wa_config.find_one({"phone": phone}) or {}
+    return {
+        "bots": doc.get("bots", {"landa": True, "secop": False}),
+        "active": doc.get("active", "landa"),
+    }
+
 
 async def get_wa_bot_mode(phone: str) -> str:
-    """Return bot_mode for a phone number. Defaults to 'landa' if not set.
-
-    Valid values: 'landa' (LLM tool calling), 'legacy' (SECOP prospector),
-                  'calendar' (Google Calendar agent).
-    Change via MongoDB Compass: db.wa_config.updateOne({phone}, {$set: {bot_mode: '...'}})
-    """
-    db = get_db()
-    doc = await db.wa_config.find_one({"phone": phone})
-    return (doc or {}).get("bot_mode", "landa")
+    """Return the active bot mode for a phone. Backwards-compatible."""
+    config = await get_wa_bot_config(phone)
+    return config["active"]
 
 
 async def set_wa_bot_mode(phone: str, bot_mode: str) -> None:
-    """Upsert bot_mode for a phone number."""
+    """Set the active bot for a phone (only if that bot is enabled)."""
     db = get_db()
     await db.wa_config.update_one(
         {"phone": phone},
-        {"$set": {"phone": phone, "bot_mode": bot_mode}},
+        {"$set": {"phone": phone, "active": bot_mode}},
+        upsert=True,
+    )
+
+
+async def set_wa_bot_flags(phone: str, bots: dict) -> None:
+    """Set which bots are enabled for a phone. bots = { 'landa': True, 'secop': False, ... }"""
+    db = get_db()
+    await db.wa_config.update_one(
+        {"phone": phone},
+        {"$set": {"phone": phone, "bots": bots}},
         upsert=True,
     )
 

@@ -119,10 +119,40 @@ async def run_outreach(
         )
     elif canal_elegido == "whatsapp":
         phone = decisor.get("phone", decisor.get("telefono", ""))
-        if not phone:
-            logger.error("[outreach_agent] No phone for lead %s decisor", lead_id)
-            return False
-        sent = await send_whatsapp_text(phone=phone, message=message_text)
+        if phone:
+            sent = await send_whatsapp_text(phone=phone, message=message_text)
+        else:
+            # Fallback to email when no phone extracted (Phase 15)
+            logger.warning(
+                "[outreach_agent] No phone for lead %s — falling back to email", lead_id
+            )
+            to_email = decisor.get("email", "")
+            if to_email:
+                remitentes = company_voice.get("remitentes", [{}])
+                sender = remitentes[0] if remitentes else {}
+                subject = f"Para {decisor.get('nombre', 'usted')} de {lead.get('company_name', '')}"
+                sent = await send_email(
+                    to=to_email,
+                    subject=subject,
+                    body=message_text,
+                    sender_name=sender.get("nombre", ""),
+                    sender_email=sender.get("email", ""),
+                )
+                fallback_entry = {
+                    "tipo": "fallback",
+                    "razon": "no_phone",
+                    "canal_usado": "email",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                await db.leads.update_one(
+                    {"_id": ObjectId(lead_id)},
+                    {"$push": {"historial_conversacion": fallback_entry}},
+                )
+            else:
+                logger.error(
+                    "[outreach_agent] No phone AND no email for lead %s", lead_id
+                )
+                sent = False
     else:
         logger.error("[outreach_agent] Unknown canal: %s", canal_elegido)
         return False

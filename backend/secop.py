@@ -78,7 +78,7 @@ async def fetch_secop_providers(
         params["$where"] = " AND ".join(conditions)
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=45) as client:
             resp = await client.get(SECOP_CONTRATOS_URL, params=params)
             resp.raise_for_status()
             rows = resp.json()

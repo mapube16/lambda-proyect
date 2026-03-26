@@ -24,11 +24,13 @@ logging.basicConfig(
 )
 # Show Hive framework + our adapter logs
 for _logger in ("hive_adapter", "hive_llm", "hive_tools", "hive_graph",
-                 "framework.graph.event_loop_node", "framework.graph.executor"):
+                 "framework.graph.event_loop_node", "framework.graph.executor",
+                 "wa_handler"):
     logging.getLogger(_logger).setLevel(logging.INFO)
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, HTTPException, Depends, Query, status, Request, Body
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo.errors import DuplicateKeyError
 from jose import JWTError, jwt
@@ -327,17 +329,28 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5176", "http://localhost:3000", "*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
 # ============ REST API Endpoints ============
+
+@app.get("/api/staff/wa-config/{phone}")
+async def get_wa_config(phone: str, _staff=Depends(require_staff)):
+    from database import get_wa_bot_config
+    return await get_wa_bot_config(phone)
+
+@app.post("/api/staff/wa-config/{phone}")
+async def save_wa_config(phone: str, body: dict = Body(...), _staff=Depends(require_staff)):
+    from database import set_wa_bot_flags
+    await set_wa_bot_flags(phone, body.get("bots", {}))
+    return {"ok": True}
 
 @app.patch("/api/users/{user_id}/phones", status_code=200)
 async def api_add_phone_to_user(user_id: str, req: AddPhoneRequest, current_user=Depends(get_current_user)):
@@ -353,7 +366,7 @@ async def api_add_phone_to_user(user_id: str, req: AddPhoneRequest, current_user
     logging.info(f"[api_add_phone_to_user] Teléfono agregado: user_id={user_id} phone={req.phone}")
     return {"success": True, "added": req.phone}
 
-@app.get("/")
+@app.get("/api/health")
 async def root():
     return {"message": "Lambda Office API", "status": "running"}
 
@@ -1454,6 +1467,84 @@ async def get_staff_agents_active(_staff: dict = Depends(require_staff)):
     }
 
 
+@app.get("/api/staff/stats")
+async def staff_get_stats(_staff: dict = Depends(require_staff)):
+    """
+    Aggregated platform stats across all clients.
+    Returns: { global: {...}, per_client: [...] }
+    Used by StaffDashboard header cards.
+    """
+    from database import get_all_client_summaries
+    db = get_db()
+
+    # Global aggregation
+    users = await get_all_users()
+    clients = [u for u in users if u["role"] == "client"]
+    client_ids = [u["user_id"] for u in clients]
+
+    total_leads_count, total_approved_count, total_runs_count = await asyncio.gather(
+        db.leads.count_documents({}),
+        db.leads.count_documents({"hitl_status": "approved"}),
+        db.runs.count_documents({}),
+    )
+    active_runs = len([t for t in hive_adapter._runs.values() if not t.done()])
+
+    # Per-client summaries (single-pass aggregation)
+    summaries = await get_all_client_summaries(client_ids) if client_ids else {}
+    per_client = []
+    for u in clients:
+        uid = u["user_id"]
+        s = summaries.get(uid, {})
+        per_client.append({
+            "user_id":       uid,
+            "email":         u.get("email", ""),
+            "total_leads":   s.get("total_leads", 0),
+            "approved_leads": s.get("approved_leads", 0),
+            "total_runs":    s.get("total_runs", 0),
+            "last_run_at":   s.get("last_run_at"),
+            "last_run_status": s.get("last_run_status"),
+        })
+
+    return {
+        "global": {
+            "total_clients":  len(clients),
+            "total_leads":    total_leads_count,
+            "total_approved": total_approved_count,
+            "total_runs":     total_runs_count,
+            "active_runs":    active_runs,
+        },
+        "per_client": per_client,
+    }
+
+
+# Fixed pipeline registry — matches hive_graph agent roles
+_PIPELINE_REGISTRY = [
+    {"name": "Buscador",     "description": "Descubre empresas por web search"},
+    {"name": "Scraper",      "description": "Extrae datos del sitio web"},
+    {"name": "Analista",     "description": "Califica y genera expediente"},
+    {"name": "Redactor",     "description": "Genera borrador de email personalizado"},
+]
+
+
+@app.get("/api/staff/agents/active")
+async def staff_get_active_agents(_staff: dict = Depends(require_staff)):
+    """
+    Returns pipeline registry + per-client active run status.
+    { pipeline_registry: [...], per_client_active: {user_id: {status, agents}} }
+    """
+    running_ids = {uid for uid, task in hive_adapter._runs.items() if not task.done()}
+
+    # Build per-client active dict
+    per_client_active: dict = {}
+    for uid in running_ids:
+        per_client_active[uid] = {"status": "running", "agents": _PIPELINE_REGISTRY}
+
+    return {
+        "pipeline_registry": _PIPELINE_REGISTRY,
+        "per_client_active": per_client_active,
+    }
+
+
 @app.get("/api/staff/clients")
 async def staff_get_clients(_staff: dict = Depends(require_staff)):
     """List all client users, including newly created accounts with no runs yet."""
@@ -2209,11 +2300,25 @@ async def update_client_sources(
         update_fields["wa_token"] = request.wa_token
 
     db = get_db()
+    # Read previous state to detect new WA number (for welcome message)
+    prev = await db.company_voice.find_one({"user_id": target_user_id}) or {}
+    prev_phone = prev.get("wa_phone_number", "")
+
     await db.company_voice.update_one(
         {"user_id": target_user_id},
         {"$set": update_fields},
         upsert=True,
     )
+
+    # Send welcome message when a new WA number is set and channel is WA-enabled
+    new_phone = request.wa_phone_number
+    channel_is_wa = request.notification_channel in ("whatsapp", "both")
+    if new_phone and new_phone != prev_phone and channel_is_wa:
+        asyncio.create_task(send_whatsapp_text(
+            new_phone,
+            "👋 Hola! Soy el asistente de Landa. A partir de ahora recibirás notificaciones de tus leads por aquí.\n\nPuedes escribirme en cualquier momento para revisar leads, aprobar prospectos o consultar el estado de tu campaña.",
+        ))
+
     return {
         "status": "ok",
         "user_id": target_user_id,
@@ -2486,6 +2591,14 @@ async def reporte_llamada(
 
 # ============ WhatsApp Webhook (Phase 16 — WA-01) ============
 
+async def _safe_task(coro, label: str):
+    """Wrap a coroutine so exceptions from create_task are logged instead of silently dropped."""
+    try:
+        await coro
+    except Exception as exc:
+        logging.error("[WA] %s crashed: %s", label, exc, exc_info=True)
+
+
 @app.post("/api/whatsapp/incoming")
 async def whatsapp_incoming(request: Request):
     """
@@ -2507,8 +2620,10 @@ async def whatsapp_incoming(request: Request):
     num_media = int(form.get("NumMedia", "0"))
     media_url = str(form.get("MediaUrl0", "")) if num_media > 0 else ""
 
-    # Log incoming webhook payload
     from_phone = from_raw.replace("whatsapp:", "")
+    print(f"[WA-WEBHOOK] from={from_phone} body={body!r:.60}", flush=True)
+
+    # Log incoming webhook payload
     debug_log.log_event("webhook_received", {
         "from_phone": from_phone,
         "to_number": to_number,
@@ -2519,29 +2634,47 @@ async def whatsapp_incoming(request: Request):
     }, level="DEBUG")
 
     # Validate Twilio signature (skip in test env if not configured)
-    url = str(request.url)
+    # Reconstruct the public URL using X-Forwarded headers (ngrok sets these)
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
+    forwarded_host = request.headers.get("X-Forwarded-Host", "") or request.headers.get("Host", "")
+    if forwarded_proto and forwarded_host:
+        url = f"{forwarded_proto}://{forwarded_host}{request.url.path}"
+    else:
+        url = str(request.url)
+    print(f"[WA-WEBHOOK] validation url={url}", flush=True)
     signature = request.headers.get("X-Twilio-Signature", "")
     post_data = dict(form)
     if not wa_handler.validate_twilio_signature(url, signature, post_data):
-        logging.warning("[WA] Invalid Twilio signature from %s — ignoring", from_raw)
-        debug_log.log_error(from_phone, "invalid_signature", "Twilio signature validation failed", {})
+        logging.warning("[WA] Invalid Twilio signature from %s url=%s — ignoring", from_raw, url)
+        debug_log.log_error(from_phone, "invalid_signature", "Twilio signature validation failed", {"url": url})
         return Response(content="<Response/>", media_type="text/xml")
 
     # Identify caller profile (non-blocking lookup, then async processing)
     profile = await wa_handler.get_profile(from_phone)
+    print(f"[WA-WEBHOOK] profile={profile['profile'] if profile else 'NOT FOUND'}", flush=True)
     if profile is None:
         logging.warning("[WA] Unknown number %s — ignoring message", from_phone)
         debug_log.log_error(from_phone, "unknown_profile", "Profile not found in system", {})
         return Response(content="<Response/>", media_type="text/xml")
 
-    # Route by bot_mode (MongoDB flag — change via Compass without redeploy)
-    from database import get_wa_bot_mode
-    
-    # Force legacy mode for specific numbers (SECOP prospector bot)
-    if from_phone in ("+573123528153",):  # Maximiliano's number
-        bot_mode = "legacy"
-    else:
-        bot_mode = await get_wa_bot_mode(from_phone)
+    # Handle bot-switch commands before routing
+    from database import get_wa_bot_config, set_wa_bot_mode
+    cmd = body.strip().lower()
+    if cmd in ("/secop", "/landa"):
+        config = await get_wa_bot_config(from_phone)
+        target = "legacy" if cmd == "/secop" else "landa"
+        flag_key = "secop" if cmd == "/secop" else "landa"
+        if not config["bots"].get(flag_key):
+            await send_whatsapp_text(from_phone, "❌ Ese bot no está habilitado para tu cuenta.")
+        else:
+            await set_wa_bot_mode(from_phone, target)
+            label = "SECOP" if target == "legacy" else "Landa"
+            await send_whatsapp_text(from_phone, f"✅ Modo {label} activado.")
+        return Response(content="<Response/>", media_type="text/xml")
+
+    # Route by active bot (from wa_config)
+    config = await get_wa_bot_config(from_phone)
+    bot_mode = config["active"]
 
     debug_log.log_event("router_decision", {
         "phone": from_phone,
@@ -2567,24 +2700,31 @@ async def whatsapp_incoming(request: Request):
             from calendar_agent import process_calendar_message
             asyncio.create_task(process_calendar_message(from_phone, body, media_url))
         except ImportError:
-            asyncio.create_task(wa_handler.process_inbound(
+            asyncio.create_task(_safe_task(wa_handler.process_inbound(
                 from_phone=from_phone, to_number=to_number,
                 body="Agente de calendario no disponible aún.", media_url="", profile=profile,
-            ))
+            ), "process_inbound/calendar"))
 
     else:
         # Default: "landa" — LLM tool calling bot
-        asyncio.create_task(
+        asyncio.create_task(_safe_task(
             wa_handler.process_inbound(
                 from_phone=from_phone,
                 to_number=to_number,
                 body=body,
                 media_url=media_url,
                 profile=profile,
-            )
-        )
+            ), "process_inbound"
+        ))
 
     return Response(content="<Response/>", media_type="text/xml")
+
+
+# Servir archivos estáticos del frontend (build de Vite) — al final para no interceptar rutas API
+import pathlib
+frontend_dist = pathlib.Path(__file__).parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
 
 
 if __name__ == "__main__":

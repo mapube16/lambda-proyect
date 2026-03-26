@@ -78,9 +78,29 @@ class UserCreate(BaseModel):
     """Request body for POST /auth/register and POST /auth/login."""
     email: str
     password: str
+    full_name: Optional[str] = None
+    company_name: Optional[str] = None
+    phone: Optional[str] = None
+    phones: Optional[List[str]] = None  # Soporte para múltiples números
+    country: Optional[str] = None
+    role: Optional[str] = None
 
 
 class Token(BaseModel):
     """Response body for POST /auth/login."""
     access_token: str
+    token_type: str = "bearer"
+    email: str
+    role: str
+
+
+class RegistrationRequest(BaseModel):
+    """Request body for POST /auth/register-request - creates signup request for staff review."""
+    email: str
+    full_name: str
+    company_name: str
+    phone: Optional[str] = None
+    country: Optional[str] = None
+    role: Optional[str] = "user"
+    message: Optional[str] = None  # Why they're interested
     token_type: str = "bearer"

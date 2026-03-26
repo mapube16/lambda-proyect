@@ -98,6 +98,8 @@ interface OfficeStore {
   campaignSummary: CampaignSummary | null;
   activeTab: 'campaign' | 'results' | 'approved' | 'chat';
   activeCampaign: Record<string, string> | null;
+  currentRunId: string | null;
+  agentLogs: Record<string, string[]> | null;
   isAuthenticated: boolean;
   userEmail: string | null;
   userRole: 'staff' | 'client' | null;
@@ -121,6 +123,8 @@ interface OfficeStore {
   setCampaignSummary: (s: CampaignSummary) => void;
   setActiveTab: (tab: 'campaign' | 'results' | 'approved' | 'chat') => void;
   setActiveCampaign: (campaign: Record<string, string> | null) => void;
+  setCurrentRunId: (id: string | null) => void;
+  setAgentLogs: (logs: Record<string, string[]>) => void;
   checkpointLeads: LandaCheckpointLead[];
   handoverLead: LandaHandoverLead | null;
   addCheckpointLead: (lead: LandaCheckpointLead) => void;
@@ -178,6 +182,8 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   campaignSummary: null,
   activeTab: 'campaign',
   activeCampaign: null,
+  currentRunId: null,
+  agentLogs: null,
   isAuthenticated: !!sessionStorage.getItem('hive_token'),
   userEmail: sessionStorage.getItem('hive_email'),
   userRole: (sessionStorage.getItem('hive_role') as 'staff' | 'client' | null) ?? null,
@@ -309,6 +315,8 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   })),
   clearLeads: () => set({ leads: [], campaignSummary: null }),
   setCampaignSummary: (campaignSummary) => set({ campaignSummary }),
+  setCurrentRunId: (currentRunId) => set({ currentRunId }),
+  setAgentLogs: (agentLogs) => set({ agentLogs }),
   setActiveTab: (activeTab) => set({ activeTab }),
   setActiveCampaign: (activeCampaign) => set({ activeCampaign }),
 

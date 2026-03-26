@@ -1,10 +1,11 @@
+@import './theme.css';
 /* App Layout */
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #1a1a2e;
-  color: #e0e0e0;
+  background: var(--color-bg-surface);
+  color: var(--color-on-surface);
 }
 
 .app-header {

@@ -97,9 +97,9 @@ async def chat_turn(
         )
 
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.4-2026-03-05",
         messages=[{"role": "system", "content": system_prompt}] + messages,
         temperature=0.4,
-        max_tokens=500,
+        extra_body={"max_completion_tokens": 500},
     )
     return response.choices[0].message.content or ""

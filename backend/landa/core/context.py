@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 logger = logging.getLogger("landa.context")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o")
+OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-5.4-2026-03-05")
 
 # Per-agent temperature constants (Documento B Sección 1.4)
 TEMP_INVESTIGADOR: float = 0.2
