@@ -46,9 +46,10 @@ export function useWebSocket() {
   const hydrateFromDB = useCallback(async (token: string) => {
     const headers = { 'Authorization': `Bearer ${token}` };
     try {
-      const [leadsRes, campaignRes] = await Promise.all([
+      const [leadsRes, campaignRes, agentsRes] = await Promise.all([
         apiFetch(`${API_URL}/api/leads`, { headers }),
         apiFetch(`${API_URL}/api/campaigns/active`, { headers }),
+        apiFetch(`${API_URL}/api/agents`, { headers }),
       ]);
       if (leadsRes.ok) {
         const rawLeads = await leadsRes.json() as Array<Record<string, unknown>>;
@@ -75,6 +76,10 @@ export function useWebSocket() {
         });
         setLeads(leads);
         if (leads.length > 0) setActiveTab('results');
+      }
+      if (agentsRes.ok) {
+        const agents = await agentsRes.json() as Agent[];
+        if (agents.length > 0) setAgents(agents);
       }
       if (campaignRes.ok) {
         const campaign = await campaignRes.json() as Record<string, unknown>;
