@@ -82,9 +82,9 @@ export function useWebSocket() {
         if (agents.length > 0) setAgents(agents);
       }
       if (campaignRes.ok) {
-        const campaign = await campaignRes.json() as Record<string, unknown>;
+        const campaign = await campaignRes.json() as Record<string, unknown> | null;
         const clean: Record<string, string> = {};
-        for (const [k, v] of Object.entries(campaign)) {
+        for (const [k, v] of Object.entries(campaign ?? {})) {
           if (!['_id', 'user_id', 'is_active', 'created_at'].includes(k)) {
             clean[k] = String(v);
           }
@@ -94,7 +94,7 @@ export function useWebSocket() {
     } catch (e) {
       console.error('[hydrate] error:', e);
     }
-  }, [setLeads, setActiveTab, setActiveCampaign]);
+  }, [setLeads, setActiveTab, setActiveCampaign, setAgents]);
 
   const approveLead = useCallback(async (leadId: string | undefined, url: string) => {
     approveLeadLocal(leadId, url);
@@ -210,6 +210,14 @@ export function useWebSocket() {
         const msg = data as unknown as { type: string; lead_id: string };
         const { clearCheckpointLead } = useOfficeStore.getState();
         clearCheckpointLead(msg.lead_id);
+        break;
+      }
+      case 'debtor_update': {
+        // Dispatch a custom DOM event so CobranzaTab can listen without store coupling
+        const msg = data as unknown as { type: string; debtor_id: string; estado: string; intentos?: number };
+        window.dispatchEvent(new CustomEvent('cobr:debtor_update', {
+          detail: { debtor_id: msg.debtor_id, estado: msg.estado, intentos: msg.intentos },
+        }));
         break;
       }
       case 'pong':
