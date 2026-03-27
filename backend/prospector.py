@@ -432,9 +432,10 @@ async def discover_companies(
     # Prefer Google Maps (has phone/address) then supplement with Bing
     add(gmaps_results)
     add(bing_results)
-    print(
-        f"[Discovery] GMaps={len(gmaps_results)} Bing={len(bing_results)} → {len(merged)} únicos "
-        f"(saltados_historial={skipped_history}, saltados_baja_calidad={skipped_low_quality})"
+    import logging as _logging
+    _logging.getLogger(__name__).info(
+        "[Discovery] GMaps=%d Bing=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
+        len(gmaps_results), len(bing_results), len(merged), skipped_history, skipped_low_quality
     )
 
     # SECOP source: government contractors

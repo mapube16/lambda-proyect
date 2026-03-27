@@ -760,7 +760,16 @@ async def prospect(
     # Load client-specific personality prompt (set by Queen during onboarding)
     profile = await get_client_profile(user_id)
     personality_prompt = (profile or {}).get("personality_prompt", "")
-    runtime_agents = _build_runtime_agents(profile)
+    # Use DB orchestrator agents so agent_update WS messages animate the canvas
+    orch_agents = orchestrator.get_all_agents()
+    if orch_agents:
+        runtime_agents = [
+            {"id": a.id, "name": a.name, "role": a.role.value,
+             "state": "idle", "palette": a.palette, "current_tool": None}
+            for a in orch_agents
+        ]
+    else:
+        runtime_agents = _build_runtime_agents(profile)
     exclusions = await get_prospecting_excluded_domains(user_id)
 
     # Create a run document before launching the pipeline
