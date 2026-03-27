@@ -352,10 +352,32 @@ Plans:
 
 ---
 
+### Phase 17: Voice Cobranza Agent
+
+**Goal**: Cualquier cliente de Landa puede comprar el agente de cobranza, subir su cartera de deudores via CSV o ingreso manual, configurar la estrategia de cobro via onboarding conversacional, y el sistema ejecuta llamadas outbound automatizadas — negociando pagos, registrando promesas, y mostrando el estado de cada deudor en tiempo real en el dashboard.
+**Depends on**: Phase 16
+**Requirements**: COBR-01, COBR-02, COBR-03, COBR-04
+
+**Success Criteria** (what must be TRUE):
+  1. Un usuario puede subir un CSV con deudores (nombre, teléfono, monto, vencimiento) o agregarlos manualmente — los registros aparecen en su dashboard con estado `pendiente`
+  2. El onboarding conversacional le pregunta al usuario sobre su cartera (tipo de deuda, tono, urgencia) y la Queen propone una estrategia de llamadas que el usuario puede aprobar
+  3. Al aprobar la campaña, el agente inicia llamadas outbound via Vapi — durante la llamada puede consultar la deuda, negociar y registrar promesas de pago usando tool calls a los endpoints de Landa
+  4. El dashboard muestra el estado de cada deudor en tiempo real: `pendiente → llamando → promesa_de_pago → pagado → sin_contacto`, con historial de intentos y notas
+
+**Arquitectura:**
+- Colección MongoDB `debtors`: nombre, teléfono, monto, vencimiento, estado, historial_llamadas
+- CSV upload endpoint + parser en backend
+- `cobranza_agent.py`: lógica de conversación (identificación → deuda → negociación → acuerdo/rechazo)
+- Vapi assistant config: guión + tools (consultar_deuda, registrar_promesa, escalar_a_humano)
+- Webhooks Vapi: `POST /api/vapi/tool-call` para tool calls durante llamadas, `POST /api/vapi/call-ended` para actualizar estado
+- ClientDashboard: tab de cobranza con estado por deudor en tiempo real via WebSocket
+
+---
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -375,3 +397,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
 | 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete    | 2026-03-26 |
+| 17. Voice Cobranza Agent | 0/0 | Planned | - |
