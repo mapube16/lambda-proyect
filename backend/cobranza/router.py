@@ -13,6 +13,24 @@ from pydantic import BaseModel
 
 from auth import get_current_user
 from database import get_db, get_client_profile
+
+
+# ── Cobranza-enabled guard ─────────────────────────────────────────────────────
+
+async def _require_cobranza_enabled(current_user: dict) -> None:
+    """
+    Raise 403 if the current user does not have cobranza_enabled=True in
+    their company_voice document.  Purely read-only CRUD routes (list, get)
+    are NOT protected by this guard — only call-initiating routes are.
+    """
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    doc = await db.company_voice.find_one({"user_id": user_id})
+    if not doc or not doc.get("cobranza_enabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cobranza no habilitado para esta cuenta. Contacte al staff para activarlo.",
+        )
 from cobranza.debtor_crud import (
     bulk_create_debtors,
     create_debtor,
@@ -289,8 +307,10 @@ async def onboarding_approve(
     """
     POST /api/cobranza/onboarding/approve
     Persist approved (possibly user-edited) estrategia to cobranza_config collection.
+    Requires cobranza_enabled flag set by staff.
     Returns campaign_id = user_id.
     """
+    await _require_cobranza_enabled(current_user)
     user_id = str(current_user["user_id"])
     db = get_db()
 
@@ -324,8 +344,10 @@ async def llamar_ahora(
     """
     POST /api/cobranza/debtors/{debtor_id}/llamar-ahora
     Manually trigger an immediate call to a debtor.
+    Requires cobranza_enabled flag set by staff.
     Ley 2300 compliance guards applied before initiating.
     """
+    await _require_cobranza_enabled(current_user)
     user_id = str(current_user["user_id"])
     db = get_db()
 
