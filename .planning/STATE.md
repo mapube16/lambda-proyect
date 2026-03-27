@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 17-05-PLAN.md
-last_updated: "2026-03-27T18:38:20Z"
-last_activity: "2026-03-27 — Phase 17 Plan 05 complete: Vapi webhook handlers (tool-call + call-ended)"
+stopped_at: Completed 17-07-PLAN.md
+last_updated: "2026-03-27T19:49:00Z"
+last_activity: "2026-03-27 — Phase 17 Plan 07 complete: Frontend CobranzaTab + ClientDashboard section switcher"
 progress:
   total_phases: 17
   completed_phases: 5
@@ -67,6 +67,7 @@ Progress: [████░░░░░░] 40%
 | Phase 17-voice-cobranza-agent P05 | 7min | 1 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P06 | 5min | 1 tasks | 1 files |
 | Phase 17-voice-cobranza-agent P04 | 9min | 2 tasks | 3 files |
+| Phase 17-voice-cobranza-agent P07 | 9min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -142,6 +143,8 @@ Recent decisions affecting current work:
 - [Phase 17-05]: Both Vapi endpoints always return HTTP 200 — outer try/except catches everything; Vapi aborts call on non-200 response
 - [Phase 17-05]: Lazy import of manager from main inside handle_call_ended() prevents circular import at module load time
 - [Phase 17-05]: Terminal estados (promesa_de_pago, escalado, pagado) are never overwritten by endedReason mapping — tool calls set state mid-call
+- [Phase 17-07]: CustomEvent bridge (cobr:debtor_update) preferred over store coupling — CobranzaTab is self-contained with no store mutations
+- [Phase 17-07]: Section switcher uses display:none for leads panel when cobranza active — avoids remount and preserves leads scroll position
 
 ### Pending Todos
 
@@ -154,6 +157,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T18:38:20Z
-Stopped at: Completed 17-05-PLAN.md
+Last session: 2026-03-27T19:49:00Z
+Stopped at: Completed 17-07-PLAN.md
 Resume file: None
