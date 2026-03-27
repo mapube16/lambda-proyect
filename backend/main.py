@@ -638,15 +638,19 @@ async def websocket_endpoint(
     Reject with WS_1008_POLICY_VIOLATION if token is missing or invalid.
     """
     # Validate BEFORE accept — reject before handshake if invalid
+    print(f"[WS] connection attempt, token={'present' if token else 'MISSING'}")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: Optional[str] = payload.get("sub")
         if not user_id:
+            print("[WS] rejected: no user_id in token")
             raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
-    except JWTError:
+    except JWTError as e:
+        print(f"[WS] rejected: JWTError {e}")
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
 
     await manager.connect(websocket, user_id=user_id)
+    print(f"[WS] user {user_id} connected. orchestrator has {len(orchestrator.agents)} agents")
 
     # Send agents from orchestrator (DB-persisted), fallback to profile/default
     orch_agents = orchestrator.get_all_agents()
