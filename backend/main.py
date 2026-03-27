@@ -648,12 +648,21 @@ async def websocket_endpoint(
 
     await manager.connect(websocket, user_id=user_id)
 
-    # Send runtime agents from onboarding profile (fallback to default 4)
-    profile = await get_client_profile(user_id)
-    runtime_agents = _build_runtime_agents(profile)
+    # Send agents from orchestrator (DB-persisted), fallback to profile/default
+    orch_agents = orchestrator.get_all_agents()
+    if orch_agents:
+        agents_payload = []
+        for a in orch_agents:
+            d = a.model_dump()
+            if d.get("created_at"):
+                d["created_at"] = d["created_at"].isoformat()
+            agents_payload.append(d)
+    else:
+        profile = await get_client_profile(user_id)
+        agents_payload = _build_runtime_agents(profile)
     await websocket.send_json({
         "type":   "initial_state",
-        "agents": runtime_agents,
+        "agents": agents_payload,
     })
 
     try:
