@@ -244,6 +244,69 @@ async def discover_companies_gmaps(
     return results
 
 
+# ── Discovery: Serper.dev (Google Search API — works from cloud IPs) ──────────
+
+async def discover_via_serper(
+    industria: str, ciudad: str, max_results: int, api_key: str
+) -> list[dict]:
+    """
+    Google Search results via Serper.dev API.
+    Reliable from any IP (incl. Railway/AWS). ~$1 per 1000 queries.
+    Sign up: https://serper.dev
+    """
+    queries = [
+        f'empresas {industria} {ciudad} sitio web',
+        f'"{industria}" {ciudad} empresa contacto',
+        f'{industria} {ciudad} "quienes somos" OR "nuestros servicios"',
+    ]
+    seen: set[str] = set()
+    results: list[dict] = []
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        for query in queries:
+            if len(results) >= max_results:
+                break
+            try:
+                resp = await client.post(
+                    "https://google.serper.dev/search",
+                    headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+                    json={"q": query, "gl": "co", "hl": "es", "num": 10},
+                )
+                if resp.status_code != 200:
+                    logger.warning("[Serper] status=%d query=%r", resp.status_code, query)
+                    continue
+                data = resp.json()
+                organic = data.get("organic", [])
+                logger.info("[Serper] query=%r → %d organic hits", query, len(organic))
+                for item in organic:
+                    url = item.get("link", "")
+                    title = item.get("title", "")
+                    if not url or not title:
+                        continue
+                    if any(b in url.lower() for b in BLOCKED_DOMAINS):
+                        continue
+                    from urllib.parse import urlparse
+                    domain = urlparse(url).netloc.replace("www.", "")
+                    if domain in seen:
+                        continue
+                    seen.add(domain)
+                    results.append({
+                        "title": title,
+                        "url": url,
+                        "phone": item.get("phoneNumber", ""),
+                        "address": item.get("address", ""),
+                        "rating": None,
+                        "source": "serper",
+                    })
+                    if len(results) >= max_results:
+                        break
+            except Exception as e:
+                logger.warning("[Serper] query=%r error: %s", query, e)
+
+    logger.info("[Serper] total=%d for industria=%r ciudad=%r", len(results), industria, ciudad)
+    return results
+
+
 # ── Discovery: Bing web search ────────────────────────────────────────────────
 
 async def discover_companies_bing(
@@ -438,30 +501,42 @@ async def discover_companies(
 
     loop = asyncio.get_event_loop()
     per_source = max(10, max_results // 2)
+    serper_key = os.getenv("SERPER_API_KEY", "")
 
-    # Run Bing + DDG in parallel from the start (DDG is more reliable than Bing in 2026)
-    bing_task = discover_companies_bing(industria, ciudad, per_source)
-    ddg_task = loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, per_source)
-
-    extra_tasks = [bing_task, ddg_task]
-    if gmaps_key:
-        extra_tasks.append(discover_companies_gmaps(industria, ciudad, per_source, gmaps_key))
-
-    results_list = await asyncio.gather(*extra_tasks, return_exceptions=True)
-
-    bing_results = results_list[0] if isinstance(results_list[0], list) else []
-    ddg_results = results_list[1] if isinstance(results_list[1], list) else []
-    gmaps_results = results_list[2] if (gmaps_key and len(results_list) > 2 and isinstance(results_list[2], list)) else []
-
-    # Prefer Google Maps (has phone/address), then Bing, then DDG
-    add(gmaps_results)
-    add(bing_results)
-    add(ddg_results)
-
-    logger.info(
-        "[Discovery] GMaps=%d Bing=%d DDG=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
-        len(gmaps_results), len(bing_results), len(ddg_results), len(merged), skipped_history, skipped_low_quality
-    )
+    # Primary: Serper.dev (works from cloud IPs — Bing/DDG are blocked by Railway)
+    # Fallback: Bing scraper + DDG (work locally, blocked in prod)
+    if serper_key:
+        serper_results = await discover_via_serper(industria, ciudad, max_results, serper_key)
+        add(serper_results)
+        # Also run GMaps in parallel for phone/address enrichment
+        if gmaps_key and len(merged) < max_results:
+            gmaps_results = await discover_companies_gmaps(industria, ciudad, per_source, gmaps_key)
+            add(gmaps_results)
+        else:
+            gmaps_results = []
+        logger.info(
+            "[Discovery] Serper=%d GMaps=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
+            len(serper_results), len(gmaps_results), len(merged), skipped_history, skipped_low_quality
+        )
+    else:
+        # No Serper key — try Bing + DDG (may be blocked in cloud environments)
+        logger.warning("[Discovery] SERPER_API_KEY not set — falling back to Bing/DDG (may fail in prod)")
+        bing_task = discover_companies_bing(industria, ciudad, per_source)
+        ddg_task = loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, per_source)
+        extra_tasks: list = [bing_task, ddg_task]
+        if gmaps_key:
+            extra_tasks.append(discover_companies_gmaps(industria, ciudad, per_source, gmaps_key))
+        results_list = await asyncio.gather(*extra_tasks, return_exceptions=True)
+        bing_results = results_list[0] if isinstance(results_list[0], list) else []
+        ddg_results = results_list[1] if isinstance(results_list[1], list) else []
+        gmaps_results = results_list[2] if (gmaps_key and len(results_list) > 2 and isinstance(results_list[2], list)) else []
+        add(gmaps_results)
+        add(bing_results)
+        add(ddg_results)
+        logger.info(
+            "[Discovery] GMaps=%d Bing=%d DDG=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
+            len(gmaps_results), len(bing_results), len(ddg_results), len(merged), skipped_history, skipped_low_quality
+        )
 
     # SECOP source: government contractors
     if use_secop and len(merged) < max_results:
@@ -471,13 +546,6 @@ async def discover_companies(
         secop_resolved = await resolve_secop_urls(secop_raw, max_concurrent=3)
         add_secop(secop_resolved[:secop_needed])
         logger.info("[Discovery] SECOP: %d raw → %d resueltas → %d total", len(secop_raw), len(secop_resolved), len(merged))
-
-    # If still under target, run a second DDG pass with more queries
-    if len(merged) < max_results:
-        missing = max_results - len(merged)
-        ddg_extra = await loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, missing * 3)
-        add(ddg_extra)
-        logger.info("[Discovery] DDG refill: +%d raw → %d final", len(ddg_extra), len(merged))
 
     return merged
 
