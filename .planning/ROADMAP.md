@@ -409,4 +409,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
 | 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete    | 2026-03-26 |
-| 17. Voice Cobranza Agent | 0/0 | Planned | - |
+| 17. Voice Cobranza Agent | 1/8 | In Progress|  |
