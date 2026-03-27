@@ -53,6 +53,11 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.registration_requests.create_index([("created_at", -1)])
     # ── Agents persistence ───────────────────────────────────────────────────
     await db.agents.create_index("agent_id", unique=True)
+    # ── Phase 17: Cobranza debtors indexes ───────────────────────────────────
+    await db.debtors.create_index([("user_id", 1), ("estado", 1)])
+    await db.debtors.create_index([("user_id", 1), ("created_at", -1)])
+    await db.debtors.create_index("vapi_call_id", sparse=True)
+    await db.debtors.create_index([("user_id", 1), ("telefono", 1)], unique=True)
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
