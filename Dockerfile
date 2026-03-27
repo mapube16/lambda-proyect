@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend source (includes framework/ package)
 COPY backend/ ./backend/
+COPY personalidad.md ./
 
 # Copy built frontend into backend's expected location
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
