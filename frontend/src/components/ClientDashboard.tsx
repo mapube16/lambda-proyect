@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useOfficeStore } from '../store/officeStore';
 import { LeadDossierModal } from './LeadDossierModal';
+import { CobranzaTab } from './CobranzaTab';
+import { apiFetch } from '../lib/apiFetch';
 
 const API = '';
 
@@ -341,6 +343,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   const { authToken, userEmail, clearAuth } = useOfficeStore();
   const token = authToken || sessionStorage.getItem('hive_token') || '';
 
+  const [section, setSection]  = useState<'leads' | 'cobranza'>('leads');
   const [leads, setLeads]      = useState<ApiLead[]>([]);
   const [loading, setLoading]  = useState(true);
   const [tab, setTab]          = useState<Tab>('pending');
@@ -356,7 +359,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   const fetchLeads = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const r = await fetch(`${API}/api/leads`, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await apiFetch(`${API}/api/leads`, { headers: { Authorization: `Bearer ${token}` } });
       const d = await r.json();
       setLeads(Array.isArray(d) ? d : []);
     } catch { if (!silent) setLeads([]); }
@@ -392,7 +395,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
     if (status === 'approved') {
       // Fire immediately
-      fetch(`${API}/api/leads/${id}/approve`, {
+      apiFetch(`${API}/api/leads/${id}/approve`, {
         method: 'PATCH', headers: { Authorization: `Bearer ${token}` },
       }).catch(() => {});
       setTick(t => t + 1);
@@ -402,7 +405,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
       // Delay 5s so user can undo
       const tid = setTimeout(() => {
         pendingRejects.current.delete(id);
-        fetch(`${API}/api/leads/${id}/reject`, {
+        apiFetch(`${API}/api/leads/${id}/reject`, {
           method: 'PATCH',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ motivo: 'manual_reject' }),
@@ -460,9 +463,34 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
         {/* Navigation — single source of truth for tab */}
         <nav style={{ flex: 1, paddingTop: 4 }}>
-          <NavItem emoji="🔍" text="Pipeline"    active={tab === 'pending'}  count={pending.length}  onClick={() => setTab('pending')}  />
-          <NavItem emoji="✅" text="Aprobados"   active={tab === 'approved'} count={approved.length} onClick={() => setTab('approved')} />
-          <NavItem emoji="✕"  text="Descartados" active={tab === 'rejected'} count={rejected.length} onClick={() => setTab('rejected')} />
+          {/* Section switcher */}
+          <div style={{ display: 'flex', margin: '0 12px 8px', gap: 4 }}>
+            {(['leads', 'cobranza'] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setSection(s)}
+                style={{
+                  flex: 1, padding: '6px 0', border: 'none', cursor: 'pointer',
+                  background: section === s ? (s === 'cobranza' ? 'rgba(252,152,103,0.12)' : C.cyanBg) : 'transparent',
+                  borderBottom: `2px solid ${section === s ? (s === 'cobranza' ? '#fc9867' : C.cyan) : 'transparent'}`,
+                  fontFamily: C.SG, fontWeight: 600, fontSize: 10, letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: section === s ? (s === 'cobranza' ? '#fc9867' : C.cyan) : C.muted,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {s === 'leads' ? '🔍 Leads' : '📞 Cobro'}
+              </button>
+            ))}
+          </div>
+
+          {section === 'leads' && (
+            <>
+              <NavItem emoji="🔍" text="Pipeline"    active={tab === 'pending'}  count={pending.length}  onClick={() => setTab('pending')}  />
+              <NavItem emoji="✅" text="Aprobados"   active={tab === 'approved'} count={approved.length} onClick={() => setTab('approved')} />
+              <NavItem emoji="✕"  text="Descartados" active={tab === 'rejected'} count={rejected.length} onClick={() => setTab('rejected')} />
+            </>
+          )}
 
           {onBack && (
             <>
@@ -521,8 +549,11 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(to right, transparent, rgba(120,220,232,0.12), transparent)', pointerEvents: 'none' }} />
         </header>
 
-        {/* Scrollable body */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
+        {/* Cobranza section */}
+        {section === 'cobranza' && <CobranzaTab />}
+
+        {/* Scrollable body — leads section */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px', display: section === 'leads' ? undefined : 'none' }}>
 
           {/* Page heading — reflects active tab */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22 }}>
