@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 17-07-PLAN.md
-last_updated: "2026-03-27T19:49:00Z"
-last_activity: "2026-03-27 — Phase 17 Plan 07 complete: Frontend CobranzaTab + ClientDashboard section switcher"
+stopped_at: Completed 17-08-PLAN.md
+last_updated: "2026-03-27T20:08:18Z"
+last_activity: "2026-03-27 — Phase 17 Plan 08 complete: cobranza router wired, scheduler jobs registered, cobranza_enabled staff gate, 8 COBR tests green"
 progress:
   total_phases: 17
   completed_phases: 5
   total_plans: 43
-  completed_plans: 37
-  percent: 43
+  completed_plans: 38
+  percent: 44
 ---
 
 # Project State
@@ -30,7 +30,7 @@ Plan: —
 Status: Planning (not started)
 Last activity: 2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11
 
-Progress: [████░░░░░░] 40%
+Progress: [████░░░░░░] 44%
 
 ## Performance Metrics
 
@@ -68,6 +68,7 @@ Progress: [████░░░░░░] 40%
 | Phase 17-voice-cobranza-agent P06 | 5min | 1 tasks | 1 files |
 | Phase 17-voice-cobranza-agent P04 | 9min | 2 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P07 | 9min | 2 tasks | 3 files |
+| Phase 17-voice-cobranza-agent P08 | 8min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -137,6 +138,9 @@ Recent decisions affecting current work:
 - [Phase 17-04]: generate_cobranza_proposal fallback triggers on ANY exception — OpenAI errors never surface as 500 to user
 - [Phase 17-04]: llamar-ahora returns 202 immediately; Vapi call result updates debtor estado async via asyncio.create_task
 - [Phase 17-04]: cobranza_config uses user_id as upsert key — one campaign config per tenant, overwrites on re-approval
+- [Phase 17-08]: cobranza_enabled flag on company_voice document; only call-initiating endpoints guarded (llamar-ahora, onboarding/approve); CRUD remains open
+- [Phase 17-08]: POST /api/staff/clients/{id}/cobranza/enable uses upsert — idempotent, works for new and existing company_voice docs
+- [Phase 17-08]: test helper enable_cobranza_for_user() sets flag directly in mock DB — decouples test setup from staff auth flow
 - [Phase 17-voice-cobranza-agent]: register_cobranza_jobs() accepts scheduler as parameter — no circular import with landa.scheduler; called in main.py lifespan
 - [Phase 17-voice-cobranza-agent]: asyncio.create_task() for fire-and-forget Vapi call dispatch from campaign_scheduler jobs — avoids blocking the job loop
 - [Phase 17-voice-cobranza-agent]: rescue_stuck_llamando_job resets to sin_contacto (not pendiente) — debtor needs re-contact, not initial contact

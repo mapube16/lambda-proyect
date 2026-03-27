@@ -382,7 +382,7 @@ Plans:
 - [x] 17-05-PLAN.md — Wave 3: Vapi webhooks (tool-call + call-ended handlers)
 - [x] 17-06-PLAN.md — Wave 3: APScheduler campaign jobs (pre/post-vencimiento + rescue fallback)
 - [x] 17-07-PLAN.md — Wave 4: Frontend CobranzaTab (debtor table + filters + detail modal + real-time WS)
-- [ ] 17-08-PLAN.md — Wave 5: Wire main.py + turn xfail stubs green + human-verify checkpoint
+- [x] 17-08-PLAN.md — Wave 5: Wire main.py + turn xfail stubs green + human-verify checkpoint
 
 ---
 
@@ -409,4 +409,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
 | 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete    | 2026-03-26 |
-| 17. Voice Cobranza Agent | 4/8 | In Progress|  |
+| 17. Voice Cobranza Agent | 8/8 | Complete | 2026-03-27 |
