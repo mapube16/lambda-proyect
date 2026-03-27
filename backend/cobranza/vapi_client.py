@@ -1,0 +1,78 @@
+"""
+vapi_client.py — AsyncVapi wrapper for outbound Vapi call creation.
+
+Provides initiate_call() and cancel_call() using lazy import of AsyncVapi
+so the SDK is optional at startup (consistent with Phase 16 WhatsApp lazy import pattern).
+"""
+import os
+import logging
+from datetime import datetime
+
+logger = logging.getLogger("cobranza.vapi")
+
+
+async def initiate_call(debtor: dict, config: dict) -> str:
+    """
+    Create an outbound Vapi call for the debtor.
+
+    config must have: vapi_api_key, vapi_assistant_id, vapi_phone_number_id.
+    Falls back to environment variables VAPI_API_KEY, VAPI_ASSISTANT_ID,
+    VAPI_PHONE_NUMBER_ID if config keys are absent.
+
+    Returns Vapi call_id string.
+    Raises ValueError if VAPI_API_KEY missing from both config and env.
+    Raises RuntimeError on Vapi API error.
+    """
+    from vapi import AsyncVapi  # lazy import — SDK optional at startup
+
+    api_key = config.get("vapi_api_key") or os.getenv("VAPI_API_KEY")
+    if not api_key:
+        raise ValueError("VAPI_API_KEY not configured")
+
+    assistant_id = config.get("vapi_assistant_id") or os.getenv("VAPI_ASSISTANT_ID")
+    phone_number_id = config.get("vapi_phone_number_id") or os.getenv("VAPI_PHONE_NUMBER_ID")
+
+    vencimiento_str = ""
+    if isinstance(debtor.get("vencimiento"), datetime):
+        vencimiento_str = debtor["vencimiento"].strftime("%d de %B de %Y")
+    elif debtor.get("vencimiento"):
+        vencimiento_str = str(debtor["vencimiento"])
+
+    client = AsyncVapi(token=api_key)
+    try:
+        call = await client.calls.create(
+            assistant_id=assistant_id,
+            phone_number_id=phone_number_id,
+            customer={"number": debtor["telefono"], "name": debtor.get("nombre", "")},
+            assistant_overrides={
+                "variable_values": {
+                    "debtor_id": str(debtor["_id"]),
+                    "debtor_name": debtor.get("nombre", ""),
+                    "monto": f"{debtor.get('monto', 0):,.0f}",
+                    "vencimiento": vencimiento_str,
+                }
+            },
+        )
+        logger.info("[Vapi] Call created: %s → debtor %s", call.id, debtor["_id"])
+        return call.id
+    except Exception as e:
+        logger.error("[Vapi] Call creation failed: %s", e)
+        raise RuntimeError(f"Vapi call creation failed: {e}") from e
+
+
+async def cancel_call(call_id: str) -> bool:
+    """Cancel an in-progress Vapi call. Returns True on success, False on failure."""
+    from vapi import AsyncVapi  # lazy import
+
+    api_key = os.getenv("VAPI_API_KEY")
+    if not api_key:
+        logger.warning("[Vapi] VAPI_API_KEY not set — cannot cancel call %s", call_id)
+        return False
+    client = AsyncVapi(token=api_key)
+    try:
+        await client.calls.delete(call_id)
+        logger.info("[Vapi] Call cancelled: %s", call_id)
+        return True
+    except Exception as e:
+        logger.warning("[Vapi] Cancel failed for %s: %s", call_id, e)
+        return False
