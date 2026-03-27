@@ -372,6 +372,18 @@ Plans:
 - Webhooks Vapi: `POST /api/vapi/tool-call` para tool calls durante llamadas, `POST /api/vapi/call-ended` para actualizar estado
 - ClientDashboard: tab de cobranza con estado por deudor en tiempo real via WebSocket
 
+**Plans**: 8 plans
+
+Plans:
+- [ ] 17-01-PLAN.md — Wave 1: xfail test stubs for COBR-01/02/03/04 (Nyquist scaffold)
+- [ ] 17-02-PLAN.md — Wave 2: Debtor CRUD + CSV upload + manual entry endpoints
+- [ ] 17-03-PLAN.md — Wave 2: Ley 2300 compliance engine + Vapi client wrapper
+- [ ] 17-04-PLAN.md — Wave 3: Cobranza Queen onboarding + campaign approval + llamar-ahora
+- [ ] 17-05-PLAN.md — Wave 3: Vapi webhooks (tool-call + call-ended handlers)
+- [ ] 17-06-PLAN.md — Wave 3: APScheduler campaign jobs (pre/post-vencimiento + rescue fallback)
+- [ ] 17-07-PLAN.md — Wave 4: Frontend CobranzaTab (debtor table + filters + detail modal + real-time WS)
+- [ ] 17-08-PLAN.md — Wave 5: Wire main.py + turn xfail stubs green + human-verify checkpoint
+
 ---
 
 ## Progress
