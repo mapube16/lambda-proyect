@@ -287,7 +287,10 @@ async def discover_companies_bing(
                     or soup.select("#b_results > li")
                     or soup.select(".b_algo")
                 )
-                logger.info("[Bing] query=%r status=%d candidates=%d", q, resp.status_code, len(candidates))
+                if not candidates:
+                    logger.warning("[Bing] 0 candidates — page snippet: %s", resp.text[:300].replace('\n', ' '))
+                else:
+                    logger.info("[Bing] query=%r status=%d candidates=%d", q, resp.status_code, len(candidates))
                 for li in candidates:
                     a = li.select_one("h2 a") or li.select_one("a[href^='http']")
                     if not a:
