@@ -12,6 +12,7 @@ Results are broadcast via WebSocket as they arrive.
 import os
 import re
 import asyncio
+import logging
 import httpx
 from pathlib import Path
 from openai import AsyncOpenAI
@@ -21,6 +22,8 @@ try:
 except ImportError:
     from duckduckgo_search import DDGS  # legacy fallback
 from models import AgentRole, AgentState
+
+logger = logging.getLogger(__name__)
 
 # Load personalidad.md once at module level
 _PERSONALIDAD_PATH = Path(__file__).parent.parent / "personalidad.md"
@@ -214,7 +217,7 @@ async def discover_companies_gmaps(
             data = resp.json()
             api_status = data.get("status", "ERROR")
             places = data.get("results", [])
-            print(f"[Google Maps] status={resp.status_code} api_status={api_status} places={len(places)}")
+            logger.info("[Google Maps] status=%d api_status=%s places=%d", resp.status_code, api_status, len(places))
 
             if resp.status_code != 200 or api_status not in ("OK", "ZERO_RESULTS"):
                 return results
@@ -236,7 +239,7 @@ async def discover_companies_gmaps(
                     continue
                 results.append(detail)
     except Exception as e:
-        print(f"[Google Maps error] {e}")
+        logger.warning("[Google Maps error] %s", e)
 
     return results
 
@@ -272,14 +275,21 @@ async def discover_companies_bing(
     async def search_query(q: str) -> list[dict]:
         found = []
         try:
-            url = f"https://www.bing.com/search?q={httpx.URL(path='').params.merge({'q': q})}&count=20&setlang=es"
             async with httpx.AsyncClient(timeout=12, headers=headers, follow_redirects=True) as client:
-                resp = await client.get(f"https://www.bing.com/search", params={"q": q, "count": "20", "setlang": "es"})
+                resp = await client.get("https://www.bing.com/search", params={"q": q, "count": "20", "setlang": "es"})
                 if resp.status_code != 200:
+                    logger.warning("[Bing] status=%d for query=%r", resp.status_code, q)
                     return found
                 soup = BeautifulSoup(resp.text, "html.parser")
-                for li in soup.select("li.b_algo"):
-                    a = li.select_one("h2 a")
+                # Try multiple selectors — Bing changes class names regularly
+                candidates = (
+                    soup.select("li.b_algo")
+                    or soup.select("#b_results > li")
+                    or soup.select(".b_algo")
+                )
+                logger.info("[Bing] query=%r status=%d candidates=%d", q, resp.status_code, len(candidates))
+                for li in candidates:
+                    a = li.select_one("h2 a") or li.select_one("a[href^='http']")
                     if not a:
                         continue
                     href = a.get("href", "")
@@ -295,14 +305,14 @@ async def discover_companies_bing(
                     title = a.get_text(strip=True)
                     found.append({
                         "title": title,
-                        "url": href.split("?")[0],  # strip tracking params
+                        "url": href.split("?")[0],
                         "phone": "",
                         "address": "",
                         "rating": None,
                         "source": "bing",
                     })
         except Exception as e:
-            print(f"[Bing error] {e}")
+            logger.warning("[Bing error] %s", e)
         return found
 
     # Run 3 queries in parallel
@@ -321,7 +331,7 @@ async def discover_companies_bing(
 # ── Discovery: DuckDuckGo fallback ────────────────────────────────────────────
 
 def _discover_ddg_multi(industria: str, ciudad: str, max_results: int) -> list[dict]:
-    """3 parallel DDG queries for wider coverage."""
+    """3 sequential DDG queries for wider coverage."""
     queries = [
         f'{industria} {ciudad} empresa web oficial',
         f'empresa "{industria}" en {ciudad} contacto',
@@ -329,32 +339,42 @@ def _discover_ddg_multi(industria: str, ciudad: str, max_results: int) -> list[d
     ]
     seen: set[str] = set()
     results = []
+    _log = logging.getLogger(__name__)
+    _log.info("[DDG] Starting discovery: industria=%r ciudad=%r max=%d", industria, ciudad, max_results)
     try:
-        with DDGS() as ddgs:
-            for query in queries:
-                for r in ddgs.text(query, max_results=max_results):
-                    url = r.get("href", "")
-                    if not url or not url.startswith("http"):
-                        continue
-                    if any(b in url.lower() for b in BLOCKED_DOMAINS):
-                        continue
-                    from urllib.parse import urlparse
-                    domain = urlparse(url).netloc.replace("www.", "")
-                    if domain in seen:
-                        continue
-                    seen.add(domain)
-                    results.append({
-                        "title": r.get("title", ""),
-                        "url": url,
-                        "phone": "",
-                        "address": "",
-                        "rating": None,
-                        "source": "duckduckgo",
-                    })
-                    if len(results) >= max_results:
-                        return results
+        ddgs = DDGS()
+        for query in queries:
+            try:
+                hits = list(ddgs.text(query, max_results=max_results))
+                _log.info("[DDG] query=%r → %d hits", query, len(hits))
+            except Exception as qe:
+                _log.warning("[DDG] query=%r failed: %s", query, qe)
+                continue
+            for r in hits:
+                url = r.get("href", "") or r.get("url", "")
+                if not url or not url.startswith("http"):
+                    continue
+                if any(b in url.lower() for b in BLOCKED_DOMAINS):
+                    continue
+                from urllib.parse import urlparse
+                domain = urlparse(url).netloc.replace("www.", "")
+                if domain in seen:
+                    continue
+                seen.add(domain)
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": url,
+                    "phone": "",
+                    "address": "",
+                    "rating": None,
+                    "source": "duckduckgo",
+                })
+                if len(results) >= max_results:
+                    _log.info("[DDG] Reached max_results=%d", max_results)
+                    return results
     except Exception as e:
-        print(f"[DuckDuckGo error] {e}")
+        _log.warning("[DDG] Fatal error: %s", e)
+    _log.info("[DDG] Total results: %d", len(results))
     return results
 
 
@@ -413,29 +433,31 @@ async def discover_companies(
             seen_nits.add(nit)
             merged.append(item)
 
-    # Run Google Maps + Bing in parallel
+    loop = asyncio.get_event_loop()
     per_source = max(10, max_results // 2)
-    tasks = [discover_companies_bing(industria, ciudad, per_source)]
+
+    # Run Bing + DDG in parallel from the start (DDG is more reliable than Bing in 2026)
+    bing_task = discover_companies_bing(industria, ciudad, per_source)
+    ddg_task = loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, per_source)
+
+    extra_tasks = [bing_task, ddg_task]
     if gmaps_key:
-        tasks.append(discover_companies_gmaps(industria, ciudad, per_source, gmaps_key))
+        extra_tasks.append(discover_companies_gmaps(industria, ciudad, per_source, gmaps_key))
 
-    results_list = await asyncio.gather(*tasks, return_exceptions=True)
+    results_list = await asyncio.gather(*extra_tasks, return_exceptions=True)
 
-    gmaps_results = []
-    bing_results = []
-    if gmaps_key and len(results_list) == 2:
-        bing_results = results_list[0] if isinstance(results_list[0], list) else []
-        gmaps_results = results_list[1] if isinstance(results_list[1], list) else []
-    else:
-        bing_results = results_list[0] if isinstance(results_list[0], list) else []
+    bing_results = results_list[0] if isinstance(results_list[0], list) else []
+    ddg_results = results_list[1] if isinstance(results_list[1], list) else []
+    gmaps_results = results_list[2] if (gmaps_key and len(results_list) > 2 and isinstance(results_list[2], list)) else []
 
-    # Prefer Google Maps (has phone/address) then supplement with Bing
+    # Prefer Google Maps (has phone/address), then Bing, then DDG
     add(gmaps_results)
     add(bing_results)
-    import logging as _logging
-    _logging.getLogger(__name__).info(
-        "[Discovery] GMaps=%d Bing=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
-        len(gmaps_results), len(bing_results), len(merged), skipped_history, skipped_low_quality
+    add(ddg_results)
+
+    logger.info(
+        "[Discovery] GMaps=%d Bing=%d DDG=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
+        len(gmaps_results), len(bing_results), len(ddg_results), len(merged), skipped_history, skipped_low_quality
     )
 
     # SECOP source: government contractors
@@ -443,27 +465,16 @@ async def discover_companies(
         from secop import discover_companies_secop, resolve_secop_urls
         secop_needed = max_results - len(merged)
         secop_raw = await discover_companies_secop(industria, ciudad, secop_needed * 2)
-        # Resolve URLs for SECOP companies before adding
         secop_resolved = await resolve_secop_urls(secop_raw, max_concurrent=3)
         add_secop(secop_resolved[:secop_needed])
-        print(f"[Discovery] SECOP: {len(secop_raw)} raw → {len(secop_resolved)} resueltas → {len(merged)} total")
+        logger.info("[Discovery] SECOP: %d raw → %d resueltas → %d total", len(secop_raw), len(secop_resolved), len(merged))
 
-    # If exclusions removed many companies, try supplementary DDG search to refill.
+    # If still under target, run a second DDG pass with more queries
     if len(merged) < max_results:
         missing = max_results - len(merged)
-        if missing > 0:
-            loop = asyncio.get_event_loop()
-            ddg_extra = await loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, min(max_results * 3, max_results + missing * 2))
-            add(ddg_extra)
-            print(f"[Discovery] Supplementary DDG refill: +{len(ddg_extra)} raw → {len(merged)} final")
-
-    # DDG fallback if still empty
-    if not merged:
-        print("[Discovery] Falling back to DuckDuckGo")
-        loop = asyncio.get_event_loop()
-        ddg = await loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, max_results)
-        add(ddg)
-        print(f"[Discovery] DuckDuckGo: {len(ddg)} empresas")
+        ddg_extra = await loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, missing * 3)
+        add(ddg_extra)
+        logger.info("[Discovery] DDG refill: +%d raw → %d final", len(ddg_extra), len(merged))
 
     return merged
 
@@ -1172,7 +1183,7 @@ async def run_prospect(
                     })
                     result["lead_id"] = lead_id  # MongoDB _id — frontend uses this for HITL
                 except Exception as _e:
-                    print(f"[prospector] save_lead error: {_e}")
+                    logger.warning("[prospector] save_lead error: %s", _e)
 
             await ws({"type": "lead_result", **result})
 
