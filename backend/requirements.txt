@@ -17,3 +17,6 @@ bcrypt==4.0.1
 apscheduler>=3.10.4
 twilio>=9.0.0
 beautifulsoup4==4.14.3
+phonenumbers==9.0.26
+pytz>=2024.1
+vapi_server_sdk>=0.1.0

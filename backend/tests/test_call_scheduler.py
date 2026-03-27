@@ -27,8 +27,8 @@ def _make_dt(year, month, day, hour, minute=0, tz=COLOMBIA_TZ):
 def test_monday_2am_not_allowed():
     """Monday 2am Colombia → not allowed (outside 7am-7pm)."""
     from cobranza.call_scheduler import is_contact_allowed_now
-    # 2026-03-23 is Monday
-    fake_now = _make_dt(2026, 3, 23, 2, 0)
+    # 2026-03-30 is Monday (not a holiday)
+    fake_now = _make_dt(2026, 3, 30, 2, 0)
     with patch("cobranza.call_scheduler.datetime") as mock_dt:
         mock_dt.now.return_value = fake_now
         assert is_contact_allowed_now() is False
@@ -37,7 +37,8 @@ def test_monday_2am_not_allowed():
 def test_monday_10am_allowed():
     """Monday 10am Colombia → allowed."""
     from cobranza.call_scheduler import is_contact_allowed_now
-    fake_now = _make_dt(2026, 3, 23, 10, 0)
+    # 2026-03-30 is Monday (not a holiday)
+    fake_now = _make_dt(2026, 3, 30, 10, 0)
     with patch("cobranza.call_scheduler.datetime") as mock_dt:
         mock_dt.now.return_value = fake_now
         assert is_contact_allowed_now() is True
