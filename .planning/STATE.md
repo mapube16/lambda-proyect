@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 17-06-PLAN.md
-last_updated: "2026-03-27T19:30:56.918Z"
-last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
+stopped_at: Completed 17-05-PLAN.md
+last_updated: "2026-03-27T18:38:20Z"
+last_activity: "2026-03-27 — Phase 17 Plan 05 complete: Vapi webhook handlers (tool-call + call-ended)"
 progress:
   total_phases: 17
   completed_phases: 5
   total_plans: 43
-  completed_plans: 35
-  percent: 40
+  completed_plans: 37
+  percent: 43
 ---
 
 # Project State
@@ -64,7 +64,9 @@ Progress: [████░░░░░░] 40%
 | Phase 17-voice-cobranza-agent P01 | 2 | 1 tasks | 1 files |
 | Phase 17-voice-cobranza-agent P03 | 5min | 2 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P02 | 8 | 2 tasks | 5 files |
+| Phase 17-voice-cobranza-agent P05 | 7min | 1 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P06 | 5min | 1 tasks | 1 files |
+| Phase 17-voice-cobranza-agent P04 | 9min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -130,9 +132,16 @@ Recent decisions affecting current work:
 - [Phase 17-voice-cobranza-agent]: router.py not included in main.py yet — Plan 17-08 registers the router
 - [Phase 17-voice-cobranza-agent]: reactivar endpoint guards on estado=='pausado' — prevents unintentional state resets, returns 400 on non-pausado
 - [Phase 17-voice-cobranza-agent]: DebtorPatch uses Optional fields — only non-None fields included in $set to avoid nulling existing data
+- [Phase 17-04]: empresa_nombre fetched live from get_client_profile at onboarding/start — avoids stale data in Queen module
+- [Phase 17-04]: generate_cobranza_proposal fallback triggers on ANY exception — OpenAI errors never surface as 500 to user
+- [Phase 17-04]: llamar-ahora returns 202 immediately; Vapi call result updates debtor estado async via asyncio.create_task
+- [Phase 17-04]: cobranza_config uses user_id as upsert key — one campaign config per tenant, overwrites on re-approval
 - [Phase 17-voice-cobranza-agent]: register_cobranza_jobs() accepts scheduler as parameter — no circular import with landa.scheduler; called in main.py lifespan
 - [Phase 17-voice-cobranza-agent]: asyncio.create_task() for fire-and-forget Vapi call dispatch from campaign_scheduler jobs — avoids blocking the job loop
 - [Phase 17-voice-cobranza-agent]: rescue_stuck_llamando_job resets to sin_contacto (not pendiente) — debtor needs re-contact, not initial contact
+- [Phase 17-05]: Both Vapi endpoints always return HTTP 200 — outer try/except catches everything; Vapi aborts call on non-200 response
+- [Phase 17-05]: Lazy import of manager from main inside handle_call_ended() prevents circular import at module load time
+- [Phase 17-05]: Terminal estados (promesa_de_pago, escalado, pagado) are never overwritten by endedReason mapping — tool calls set state mid-call
 
 ### Pending Todos
 
@@ -145,6 +154,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T19:30:56.914Z
-Stopped at: Completed 17-06-PLAN.md
+Last session: 2026-03-27T18:38:20Z
+Stopped at: Completed 17-05-PLAN.md
 Resume file: None
