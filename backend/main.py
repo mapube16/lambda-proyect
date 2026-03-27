@@ -2747,6 +2747,10 @@ async def whatsapp_incoming(request: Request):
     return Response(content="<Response/>", media_type="text/xml")
 
 
+# ── Phase 17: Vapi webhook routes (cobranza voice agent) ─────────────────────
+from cobranza.webhooks import vapi_router as _vapi_router
+app.include_router(_vapi_router)
+
 # Servir archivos estáticos del frontend (build de Vite) — al final para no interceptar rutas API
 import pathlib
 frontend_dist = pathlib.Path(__file__).parent.parent / "frontend" / "dist"
