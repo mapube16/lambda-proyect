@@ -1,5 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useOfficeStore } from './store/officeStore';
+import type { Agent } from './types/index';
+
+const _BACKEND = (import.meta as any).env?.VITE_BACKEND_URL || '';
 import { LoginView } from './components/LoginView';
 import { StaffDashboard } from './components/StaffDashboard';
 import { ClientDashboard } from './components/ClientDashboard';
@@ -74,7 +77,18 @@ function RailBtn({ icon, active = false, title, onClick }: {
 function OfficeView() {
   const { createAgent, runTask, startProspect, approveLead, rejectLead } = useWebSocket();
   useGameLoop();
-  const { userEmail, clearAuth, agents } = useOfficeStore();
+  const { userEmail, clearAuth, agents, setAgents } = useOfficeStore();
+
+  // Hard fetch on mount — bypasses all store/WS timing issues
+  useEffect(() => {
+    const token = sessionStorage.getItem('hive_token');
+    if (!token) return;
+    fetch(`${_BACKEND}/api/agents`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : [])
+      .then((data: Agent[]) => { if (data?.length) setAgents(data); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [view, setView] = useState<'office' | 'dashboard'>('office');
   const agentCount = agents.size;
   const activeAgents = Array.from(agents.values()).filter(a => a.state !== 'idle').length;
