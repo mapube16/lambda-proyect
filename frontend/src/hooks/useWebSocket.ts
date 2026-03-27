@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useOfficeStore } from '../store/officeStore';
 import type { Lead, LandaCheckpointLead, LandaHandoverLead } from '../store/officeStore';
 import type { WSMessage, AgentUpdateMessage, InitialStateMessage, Agent } from '../types';
+import { apiFetch } from '../lib/apiFetch';
 
 const BACKEND = (import.meta as any).env?.VITE_BACKEND_URL || '';
 const API_URL = BACKEND;
@@ -46,8 +47,8 @@ export function useWebSocket() {
     const headers = { 'Authorization': `Bearer ${token}` };
     try {
       const [leadsRes, campaignRes] = await Promise.all([
-        fetch(`${API_URL}/api/leads`, { headers }),
-        fetch(`${API_URL}/api/campaigns/active`, { headers }),
+        apiFetch(`${API_URL}/api/leads`, { headers }),
+        apiFetch(`${API_URL}/api/campaigns/active`, { headers }),
       ]);
       if (leadsRes.ok) {
         const rawLeads = await leadsRes.json() as Array<Record<string, unknown>>;
@@ -95,7 +96,7 @@ export function useWebSocket() {
     if (!leadId) return;
     const token = useOfficeStore.getState().authToken;
     if (!token) return;
-    fetch(`${API_URL}/api/leads/${leadId}/approve`, {
+    apiFetch(`${API_URL}/api/leads/${leadId}/approve`, {
       method: 'PATCH',
       headers: { 'Authorization': `Bearer ${token}` },
     }).catch(e => console.error('[approveLead]', e));
@@ -106,7 +107,7 @@ export function useWebSocket() {
     if (!leadId) return;
     const token = useOfficeStore.getState().authToken;
     if (!token) return;
-    fetch(`${API_URL}/api/leads/${leadId}/reject`, {
+    apiFetch(`${API_URL}/api/leads/${leadId}/reject`, {
       method: 'PATCH',
       headers: { 'Authorization': `Bearer ${token}` },
     }).catch(e => console.error('[rejectLead]', e));
@@ -214,6 +215,17 @@ export function useWebSocket() {
   }, [setAgents, updateAgent, addAgent, removeAgent, setExpediente, setProspecting,
       addLead, clearLeads, setCampaignSummary, setActiveTab, addCheckpointLead, setHandoverLead]);
 
+  // Load agents via HTTP immediately — no WebSocket dependency
+  useEffect(() => {
+    if (!isAuthenticated || !authToken) return;
+    apiFetch(`${API_URL}/api/agents`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then((agents: Agent[]) => { if (agents.length > 0) setAgents(agents); })
+      .catch(() => {});
+  }, [isAuthenticated, authToken, setAgents]);
+
   useEffect(() => {
     // Don't connect if not authenticated
     if (!isAuthenticated || !authToken) {
@@ -303,7 +315,7 @@ export function useWebSocket() {
     setCurrentRunId(null);
     setProspecting(true);
     try {
-      const res = await fetch(`${API_URL}/api/prospect`, {
+      const res = await apiFetch(`${API_URL}/api/prospect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ campaign, max_results }),
