@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 16-06-PLAN.md
-last_updated: "2026-03-26T04:03:14.767Z"
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-03-27T17:21:46.419Z"
 last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
 progress:
-  total_phases: 16
+  total_phases: 17
   completed_phases: 5
-  total_plans: 35
-  completed_plans: 31
+  total_plans: 43
+  completed_plans: 32
   percent: 40
 ---
 
@@ -61,6 +61,7 @@ Progress: [████░░░░░░] 40%
 | Phase 16-whatsapp-conversational-advisor-bot P05 | 10m | 1 tasks | 2 files |
 | Phase 16-whatsapp-conversational-advisor-bot P06 | 5m | smoke test | all green |
 | Phase 16-whatsapp-conversational-advisor-bot P06 | 5m | 2 tasks | 0 files |
+| Phase 17-voice-cobranza-agent P01 | 2 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -118,6 +119,9 @@ Recent decisions affecting current work:
 - [Phase 16-whatsapp-conversational-advisor-bot]: No new code changes in 16-06 — pure smoke-test plan; all fixes already in place from 16-01..16-05
 - [Phase 16-whatsapp-conversational-advisor-bot]: TOOLS_ASESOR ended up 7 tools (crear_reunion added beyond spec in 16-05) — accepted as additive, not regression
 - [Phase 16-whatsapp-conversational-advisor-bot]: 2 xfailed tests are legitimate manual-only verification stubs; CI should not block on them
+- [Phase 17-voice-cobranza-agent]: strict=False on all xfail markers — stubs show as xfail not failures, CI never blocks on unimplemented cobranza features
+- [Phase 17-voice-cobranza-agent]: reset_db autouse fixture duplicated in test_cobranza.py (not imported from conftest) — self-contained per-test MongoDB isolation
+- [Phase 17-voice-cobranza-agent]: async_client uses lazy import inside fixture body to prevent collection-time ImportError before cobranza/ package exists
 
 ### Pending Todos
 
@@ -130,6 +134,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-26T03:58:11.401Z
-Stopped at: Completed 16-06-PLAN.md
+Last session: 2026-03-27T17:21:46.412Z
+Stopped at: Completed 17-01-PLAN.md
 Resume file: None
