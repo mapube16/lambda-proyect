@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>HYPER_COLLECT_V1 | HIVE_MIND</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Manrope:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "outline-variant": "#4c4648",
+              "inverse-on-surface": "#585454",
+              "outline": "#7b7475",
+              "on-tertiary-container": "#5c475f",
+              "surface-tint": "#d5c2c7",
+              "on-primary-container": "#dfcbd0",
+              "on-error-container": "#ff97a3",
+              "on-error": "#490013",
+              "surface-container-low": "#151313",
+              "secondary": "#a59b9d",
+              "tertiary-fixed": "#f1d4f2",
+              "secondary-fixed": "#ebe0e2",
+              "error-dim": "#b95463",
+              "tertiary-container": "#f1d4f2",
+              "on-primary-fixed": "#493c40",
+              "on-secondary-fixed-variant": "#615a5b",
+              "on-primary": "#4a3d41",
+              "surface-container-highest": "#292526",
+              "primary": "#d5c2c7",
+              "on-tertiary-fixed-variant": "#665169",
+              "surface-dim": "#100e0e",
+              "primary-dim": "#c7b4b9",
+              "on-surface": "#ede3e4",
+              "surface-container-lowest": "#000000",
+              "on-secondary-container": "#c7bdbf",
+              "surface-container-high": "#221f20",
+              "secondary-fixed-dim": "#ddd2d4",
+              "tertiary": "#fee2ff",
+              "inverse-primary": "#6a5b60",
+              "surface-bright": "#302b2c",
+              "primary-fixed": "#f2dee2",
+              "on-primary-fixed-variant": "#66585c",
+              "on-surface-variant": "#b1a9aa",
+              "on-secondary-fixed": "#443e3f",
+              "tertiary-fixed-dim": "#e2c6e3",
+              "primary-fixed-dim": "#e3d0d4",
+              "inverse-surface": "#fef8f8",
+              "error-container": "#7f2737",
+              "surface": "#100e0e",
+              "on-tertiary": "#655068",
+              "on-secondary": "#241f20",
+              "primary-container": "#514347",
+              "error": "#ec7c8a",
+              "background": "#100e0e",
+              "secondary-dim": "#a59b9d",
+              "tertiary-dim": "#e2c6e3",
+              "secondary-container": "#403a3b",
+              "on-tertiary-fixed": "#49354c",
+              "on-background": "#ede3e4",
+              "surface-container": "#1c191a",
+              "surface-variant": "#292526"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Manrope"],
+              "label": ["Space Grotesk"]
+            },
+            borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .waveform-bar {
+            display: inline-block;
+            width: 3px;
+            background: #78dce8;
+            margin: 0 1px;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="bg-surface-dim text-on-surface font-body selection:bg-primary selection:text-on-primary">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-slate-950/80 backdrop-blur-xl border-b border-[#474754]/20 shadow-[0_24_48px_rgba(131,115,119,0.04)] flex items-center justify-between px-6 py-3">
+<div class="flex items-center gap-8">
+<span class="text-xl font-bold tracking-tighter text-[#837377] font-headline">HYPER_COLLECT_V1</span>
+<div class="hidden md:flex items-center bg-surface-container-lowest px-4 py-1.5 gap-3 border border-outline-variant/20">
+<span class="material-symbols-outlined text-sm text-outline">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-xs font-label tracking-widest text-on-surface-variant w-48 uppercase" placeholder="QUERY_HIVE..." type="text"/>
+</div>
+</div>
+<nav class="flex items-center gap-6">
+<button class="material-symbols-outlined text-[#837377] scale-95 active:duration-75 hover:text-[#837377] transition-colors">sensors</button>
+<button class="material-symbols-outlined text-slate-500 scale-95 active:duration-75 hover:text-[#837377] transition-colors">settings</button>
+<button class="material-symbols-outlined text-slate-500 scale-95 active:duration-75 hover:text-[#837377] transition-colors">account_tree</button>
+<div class="h-8 w-8 bg-surface-container-high border border-outline-variant/30 flex items-center justify-center">
+<img alt="Agent Avatar" class="w-6 h-6" data-alt="Pixel art style robotic agent avatar with glowing neon eyes and metallic surfaces" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCe2izDyXAT6q2giC_TWqEyzlfx0QV1Pu_ysxxa3Q2K49iv6hNrpOHoQ9M6_yFTuJV4E4WkkPRq74LFYjYKEKkrvBaZW-Ul9aq9Y8f0h8zgN3fdz7ZLGP8tquXr6gvwLHGCmLeykoWBUuSfQqPAR9-DTJPvmACwXhP1CdZ6gXpHP1jvF-eHbkHPeHxyA10fCNAIsXdkFju3AD16WvBlOr-yl12bds6eeyPdIroACS5cFkhjk6HarwcdZxkrSqmfPihdLYc-f_EoY1yY"/>
+</div>
+</nav>
+</header>
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-full w-64 z-40 bg-[#0d0d18] flex flex-col py-8 gap-4 pt-20">
+<div class="px-6 mb-4">
+<div class="flex items-center gap-3 bg-[#12121e] p-3 border-l-2 border-[#837377]">
+<div class="w-10 h-10 bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-[#837377]">hive</span>
+</div>
+<div>
+<h3 class="font-headline font-bold text-xs tracking-tighter text-on-surface uppercase">HIVE_MIND</h3>
+<p class="text-[10px] text-outline font-label">Active Nodes: 1,242</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 px-3 space-y-1">
+<!-- Active State for Dashboard/Debtor Hive -->
+<a class="flex items-center gap-4 px-4 py-3 bg-[#1e1e2d] text-[#837377] rounded-none border-r-2 border-[#837377] font-['Manrope'] text-xs font-semibold uppercase tracking-wider translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">group</span>
+<span>Debtor Hive</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-slate-500 hover:bg-[#12121e] transition-all font-['Manrope'] text-xs font-semibold uppercase tracking-wider" href="#">
+<span class="material-symbols-outlined">hub</span>
+<span>Campaign Matrix</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-slate-500 hover:bg-[#12121e] transition-all font-['Manrope'] text-xs font-semibold uppercase tracking-wider" href="#">
+<span class="material-symbols-outlined">analytics</span>
+<span>Neural Analytics</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-slate-500 hover:bg-[#12121e] transition-all font-['Manrope'] text-xs font-semibold uppercase tracking-wider" href="#">
+<span class="material-symbols-outlined">terminal</span>
+<span>System Logs</span>
+</a>
+</nav>
+<div class="px-4 mt-auto space-y-4">
+<button class="w-full py-3 bg-gradient-to-r from-[#837377] to-[#7d7577] text-on-primary-fixed font-bold text-[10px] tracking-widest uppercase hover:opacity-90 transition-opacity">
+                INITIATE_RECOVERY
+            </button>
+<div class="pt-4 border-t border-outline-variant/10">
+<a class="flex items-center gap-4 px-4 py-2 text-slate-500 hover:text-on-surface transition-colors text-[10px] font-label uppercase" href="#">
+<span class="material-symbols-outlined text-sm">help_center</span>
+<span>Support</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-2 text-slate-500 hover:text-on-surface transition-colors text-[10px] font-label uppercase" href="#">
+<span class="material-symbols-outlined text-sm">integration_instructions</span>
+<span>API_Docs</span>
+</a>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="ml-64 pt-20 p-8 min-h-screen">
+<!-- Header & Summary -->
+<div class="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
+<div>
+<h1 class="text-4xl font-headline font-bold tracking-tight text-on-surface mb-2">Debt Management Panel</h1>
+<p class="text-outline font-label text-sm tracking-wider uppercase">System Status: <span class="text-[#78dce8]">Optimized</span></p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+<div class="bg-surface-container-high p-5 border-b-2 border-[#78dce8]/30 min-w-[180px]">
+<p class="text-[10px] font-label text-outline uppercase mb-1">Total Collected</p>
+<p class="text-2xl font-headline font-bold text-on-surface">$428,912.00</p>
+</div>
+<div class="bg-surface-container-high p-5 border-b-2 border-[#ab9df2]/30 min-w-[180px]">
+<p class="text-[10px] font-label text-outline uppercase mb-1">Calls Today</p>
+<p class="text-2xl font-headline font-bold text-on-surface">1,402</p>
+</div>
+<div class="bg-surface-container-high p-5 border-b-2 border-primary/30 min-w-[180px]">
+<p class="text-[10px] font-label text-outline uppercase mb-1">Active Promises</p>
+<p class="text-2xl font-headline font-bold text-on-surface">84</p>
+</div>
+</div>
+</div>
+<!-- Call In Progress (HUD Element) -->
+<div class="mb-8 bg-surface-container-lowest p-4 flex items-center justify-between border-l-4 border-[#78dce8]">
+<div class="flex items-center gap-4">
+<div class="relative">
+<div class="absolute inset-0 bg-[#78dce8] blur-md opacity-20 animate-pulse"></div>
+<span class="material-symbols-outlined text-[#78dce8] relative z-10">settings_input_antenna</span>
+</div>
+<div>
+<p class="text-[10px] font-label text-[#78dce8] uppercase font-bold tracking-widest">Live Call_Process</p>
+<p class="text-xs text-on-surface-variant">Target: ID_9921 (Marcus Thorne)</p>
+</div>
+</div>
+<div class="flex items-end gap-[2px] h-6 px-4">
+<div class="waveform-bar h-2"></div>
+<div class="waveform-bar h-4"></div>
+<div class="waveform-bar h-6"></div>
+<div class="waveform-bar h-3"></div>
+<div class="waveform-bar h-5"></div>
+<div class="waveform-bar h-2"></div>
+<div class="waveform-bar h-4"></div>
+<div class="waveform-bar h-6"></div>
+<div class="waveform-bar h-3"></div>
+<div class="waveform-bar h-5"></div>
+<div class="waveform-bar h-2"></div>
+<div class="waveform-bar h-4"></div>
+<div class="waveform-bar h-6"></div>
+</div>
+<div class="text-right">
+<p class="text-[10px] font-label text-outline uppercase">Sentiment</p>
+<p class="text-xs font-bold text-[#ab9df2]">NEUTRAL_YIELDING</p>
+</div>
+</div>
+<!-- Filter Pills -->
+<div class="flex flex-wrap gap-2 mb-6">
+<button class="px-5 py-1.5 rounded-full bg-surface-bright text-primary text-[10px] font-label font-bold uppercase tracking-wider border border-primary/20">All</button>
+<button class="px-5 py-1.5 rounded-full bg-surface-dim text-on-surface-variant text-[10px] font-label font-bold uppercase tracking-wider hover:bg-surface-container-high transition-colors">Pending</button>
+<button class="px-5 py-1.5 rounded-full bg-surface-dim text-on-surface-variant text-[10px] font-label font-bold uppercase tracking-wider hover:bg-surface-container-high transition-colors">In Campaign</button>
+<button class="px-5 py-1.5 rounded-full bg-surface-dim text-on-surface-variant text-[10px] font-label font-bold uppercase tracking-wider hover:bg-surface-container-high transition-colors">Promise</button>
+<button class="px-5 py-1.5 rounded-full bg-surface-dim text-on-surface-variant text-[10px] font-label font-bold uppercase tracking-wider hover:bg-surface-container-high transition-colors">Paid</button>
+<button class="px-5 py-1.5 rounded-full bg-surface-dim text-on-surface-variant text-[10px] font-label font-bold uppercase tracking-wider hover:bg-surface-container-high transition-colors">Exhausted</button>
+<button class="px-5 py-1.5 rounded-full bg-surface-dim text-on-surface-variant text-[10px] font-label font-bold uppercase tracking-wider hover:bg-surface-container-high transition-colors">Escalated</button>
+</div>
+<!-- Debtor Table Area -->
+<div class="bg-surface-container-low overflow-hidden">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-high border-b border-outline-variant/10">
+<th class="px-6 py-4 text-[10px] font-label text-outline uppercase tracking-widest">Name</th>
+<th class="px-6 py-4 text-[10px] font-label text-outline uppercase tracking-widest">Phone</th>
+<th class="px-6 py-4 text-[10px] font-label text-outline uppercase tracking-widest">Amount</th>
+<th class="px-6 py-4 text-[10px] font-label text-outline uppercase tracking-widest">Due Date</th>
+<th class="px-6 py-4 text-[10px] font-label text-outline uppercase tracking-widest">Status</th>
+<th class="px-6 py-4 text-[10px] font-label text-outline uppercase tracking-widest text-right">Action</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant/5">
+<tr class="hover:bg-surface-container-highest transition-colors group">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-container border border-outline-variant/20 flex items-center justify-center grayscale group-hover:grayscale-0 transition-all">
+<img alt="Debtor Avatar" class="w-5 h-5 opacity-70" data-alt="Pixelated profile portrait of a man with minimalist facial features in a low-poly aesthetic" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCRmhWjnDq3MlTDF3_e4yQpspmVNBDgUGQl2xWXYX-avgr4JeVRALmI_NLfUsKg2kq5WF5393JDDsl9pr_yirwkHrK7xXF1lBnNH_8gMSuJZvkUkFD0n3jiDKU5Jvo-eKrf8HoIY07rQGjGY8LKH4QSQdtHHZdMcA6dmkrIYCiMxi9NMp78Fnfh10Ju7F5_TLyFyuaGo3vBYGbfMKz3m-VOHb0EJenvsyB0vgaVuNOHS9Qn3llZO1v5nhvKoEz1rRwHM3LYVr8u4S7l"/>
+</div>
+<span class="text-sm font-medium text-on-surface">Alex Mercer</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-label text-on-surface-variant tracking-wider">+1 555-0192</td>
+<td class="px-6 py-4 text-sm font-headline font-bold text-on-surface">$12,450.00</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">OCT_24_2023</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-outline animate-pulse"></span>
+<span class="text-[10px] font-label font-bold uppercase text-outline">pending</span>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-[10px] font-label font-bold text-primary uppercase border border-outline-variant px-3 py-1 hover:bg-primary hover:text-on-primary transition-all">View Detail</button>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-highest transition-colors group">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-container border border-outline-variant/20 flex items-center justify-center grayscale group-hover:grayscale-0 transition-all">
+<img alt="Debtor Avatar" class="w-5 h-5 opacity-70" data-alt="Cyberpunk pixel art portrait of a woman with short hair and digital glasses" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBYc1Vr_KtB9QvCgw433Jzc-TffTkQtqWx2I_DmPbPlwLcPvX6dT3h1pOSC9fPbHF4rL9qbtEdU4QXX45GaI71Y6ppsUGsu-UoX0CEefjNERJXd8jYQzTxuvtNlhu3PwVhKcMa_ATmdtv6ts9B3N3yBwX2HhqwpQ4Ze14X8B5MgkfEMgsERFVIBSYQEYkeTLOGUPtJEyvq3igq9TF81zbVS64ofBSMKHAuB61WLRfUdzxnEOHqfbkMtZmqpTefQsDwTWIj7DPwjTW2c"/>
+</div>
+<span class="text-sm font-medium text-on-surface">Elena Rodriguez</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-label text-on-surface-variant tracking-wider">+1 555-0841</td>
+<td class="px-6 py-4 text-sm font-headline font-bold text-on-surface">$3,120.00</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">NOV_12_2023</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-[#78dce8] shadow-[0_0_8px_#78dce8]"></span>
+<span class="text-[10px] font-label font-bold uppercase text-[#78dce8]">calling</span>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-[10px] font-label font-bold text-primary uppercase border border-outline-variant px-3 py-1 hover:bg-primary hover:text-on-primary transition-all">View Detail</button>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-highest transition-colors group">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-container border border-outline-variant/20 flex items-center justify-center grayscale group-hover:grayscale-0 transition-all">
+<img alt="Debtor Avatar" class="w-5 h-5 opacity-70" data-alt="Geometric pixel art style avatar of an older person with sharp, defined features" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBBRizEkZ-6c12opvAFHHOySA0cNw1YowmaIXADpR8A1MZrkkZmVJ355WT80WY0JqfRd7GMC05WoImO7KR_4R0RddcjCsidhBO8JZ3xnTRFbyT4cL905ZPlqZcGYblBKcE9c9U4cJUm1lyjcIbeYfQqr5K68jb8cO84h4EKecXlXqhm9VzUjRkLKTahD1N2K00BPUU2sYm985RsjqTwXdsZjL2MTaXNLx-5pu5X23WzzygQNmVL0QV0Z4AlsTJTcP3nZpj4NRg9o2M_"/>
+</div>
+<span class="text-sm font-medium text-on-surface">Jordan Smith</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-label text-on-surface-variant tracking-wider">+1 555-9281</td>
+<td class="px-6 py-4 text-sm font-headline font-bold text-on-surface">$500.00</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">JAN_05_2024</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-[#a9f1a0] shadow-[0_0_4px_#a9f1a0]"></span>
+<span class="text-[10px] font-label font-bold uppercase text-[#a9f1a0]">promise</span>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-[10px] font-label font-bold text-primary uppercase border border-outline-variant px-3 py-1 hover:bg-primary hover:text-on-primary transition-all">View Detail</button>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-highest transition-colors group">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-container border border-outline-variant/20 flex items-center justify-center grayscale group-hover:grayscale-0 transition-all">
+<img alt="Debtor Avatar" class="w-5 h-5 opacity-70" data-alt="Modern pixel art portrait of a young adult with techwear aesthetics" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDRpDWG_TJVBPyen4Hdhwq6Kdgmgwd93FAhEGBqIU_SGdt0R1cmVmdpxUIbuUgMkaGo17MklCKvWyXkAT3stn_il4zh5g2DBn95Q4W9p87FhHRL2GVGeC-gTIZlKZwDXLV5YYKzUBxJPiNkRFh6i79NVj-VvfDwPHbwKExTcC47f_vTQ4fymRlZfuJ4TLzQuHUfEpre16Dy3TXMr8enDxyxaa_LdOOoeVp0sprw2CAIUSgq9Z659rzXLRIZ2wJ8wr9MibnbQJaoepKg"/>
+</div>
+<span class="text-sm font-medium text-on-surface">Sarah Connor</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-label text-on-surface-variant tracking-wider">+1 555-4432</td>
+<td class="px-6 py-4 text-sm font-headline font-bold text-on-surface">$1,900.00</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">DEC_20_2023</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-[#ec7c8a]"></span>
+<span class="text-[10px] font-label font-bold uppercase text-[#ec7c8a]">escalated</span>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-[10px] font-label font-bold text-primary uppercase border border-outline-variant px-3 py-1 hover:bg-primary hover:text-on-primary transition-all">View Detail</button>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-highest transition-colors group">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-container border border-outline-variant/20 flex items-center justify-center grayscale group-hover:grayscale-0 transition-all">
+<img alt="Debtor Avatar" class="w-5 h-5 opacity-70" data-alt="Abstract pixelated facial icon with high contrast nocturnal color scheme" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDvSqX9lGGJbz3VjA9I8Om-lVk7pyROBDmm_cJ5S1MdAE9k16vQc-621-TINdns_7YUSK0Kr_Bp198oVfg-4ER2nPXxHXBC_lmxQXYkYS0SGbB2WzEHnB0prgchnAp45UV06c22iv__eIIYON-mY4JTYtb-kN1Z7rjf4Rk_HOXdzqHnNxoGPXqZ0oWd3ph02bCcmrasGVldvyTjI2FYKlL4C0McgEN8cy7gJZApyx1YN8YkAOUEOEl_rsB9lCLOLSW72M7hpDk8eCmR"/>
+</div>
+<span class="text-sm font-medium text-on-surface">Marcus Thorne</span>
+</div>
+</td>
+<td class="px-6 py-4 text-xs font-label text-on-surface-variant tracking-wider">+1 555-1122</td>
+<td class="px-6 py-4 text-sm font-headline font-bold text-on-surface">$22,000.00</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">OCT_30_2023</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-[#78dce8] shadow-[0_0_8px_#78dce8]"></span>
+<span class="text-[10px] font-label font-bold uppercase text-[#78dce8]">calling</span>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-[10px] font-label font-bold text-primary uppercase border border-outline-variant px-3 py-1 hover:bg-primary hover:text-on-primary transition-all">View Detail</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- System Matrix Background Decor (Asymmetric Layout element) -->
+<div class="mt-12 grid grid-cols-1 lg:grid-cols-4 gap-6">
+<div class="lg:col-span-3 bg-surface-container p-6 border-l border-outline-variant/20 flex items-start gap-8">
+<div class="flex-1">
+<h4 class="font-headline font-bold text-xs uppercase tracking-widest text-[#ab9df2] mb-4">Neural_Recovery_Status</h4>
+<div class="space-y-4">
+<div class="flex items-center justify-between">
+<span class="text-[10px] font-label text-outline uppercase">Queue Load</span>
+<div class="w-2/3 h-1 bg-surface-container-highest">
+<div class="h-full bg-primary w-[72%]"></div>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-[10px] font-label text-outline uppercase">Agent Efficiency</span>
+<div class="w-2/3 h-1 bg-surface-container-highest">
+<div class="h-full bg-[#78dce8] w-[94%]"></div>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-[10px] font-label text-outline uppercase">Data Sync</span>
+<div class="w-2/3 h-1 bg-surface-container-highest">
+<div class="h-full bg-[#ab9df2] w-[45%]"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="hidden md:block w-32 h-32 opacity-10">
+<img alt="Hive Decor" class="w-full h-full object-contain" data-alt="Intricate geometric hex grid pattern in white with neon blue glow on a black background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBDfrmS_cIZqQARn9QjowTKJRkmeGd8qbG6GtgKeKu8FNLXXuzoQ1cxRJc8Gs0Bb2h8ifnBVG8L0UqgtTKk7ftgcJLiM51GGvHXctcfsrViHvMfaVCx1XdhqSLfnsk1uc-rFhEKHl5o4p_5DubawMHPXjZf9imdxnvD0syMywErR5BJe_tTYQN5Ds0e-buB19Xzf1tjw754dFRIsf-bbIZE0KmD6hwb3f6UhyRaTGD7H8UwDoZzeCQWHJtrSRx1_nIKs4RpgNMsmv2H"/>
+</div>
+</div>
+<div class="bg-[#12121e] p-6 flex flex-col items-center justify-center text-center gap-4 border border-outline-variant/10">
+<span class="material-symbols-outlined text-4xl text-[#78dce8]">psychology</span>
+<div>
+<p class="text-[10px] font-label text-outline uppercase tracking-widest">Core Status</p>
+<p class="text-sm font-headline font-bold text-on-surface uppercase">HIVE_STABLE</p>
+</div>
+</div>
+</div>
+</main>
+<!-- Contextual FAB (Suppressed based on screen rules, but included if needed for primary action) -->
+<!-- Not rendered as per suppression rule for Details/Management screens unless critical -->
+</body></html>

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>HYPER_COLLECT_V1 | Queen Bee Onboarding</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Manrope:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "outline-variant": "#4c4648",
+              "inverse-on-surface": "#585454",
+              "outline": "#7b7475",
+              "on-tertiary-container": "#5c475f",
+              "surface-tint": "#d5c2c7",
+              "on-primary-container": "#dfcbd0",
+              "on-error-container": "#ff97a3",
+              "on-error": "#490013",
+              "surface-container-low": "#151313",
+              "secondary": "#a59b9d",
+              "tertiary-fixed": "#f1d4f2",
+              "secondary-fixed": "#ebe0e2",
+              "error-dim": "#b95463",
+              "tertiary-container": "#f1d4f2",
+              "on-primary-fixed": "#493c40",
+              "on-secondary-fixed-variant": "#615a5b",
+              "on-primary": "#4a3d41",
+              "surface-container-highest": "#292526",
+              "primary": "#d5c2c7",
+              "on-tertiary-fixed-variant": "#665169",
+              "surface-dim": "#100e0e",
+              "primary-dim": "#c7b4b9",
+              "on-surface": "#ede3e4",
+              "surface-container-lowest": "#000000",
+              "on-secondary-container": "#c7bdbf",
+              "surface-container-high": "#221f20",
+              "secondary-fixed-dim": "#ddd2d4",
+              "tertiary": "#fee2ff",
+              "inverse-primary": "#6a5b60",
+              "surface-bright": "#302b2c",
+              "primary-fixed": "#f2dee2",
+              "on-primary-fixed-variant": "#66585c",
+              "on-surface-variant": "#b1a9aa",
+              "on-secondary-fixed": "#443e3f",
+              "tertiary-fixed-dim": "#e2c6e3",
+              "primary-fixed-dim": "#e3d0d4",
+              "inverse-surface": "#fef8f8",
+              "error-container": "#7f2737",
+              "surface": "#100e0e",
+              "on-tertiary": "#655068",
+              "on-secondary": "#241f20",
+              "primary-container": "#514347",
+              "error": "#ec7c8a",
+              "background": "#100e0e",
+              "secondary-dim": "#a59b9d",
+              "tertiary-dim": "#e2c6e3",
+              "secondary-container": "#403a3b",
+              "on-tertiary-fixed": "#49354c",
+              "on-background": "#ede3e4",
+              "surface-container": "#1c191a",
+              "surface-variant": "#292526"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Manrope"],
+              "label": ["Space Grotesk"]
+            },
+            borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .pixel-corners {
+            clip-path: polygon(
+                0 4px, 4px 4px, 4px 0,
+                calc(100% - 4px) 0, calc(100% - 4px) 4px, 100% 4px,
+                100% calc(100% - 4px), calc(100% - 4px) calc(100% - 4px), calc(100% - 4px) 100%,
+                4px 100%, 4px calc(100% - 4px), 0 calc(100% - 4px)
+            );
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #100e0e; }
+        ::-webkit-scrollbar-thumb { background: #514347; }
+    </style>
+</head>
+<body class="bg-surface-dim text-on-surface font-body selection:bg-primary/30">
+<!-- Top Navigation Anchor (Manual Suppression Logic: This is an onboarding screen, but the TopAppBar is fixed for brand identity) -->
+<header class="fixed top-0 w-full z-50 bg-slate-950/80 backdrop-blur-xl border-b border-[#474754]/20 shadow-[0_24_48px_rgba(131,115,119,0.04)] flex items-center justify-between px-6 py-3">
+<div class="flex items-center gap-4">
+<span class="text-xl font-bold tracking-tighter text-[#837377] font-headline uppercase">HYPER_COLLECT_V1</span>
+</div>
+<div class="flex items-center gap-6">
+<div class="hidden md:flex items-center gap-6">
+<span class="font-['Space_Grotesk'] uppercase tracking-widest text-sm text-slate-500 hover:text-[#837377] transition-colors cursor-pointer">Protocol</span>
+<span class="font-['Space_Grotesk'] uppercase tracking-widest text-sm text-slate-500 hover:text-[#837377] transition-colors cursor-pointer">Nodes</span>
+<span class="font-['Space_Grotesk'] uppercase tracking-widest text-sm text-[#876f89] font-bold cursor-pointer">Onboarding</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#837377] scale-95 active:duration-75 cursor-pointer">sensors</span>
+<span class="material-symbols-outlined text-[#837377] scale-95 active:duration-75 cursor-pointer">settings</span>
+<div class="w-8 h-8 rounded-none border border-outline-variant/30 flex items-center justify-center overflow-hidden">
+<img class="w-full h-full object-cover grayscale contrast-125" data-alt="Abstract futuristic avatar with glowing pink circuit patterns on a dark metallic surface" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAF-MzEXJiViBk5cvGylF8_H8279SWVxC4-9W-ttSxts6Sv18QY7v_humRCfkgC_N5sdorTDVWcXDUtbBoYmp0IR9iYk055Hrss7nrX9bC4m3vwO-GxJhS2BIYQoRA1KhCtMjzMpyI5faH2lxCP8cs-UPtL5R_gJ1OAA-OMzvGK-BbvRjVAwpDv48waA5eI4ydzDROcvAy7Zh2II4CHFQwLFtPbeL85ngBoh8B3KfRhqSGtjc0FKJhj0OUmJbMwgVNOK4Xq_LOF-P12"/>
+</div>
+</div>
+</div>
+</header>
+<main class="min-h-screen pt-20 pb-12 flex flex-col md:flex-row relative overflow-hidden">
+<!-- Background Decorative Element -->
+<div class="absolute inset-0 pointer-events-none">
+<div class="absolute top-1/4 -left-20 w-96 h-96 bg-primary/5 blur-[120px] rounded-full"></div>
+<div class="absolute bottom-1/4 -right-20 w-96 h-96 bg-tertiary/5 blur-[120px] rounded-full"></div>
+</div>
+<!-- Left Column: Conversational Shell -->
+<section class="flex-1 flex flex-col px-6 md:px-12 z-10">
+<div class="max-w-3xl w-full mx-auto flex-1 flex flex-col gap-8 py-8">
+<!-- Chat Feed -->
+<div class="flex-1 space-y-8 overflow-y-auto pr-4 custom-scrollbar">
+<!-- Queen Message 1 -->
+<div class="flex items-start gap-4">
+<div class="w-10 h-10 bg-surface-container-high border border-primary/20 flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-primary text-xl" style="font-variation-settings: 'FILL' 1;">hive</span>
+</div>
+<div class="space-y-2 max-w-[85%]">
+<div class="bg-surface-container-low p-5 pixel-corners border-l-2 border-primary">
+<p class="text-on-surface leading-relaxed">Greetings, Architect. I am the <span class="text-primary font-bold">Drone Queen</span>. My hive awaits your instruction. How shall we orchestrate the recovery of your outstanding capital?</p>
+</div>
+<span class="font-label text-[10px] uppercase tracking-tighter text-outline opacity-60">System Message // 09:41:02</span>
+</div>
+</div>
+<!-- User Response 1 -->
+<div class="flex items-start gap-4 justify-end">
+<div class="space-y-2 max-w-[85%] text-right">
+<div class="bg-primary/10 p-5 pixel-corners border-r-2 border-primary/40">
+<p class="text-on-surface leading-relaxed italic">"Microcredit debts, 30 days past due, firm but polite tone."</p>
+</div>
+<span class="font-label text-[10px] uppercase tracking-tighter text-outline opacity-60">User Transmission // Delivered</span>
+</div>
+<div class="w-10 h-10 bg-surface-container-high border border-outline-variant/30 flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-surface-variant text-xl">person</span>
+</div>
+</div>
+<!-- Queen Message 2 -->
+<div class="flex items-start gap-4">
+<div class="w-10 h-10 bg-surface-container-high border border-primary/20 flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-primary text-xl" style="font-variation-settings: 'FILL' 1;">hive</span>
+</div>
+<div class="space-y-2 max-w-[85%]">
+<div class="bg-surface-container-low p-5 pixel-corners border-l-2 border-primary">
+<p class="text-on-surface leading-relaxed">Parameters ingested. Politeness is a tactical choice. The hive will deploy 'Soft-Pressure' vocal patterns. Now, define the <span class="text-tertiary">Interaction Frequency</span>. How often shall my drones buzz their receivers?</p>
+</div>
+<!-- Quick Response Chips -->
+<div class="flex flex-wrap gap-3 pt-4">
+<button class="px-4 py-2 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-xs font-label uppercase tracking-widest transition-all hover:border-primary/50 flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]">calendar_today</span>
+                                    Every 2 days
+                                </button>
+<button class="px-4 py-2 bg-primary text-on-primary-fixed font-bold text-xs font-label uppercase tracking-widest transition-all flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">event_repeat</span>
+                                    Weekly
+                                </button>
+<button class="px-4 py-2 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-xs font-label uppercase tracking-widest transition-all hover:border-primary/50 flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]">bolt</span>
+                                    Aggressive (Daily)
+                                </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Input Field (Recessed) -->
+<div class="mt-auto pt-6">
+<div class="relative group">
+<div class="absolute inset-0 bg-primary/5 blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity"></div>
+<div class="bg-surface-container-lowest border border-outline-variant/20 focus-within:border-secondary transition-all flex items-center p-2 relative">
+<input class="bg-transparent border-none focus:ring-0 flex-1 px-4 py-3 text-on-surface placeholder:text-outline/50 font-body text-sm" placeholder="Type instructions for the Hive..." type="text"/>
+<button class="w-12 h-12 bg-primary hover:bg-primary-dim text-on-primary-fixed flex items-center justify-center transition-colors">
+<span class="material-symbols-outlined">arrow_forward</span>
+</button>
+</div>
+</div>
+<div class="flex justify-between items-center mt-3 px-1">
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-outline text-lg cursor-pointer hover:text-primary transition-colors">attach_file</span>
+<span class="material-symbols-outlined text-outline text-lg cursor-pointer hover:text-primary transition-colors">mic</span>
+</div>
+<p class="text-[10px] font-label text-outline/40 uppercase tracking-widest">Protocol Version: 1.0.4-Stable</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Right Column: Visualization Panel (The Drone Bee) -->
+<aside class="w-full md:w-[400px] border-l border-outline-variant/10 bg-surface-container-low/30 backdrop-blur-md p-8 flex flex-col gap-8">
+<div class="space-y-6">
+<div class="flex items-center justify-between">
+<h2 class="font-headline text-xs font-bold uppercase tracking-[0.2em] text-outline">Neural Analysis</h2>
+<span class="flex h-2 w-2 rounded-full bg-error animate-pulse"></span>
+</div>
+<!-- Drone Visualization Area -->
+<div class="aspect-square w-full bg-surface-container-lowest border border-outline-variant/20 relative flex items-center justify-center overflow-hidden">
+<!-- Scanning Grid Overlay -->
+<div class="absolute inset-0 opacity-10 pointer-events-none" style="background-image: linear-gradient(#837377 1px, transparent 1px), linear-gradient(90deg, #837377 1px, transparent 1px); background-size: 20px 20px;"></div>
+<div class="relative z-10 w-48 h-48 group">
+<!-- Neon Glow -->
+<div class="absolute inset-0 bg-primary/20 blur-[60px] rounded-full group-hover:bg-tertiary/20 transition-all duration-700"></div>
+<!-- Drone Sprite Placeholder -->
+<div class="relative w-full h-full border-2 border-primary/40 rotate-45 flex items-center justify-center transition-transform duration-1000 group-hover:rotate-180">
+<div class="absolute top-0 left-0 w-4 h-4 bg-primary"></div>
+<div class="absolute bottom-0 right-0 w-4 h-4 bg-primary"></div>
+<div class="w-24 h-24 border border-tertiary/30 rotate-45 flex items-center justify-center">
+<span class="material-symbols-outlined text-6xl text-on-surface opacity-80" style="font-variation-settings: 'FILL' 1; font-weight: 100;">hexagon</span>
+</div>
+</div>
+</div>
+<!-- Floating Metrics -->
+<div class="absolute top-4 left-4 font-label text-[10px] text-primary bg-primary/10 px-2 py-1 border border-primary/20">
+                        VOLT_SYNC: 88%
+                    </div>
+<div class="absolute bottom-4 right-4 font-label text-[10px] text-tertiary bg-tertiary/10 px-2 py-1 border border-tertiary/20">
+                        HD_RENDER: ACTIVE
+                    </div>
+</div>
+<!-- Parameters breakdown -->
+<div class="space-y-4">
+<div class="bg-surface-container-high p-4 border-l-4 border-primary/40">
+<div class="flex justify-between items-end mb-2">
+<label class="font-label text-[10px] uppercase text-outline">Debt Type</label>
+<span class="font-headline text-sm text-on-surface">MICRO_CREDIT</span>
+</div>
+<div class="w-full h-1 bg-surface-dim overflow-hidden">
+<div class="w-3/4 h-full bg-primary"></div>
+</div>
+</div>
+<div class="bg-surface-container-high p-4 border-l-4 border-tertiary/40">
+<div class="flex justify-between items-end mb-2">
+<label class="font-label text-[10px] uppercase text-outline">Tone Profile</label>
+<span class="font-headline text-sm text-on-surface">FIRM_POLITE</span>
+</div>
+<div class="w-full h-1 bg-surface-dim overflow-hidden">
+<div class="w-1/2 h-full bg-tertiary"></div>
+</div>
+</div>
+<div class="bg-surface-container-high p-4 border-l-4 border-error/40">
+<div class="flex justify-between items-end mb-2">
+<label class="font-label text-[10px] uppercase text-outline">Frequency</label>
+<span class="font-headline text-sm text-on-surface">WEEKLY</span>
+</div>
+<div class="w-full h-1 bg-surface-dim overflow-hidden">
+<div class="w-1/4 h-full bg-error"></div>
+</div>
+</div>
+</div>
+<button class="w-full py-4 bg-primary text-on-primary-fixed font-headline font-bold uppercase tracking-widest text-sm pixel-corners hover:bg-primary-dim transition-all mt-4 group">
+<span class="flex items-center justify-center gap-2">
+                        INITIATE_COLLECTION_MATRIX
+                        <span class="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">bolt</span>
+</span>
+</button>
+</div>
+<!-- Footer Meta -->
+<div class="mt-auto pt-8 border-t border-outline-variant/10">
+<div class="flex items-center gap-3 grayscale opacity-40">
+<img class="w-10 h-10 object-cover" data-alt="Microscopic close-up of high-tech integrated circuit with copper pathways and glowing nodes" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCjtMlsGeyzwKXoaJloFHNDw024xszPFYt0quVuWDpvOPkGYGIdyq0DPXPZnXGjEAWYieP1z1e24JtXsAUYl73_RsLz_0KTypZopYi9jmWNAgV3a03EKZ0LO2KXTRF6XWw_1Q_HQf8zk5HPQhO5r0eyTWVIwnzR6fhT6qpt9zWDakfIByJ3LrXevplKTSqe1N5mvejmqKa929djTbeo5nGK_YcCLnbuAmCNkfYucJIBKHIlTBz7jvJqOxqVQ8fq6We5sigZbSMhE6IX"/>
+<div class="flex flex-col">
+<span class="text-[10px] font-label uppercase text-on-surface">Kernel_Integrity</span>
+<span class="text-[8px] font-label text-outline uppercase tracking-[0.2em]">Verified // RSA_4096</span>
+</div>
+</div>
+</div>
+</aside>
+</main>
+<!-- Side Navigation Anchor (Hidden in Onboarding per focus rules, but kept as semantic requirement if it were the main dashboard) -->
+<!-- Suppressed for transactional focus -->
+</body></html>
