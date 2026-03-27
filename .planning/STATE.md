@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 17-01-PLAN.md
-last_updated: "2026-03-27T17:21:46.419Z"
+stopped_at: Completed 17-02-PLAN.md
+last_updated: "2026-03-27T18:14:39.112Z"
 last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
 progress:
   total_phases: 17
   completed_phases: 5
   total_plans: 43
-  completed_plans: 32
+  completed_plans: 34
   percent: 40
 ---
 
@@ -62,6 +62,8 @@ Progress: [████░░░░░░] 40%
 | Phase 16-whatsapp-conversational-advisor-bot P06 | 5m | smoke test | all green |
 | Phase 16-whatsapp-conversational-advisor-bot P06 | 5m | 2 tasks | 0 files |
 | Phase 17-voice-cobranza-agent P01 | 2 | 1 tasks | 1 files |
+| Phase 17-voice-cobranza-agent P03 | 5min | 2 tasks | 3 files |
+| Phase 17-voice-cobranza-agent P02 | 8 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -122,6 +124,11 @@ Recent decisions affecting current work:
 - [Phase 17-voice-cobranza-agent]: strict=False on all xfail markers — stubs show as xfail not failures, CI never blocks on unimplemented cobranza features
 - [Phase 17-voice-cobranza-agent]: reset_db autouse fixture duplicated in test_cobranza.py (not imported from conftest) — self-contained per-test MongoDB isolation
 - [Phase 17-voice-cobranza-agent]: async_client uses lazy import inside fixture body to prevent collection-time ImportError before cobranza/ package exists
+- [Phase 17-voice-cobranza-agent]: Lazy import of AsyncVapi inside function body — SDK optional at startup; consistent with Phase 16 WhatsApp lazy import pattern
+- [Phase 17-voice-cobranza-agent]: initiate_call() falls back to VAPI_API_KEY/ASSISTANT_ID/PHONE_NUMBER_ID env vars if config keys absent — dual-path config
+- [Phase 17-voice-cobranza-agent]: router.py not included in main.py yet — Plan 17-08 registers the router
+- [Phase 17-voice-cobranza-agent]: reactivar endpoint guards on estado=='pausado' — prevents unintentional state resets, returns 400 on non-pausado
+- [Phase 17-voice-cobranza-agent]: DebtorPatch uses Optional fields — only non-None fields included in $set to avoid nulling existing data
 
 ### Pending Todos
 
@@ -134,6 +141,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T17:21:46.412Z
-Stopped at: Completed 17-01-PLAN.md
+Last session: 2026-03-27T18:14:33.690Z
+Stopped at: Completed 17-02-PLAN.md
 Resume file: None
