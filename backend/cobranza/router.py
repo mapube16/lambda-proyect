@@ -3,14 +3,16 @@ router.py — REST endpoints for cobranza debtor management.
 All endpoints require authentication and enforce tenant isolation via user_id.
 Prefix: /api/cobranza
 """
-from datetime import datetime
+import asyncio
+import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
 from auth import get_current_user
-from database import get_db
+from database import get_db, get_client_profile
 from cobranza.debtor_crud import (
     bulk_create_debtors,
     create_debtor,
@@ -20,6 +22,11 @@ from cobranza.debtor_crud import (
     update_debtor,
 )
 from cobranza.csv_parser import normalize_phone, parse_debtor_csv
+from cobranza.cobranza_queen import generate_cobranza_proposal
+from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_today
+from cobranza.vapi_client import initiate_call
+
+logger = logging.getLogger("cobranza.router")
 
 router = APIRouter(prefix="/api/cobranza", tags=["cobranza"])
 
@@ -242,3 +249,112 @@ async def reactivar_debtor(
     if updated is None:
         raise HTTPException(status_code=404, detail="Debtor not found")
     return {"debtor": updated}
+
+
+# ── Onboarding: Start (Queen proposal) ────────────────────────────────────────
+
+class OnboardingStartBody(BaseModel):
+    descripcion: str
+
+
+@router.post("/onboarding/start")
+async def onboarding_start(
+    body: OnboardingStartBody,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    POST /api/cobranza/onboarding/start
+    User describes their portfolio; Queen returns a cobranza strategy proposal.
+    """
+    user_id = str(current_user["user_id"])
+
+    profile = await get_client_profile(user_id)
+    empresa_nombre = (profile or {}).get("empresa_nombre", "la empresa")
+
+    estrategia = await generate_cobranza_proposal(body.descripcion, empresa_nombre)
+    return {"estrategia": estrategia}
+
+
+# ── Onboarding: Approve (save campaign) ───────────────────────────────────────
+
+class OnboardingApproveBody(BaseModel):
+    estrategia: dict
+
+
+@router.post("/onboarding/approve")
+async def onboarding_approve(
+    body: OnboardingApproveBody,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    POST /api/cobranza/onboarding/approve
+    Persist approved (possibly user-edited) estrategia to cobranza_config collection.
+    Returns campaign_id = user_id.
+    """
+    user_id = str(current_user["user_id"])
+    db = get_db()
+
+    await db.cobranza_config.update_one(
+        {"user_id": user_id},
+        {"$set": {"estrategia": body.estrategia, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    return {"campaign_id": user_id, "ok": True}
+
+
+# ── Llamar Ahora (manual immediate call) ──────────────────────────────────────
+
+async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict) -> None:
+    """Fire-and-forget: initiate Vapi call and update debtor state on result."""
+    debtor_id = str(debtor["_id"])
+    try:
+        call_id = await initiate_call(debtor, config)
+        await update_debtor(db, user_id, debtor_id, {"vapi_call_id": call_id})
+        logger.info("[llamar-ahora] Call initiated %s for debtor %s", call_id, debtor_id)
+    except RuntimeError as e:
+        logger.error("[llamar-ahora] Call failed for debtor %s: %s", debtor_id, e)
+        await update_debtor(db, user_id, debtor_id, {"estado": "pendiente"})
+
+
+@router.post("/debtors/{debtor_id}/llamar-ahora", status_code=status.HTTP_202_ACCEPTED)
+async def llamar_ahora(
+    debtor_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    POST /api/cobranza/debtors/{debtor_id}/llamar-ahora
+    Manually trigger an immediate call to a debtor.
+    Ley 2300 compliance guards applied before initiating.
+    """
+    user_id = str(current_user["user_id"])
+    db = get_db()
+
+    # Ley 2300: time window guard
+    if not is_contact_allowed_now():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Fuera de horario permitido (Ley 2300)",
+        )
+
+    # Ley 2300: one contact per day guard
+    debtor = await get_debtor_by_id(db, user_id, debtor_id)
+    if debtor is None:
+        raise HTTPException(status_code=404, detail="Debtor not found")
+
+    if has_been_contacted_today(debtor):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ya fue contactado hoy (Ley 2300)",
+        )
+
+    # Fetch campaign config
+    config_doc = await db.cobranza_config.find_one({"user_id": user_id}) or {}
+    config = config_doc.get("estrategia", {})
+
+    # Mark as calling
+    await update_debtor(db, user_id, debtor_id, {"estado": "llamando", "vapi_call_id": None})
+
+    # Fire and forget — does not block response
+    asyncio.create_task(_initiate_call_and_update(db, user_id, debtor, config))
+
+    return {"ok": True, "message": "Llamada iniciada"}
