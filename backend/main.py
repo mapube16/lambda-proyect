@@ -330,6 +330,9 @@ async def lifespan(app: FastAPI):
     hive_adapter = HiveAdapter(send_to_user_callback=manager.send_to_user)
 
     await start_scheduler()
+    from landa.scheduler import scheduler as _cobr_scheduler
+    from cobranza.campaign_scheduler import register_cobranza_jobs
+    register_cobranza_jobs(_cobr_scheduler)
     print("Isomorph Office started!")
     yield
     shutdown_scheduler()
@@ -2747,9 +2750,43 @@ async def whatsapp_incoming(request: Request):
     return Response(content="<Response/>", media_type="text/xml")
 
 
+# ── Phase 17: Cobranza REST routes ───────────────────────────────────────────
+from cobranza.router import router as cobranza_router
+app.include_router(cobranza_router)
+
 # ── Phase 17: Vapi webhook routes (cobranza voice agent) ─────────────────────
 from cobranza.webhooks import vapi_router as _vapi_router
 app.include_router(_vapi_router)
+
+
+# ── Phase 17: Staff endpoint to enable cobranza for a client ─────────────────
+
+@app.post("/api/staff/clients/{client_id}/cobranza/enable", status_code=200)
+async def staff_enable_cobranza(
+    client_id: str,
+    _staff=Depends(require_staff),
+):
+    """
+    POST /api/staff/clients/{client_id}/cobranza/enable
+    Staff-only: sets cobranza_enabled=True on the client's company_voice document.
+    Creates the document if it does not exist yet.
+    """
+    db = get_db()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    await db.company_voice.update_one(
+        {"user_id": client_id},
+        {
+            "$set": {
+                "cobranza_enabled": True,
+                "cobranza_enabled_at": now,
+                "updated_at": now,
+            },
+            "$setOnInsert": {"user_id": client_id, "created_at": now},
+        },
+        upsert=True,
+    )
+    return {"ok": True, "client_id": client_id, "cobranza_enabled": True}
 
 # Servir archivos estáticos del frontend (build de Vite) — al final para no interceptar rutas API
 import pathlib

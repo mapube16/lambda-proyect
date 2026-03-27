@@ -20,3 +20,4 @@ beautifulsoup4==4.14.3
 phonenumbers==9.0.26
 pytz>=2024.1
 vapi_server_sdk>=0.1.0
+pandas>=2.0.0
