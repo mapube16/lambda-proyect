@@ -2,7 +2,7 @@ import { RoadmapTab } from './RoadmapTab';
 type StaffTab = 'roadmap' | 'dashboard';
 
 export function StaffDashboard() {
-  const { userEmail, clearAuth } = useOfficeStore();
+  useOfficeStore();
   const [tab, setTab] = useState<StaffTab>('dashboard');
   const [clients, setClients] = useState<ClientData[]>([]);
   const [clientSearch, setClientSearch] = useState('');
@@ -13,8 +13,6 @@ export function StaffDashboard() {
   const [loadingClients, setLoadingClients] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [checkingMaps, setCheckingMaps] = useState(false);
-
   const auth = () => ({ Authorization: `Bearer ${useOfficeStore.getState().authToken}` });
 
   const loadClients = useCallback(async () => {
@@ -67,33 +65,6 @@ export function StaffDashboard() {
     }
   };
 
-  const checkMapsDiagnostics = async () => {
-    setCheckingMaps(true);
-    try {
-      const res = await apiFetch(`${API_URL}/api/diagnostics/maps`, { headers: auth() });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data?.detail || 'No se pudo consultar el diagnóstico de Maps');
-        return;
-      }
-      const providers = Array.isArray(data.discovery_providers)
-        ? data.discovery_providers.join(' → ')
-        : 'N/D';
-      const fallback = Array.isArray(data.fallback_if_maps_fails)
-        ? data.fallback_if_maps_fails.join(' → ')
-        : 'N/D';
-      alert(
-        `Google Maps configurado: ${data.google_maps_configured ? 'Sí' : 'No'}\n`
-        + `Key preview: ${data.google_maps_key_preview || 'No disponible'}\n`
-        + `Providers: ${providers}\n`
-        + `Fallback: ${fallback}`
-      );
-    } catch {
-      alert('Error de conexión al consultar diagnóstico de Maps');
-    } finally {
-      setCheckingMaps(false);
-    }
-  };
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: bg, color: text, fontFamily: IN, overflow: 'hidden' }}>
