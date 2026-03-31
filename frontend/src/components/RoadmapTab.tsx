@@ -158,7 +158,7 @@ function PhaseCard({
 }: {
   phase: typeof PHASES[number];
   items: typeof CHECKLISTS[keyof typeof CHECKLISTS];
-  state: Record<string, boolean>;
+  state: Record<string, boolean | string>;
   onToggle: (id: string) => void;
 }) {
   const done = items.filter(i => state[i.id]).length;
@@ -193,47 +193,59 @@ function PhaseCard({
   );
 }
 
-function HitosCard({ state, onToggle }: { state: Record<string, boolean>; onToggle: (id: string) => void }) {
-  const badgeStyle = (h: typeof HITOS[number], done: boolean): React.CSSProperties => {
-    if (done) return { background: `${green}18`, color: green, border: `1px solid ${green}30` };
-    if (h.badge === 'urg')  return { background: `${pink}18`,   color: pink,   border: `1px solid ${pink}30`  };
-    if (h.badge === 'wip')  return { background: `${amber}18`,  color: amber,  border: `1px solid ${amber}30` };
-    if (h.badge === 'done') return { background: `${green}18`,  color: green,  border: `1px solid ${green}30` };
-    return { background: s2, color: muted, border: `1px solid ${faint}44` };
-  };
+type HitoStatus = 'pend' | 'urg' | 'wip' | 'done';
+const HITO_CYCLE: HitoStatus[] = ['pend', 'urg', 'wip', 'done'];
+const HITO_LABELS: Record<HitoStatus, string> = { pend: 'Pendiente', urg: 'Urgente', wip: 'En proceso', done: '✓ Listo' };
+const HITO_STYLES: Record<HitoStatus, React.CSSProperties> = {
+  pend: { background: s2,             color: muted,  border: `1px solid ${faint}44`  },
+  urg:  { background: `${pink}18`,    color: pink,   border: `1px solid ${pink}30`   },
+  wip:  { background: `${amber}18`,   color: amber,  border: `1px solid ${amber}30`  },
+  done: { background: `${green}18`,   color: green,  border: `1px solid ${green}30`  },
+};
 
+function HitosCard({ state, onCycle }: { state: Record<string, boolean | string>; onCycle: (id: string, next: HitoStatus) => void }) {
   return (
     <div style={{ background: s0, border: `1px solid ${faint}44`, borderRadius: 12, padding: '20px 22px', marginTop: 10 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: muted, marginBottom: 16, fontFamily: SG }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: muted, marginBottom: 4, fontFamily: SG }}>
         Hitos transversales
       </div>
+      <div style={{ fontSize: 11, color: faint, fontFamily: IN, marginBottom: 16 }}>
+        Clic para avanzar estado
+      </div>
       {HITOS.map((h, i) => {
-        const done = !!state[h.id];
+        const raw = state[h.id];
+        const current: HitoStatus = (typeof raw === 'string' && raw in HITO_LABELS)
+          ? raw as HitoStatus
+          : (raw === true ? 'done' : h.badge as HitoStatus);
+        const nextIdx = (HITO_CYCLE.indexOf(current) + 1) % HITO_CYCLE.length;
+        const next = HITO_CYCLE[nextIdx];
+        const isDone = current === 'done';
+
         return (
           <div
             key={h.id}
-            role="checkbox"
-            aria-checked={done}
+            role="button"
+            aria-label={`${h.label} — ${HITO_LABELS[current]}. Clic para avanzar a ${HITO_LABELS[next]}`}
             tabIndex={0}
-            onClick={() => onToggle(h.id)}
-            onKeyDown={e => (e.key === ' ' || e.key === 'Enter') && onToggle(h.id)}
+            onClick={() => onCycle(h.id, next)}
+            onKeyDown={e => (e.key === ' ' || e.key === 'Enter') && onCycle(h.id, next)}
             style={{
               display: 'flex', alignItems: 'flex-start', gap: 12,
               padding: '11px 0',
               borderBottom: i < HITOS.length - 1 ? `1px solid ${faint}33` : 'none',
               cursor: 'pointer', outline: 'none',
-              opacity: done ? 0.6 : 1, transition: 'opacity 0.15s',
+              opacity: isDone ? 0.55 : 1, transition: 'opacity 0.15s',
             }}
           >
             <span style={{
               fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
-              minWidth: 76, textAlign: 'center', fontFamily: SG, flexShrink: 0,
-              ...badgeStyle(h, done),
+              minWidth: 82, textAlign: 'center', fontFamily: SG, flexShrink: 0,
+              ...HITO_STYLES[current],
             }}>
-              {done ? '✓ Listo' : h.badgeText}
+              {HITO_LABELS[current]}
             </span>
-            <span style={{ fontSize: 13, color: done ? muted : text, fontFamily: IN, textDecoration: done ? 'line-through' : 'none', textDecorationColor: faint }}>
-              <strong style={{ color: done ? muted : text }}>{h.label}</strong>
+            <span style={{ fontSize: 13, color: isDone ? muted : text, fontFamily: IN, textDecoration: isDone ? 'line-through' : 'none', textDecorationColor: faint }}>
+              <strong style={{ color: isDone ? muted : text }}>{h.label}</strong>
               {h.desc ? <span style={{ color: muted }}> — {h.desc}</span> : null}
             </span>
           </div>
@@ -246,7 +258,7 @@ function HitosCard({ state, onToggle }: { state: Record<string, boolean>; onTogg
 // ── Main Component ───────────────────────────────────────────────────────
 export const RoadmapTab: React.FC = () => {
   const { userRole, authToken } = useOfficeStore();
-  const [state, setState] = useState<Record<string, boolean>>({});
+  const [state, setState] = useState<Record<string, boolean | string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -259,7 +271,7 @@ export const RoadmapTab: React.FC = () => {
       .catch(() => { setError('No se pudo cargar el estado'); setLoading(false); });
   }, [authToken]);
 
-  const saveState = (newState: Record<string, boolean>) => {
+  const saveState = (newState: Record<string, boolean | string>) => {
     if (!authToken) return;
     apiFetch('/api/roadmap-state', {
       method: 'POST',
@@ -270,6 +282,12 @@ export const RoadmapTab: React.FC = () => {
 
   const toggle = (id: string) => {
     const newState = { ...state, [id]: !state[id] };
+    setState(newState);
+    saveState(newState);
+  };
+
+  const cycleHito = (id: string, next: HitoStatus) => {
+    const newState = { ...state, [id]: next };
     setState(newState);
     saveState(newState);
   };
@@ -328,7 +346,7 @@ export const RoadmapTab: React.FC = () => {
       ))}
 
       {/* Hitos */}
-      <HitosCard state={state} onToggle={toggle} />
+      <HitosCard state={state} onCycle={cycleHito} />
     </div>
   );
 };
