@@ -33,6 +33,7 @@ async def _require_cobranza_enabled(current_user: dict) -> None:
         )
 from cobranza.debtor_crud import (
     bulk_create_debtors,
+    bulk_upsert_debtors,
     create_debtor,
     delete_debtor,
     get_debtor_by_id,
@@ -68,22 +69,47 @@ class DebtorPatch(BaseModel):
     notas: Optional[str] = None
 
 
+# ── Status ───────────────────────────────────────────────────────────────────
+
+@router.get("/status")
+async def cobranza_status(current_user: dict = Depends(get_current_user)):
+    """Returns whether cobranza is enabled for the current user and if strategy is configured."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    doc = await db.company_voice.find_one({"user_id": user_id})
+    enabled = bool((doc or {}).get("cobranza_enabled", False))
+    config_doc = await db.cobranza_config.find_one({"user_id": user_id})
+    configured = bool((config_doc or {}).get("estrategia"))
+    return {"enabled": enabled, "configured": configured}
+
+
 # ── CSV Upload ────────────────────────────────────────────────────────────────
 
 @router.post("/debtors/csv", status_code=status.HTTP_201_CREATED)
 async def upload_debtors_csv(
     file: UploadFile = File(...),
+    mode: str = Query("create", regex="^(create|update)$"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Upload a CSV file of debtors. Returns {created: N, errors: [...]}."""
+    """
+    Upload a CSV file of debtors.
+    mode=create (default): insert new debtors, skip duplicates by phone.
+    mode=update: upsert by phone — updates nombre/monto/vencimiento/notas for
+                 existing debtors, preserving estado/intentos/historial.
+    Returns {created: N, updated: N, errors: [...]}
+    """
     user_id = str(current_user["user_id"])
     db = get_db()
 
     file_bytes = await file.read()
     valid_rows, errors = parse_debtor_csv(file_bytes)
 
+    if mode == "update":
+        result = await bulk_upsert_debtors(db, user_id, valid_rows)
+        return {"created": result["created"], "updated": result["updated"], "errors": errors}
+
     result = await bulk_create_debtors(db, user_id, valid_rows)
-    return {"created": result["created"], "errors": errors}
+    return {"created": result["created"], "updated": 0, "errors": errors}
 
 
 # ── Single Debtor Create ──────────────────────────────────────────────────────
@@ -193,7 +219,15 @@ async def patch_debtor_endpoint(
     if body.notas is not None:
         patch["notas"] = body.notas
 
-    updated = await update_debtor(db, user_id, debtor_id, patch)
+    try:
+        updated = await update_debtor(db, user_id, debtor_id, patch)
+    except ValueError as e:
+        if "telefono_duplicado" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Ya existe un deudor con ese número de teléfono.",
+            )
+        raise
     if updated is None:
         raise HTTPException(status_code=404, detail="Debtor not found")
     return {"debtor": updated}

@@ -72,9 +72,37 @@ async def lifespan(app: FastAPI):
     await init_db()
     from auth import hash_password as _hash
     await seed_users([
-        {"email": "staff@lambda.com",   "hashed_password": _hash("lambda2026"), "role": "staff"},
-        {"email": "dpg.seguros@gmail.com", "hashed_password": _hash("seguros2026"),  "role": "client"},
+        {"email": "staff@lambda.com",          "hashed_password": _hash("lambda2026"),  "role": "staff"},
+        {"email": "dpg.seguros@gmail.com",     "hashed_password": _hash("seguros2026"), "role": "client"},
+        {"email": "demo.cobranza@empresa.com", "hashed_password": _hash("demo2026"),    "role": "client"},
+        {"email": "samuel@landa",              "hashed_password": _hash("landa2026"),   "role": "staff"},
+        {"email": "maxi@landa",                "hashed_password": _hash("landa2026"),   "role": "staff"},
     ])
+# ============ Roadmap State API ============
+from models import RoadmapState
+from database import get_roadmap_state, set_roadmap_state
+
+from fastapi import Security
+
+@app.get("/api/roadmap-state", response_model=RoadmapState)
+async def api_get_roadmap_state(current_user=Depends(get_current_user)):
+    """Get roadmap state for current user (staff only)."""
+    if current_user.get("role") != "staff":
+        raise HTTPException(status_code=403, detail="Staff only")
+    user_id = current_user["user_id"]
+    state = await get_roadmap_state(user_id)
+    if not state:
+        return {"user_id": user_id, "state": {}, "updated_at": None}
+    return state
+
+@app.post("/api/roadmap-state", response_model=dict)
+async def api_set_roadmap_state(body: dict = Body(...), current_user=Depends(get_current_user)):
+    """Set roadmap state for current user (staff only)."""
+    if current_user.get("role") != "staff":
+        raise HTTPException(status_code=403, detail="Staff only")
+    user_id = current_user["user_id"]
+    state = body.get("state", {})
+    return await set_roadmap_state(user_id, state)
 
     # Legacy orchestrator (kept for non-prospect agent ops)
     api_key = os.getenv("OPENAI_API_KEY", "demo-key")
@@ -302,8 +330,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     from auth import hash_password as _hash
     await seed_users([
-        {"email": "staff@lambda.com",   "hashed_password": _hash("lambda2026"), "role": "staff"},
-        {"email": "dpg.seguros@gmail.com", "hashed_password": _hash("seguros2026"),  "role": "client"},
+        {"email": "staff@lambda.com",          "hashed_password": _hash("lambda2026"),  "role": "staff"},
+        {"email": "dpg.seguros@gmail.com",     "hashed_password": _hash("seguros2026"), "role": "client"},
+        {"email": "demo.cobranza@empresa.com", "hashed_password": _hash("demo2026"),    "role": "client"},
     ])
 
     # Legacy orchestrator (kept for non-prospect agent ops)
@@ -1603,11 +1632,15 @@ async def staff_get_client_detail(
     user_root_onboarding = await get_user_root_onboarding(client_id)
     profile = await get_client_profile(client_id)
     runtime_agents = _build_runtime_agents(profile)
+    db = get_db()
+    voice_doc = await db.company_voice.find_one({"user_id": client_id}, {"cobranza_enabled": 1})
+    cobranza_enabled = bool((voice_doc or {}).get("cobranza_enabled", False))
     return {
         **summary,
         "runs": runs,
         "user_root_onboarding": user_root_onboarding,
         "runtime_pipeline_agents": len(runtime_agents),
+        "cobranza_enabled": cobranza_enabled,
     }
 
 
@@ -2796,6 +2829,21 @@ async def staff_enable_cobranza(
         upsert=True,
     )
     return {"ok": True, "client_id": client_id, "cobranza_enabled": True}
+
+
+@app.post("/api/staff/clients/{client_id}/cobranza/disable", status_code=200)
+async def staff_disable_cobranza(
+    client_id: str,
+    _staff=Depends(require_staff),
+):
+    db = get_db()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    await db.company_voice.update_one(
+        {"user_id": client_id},
+        {"$set": {"cobranza_enabled": False, "updated_at": now}},
+    )
+    return {"ok": True, "client_id": client_id, "cobranza_enabled": False}
 
 # Servir archivos estáticos del frontend (build de Vite) — al final para no interceptar rutas API
 import pathlib

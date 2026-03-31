@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useOfficeStore } from '../store/officeStore';
 import { apiFetch } from '../lib/apiFetch';
 
@@ -54,6 +54,7 @@ interface CallRecord {
   duracion_segundos: number;
   resultado: string;
   transcript?: string;
+  summary?: string;
   recording_url?: string;
 }
 
@@ -173,6 +174,43 @@ function DebtorModal({
   const [saving, setSaving] = useState(false);
   const [acting, setActing] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // ── Edit mode ────────────────────────────────────────────────────────────
+  const [editMode, setEditMode] = useState(false);
+  const [editFields, setEditFields] = useState({
+    nombre: debtor.nombre,
+    telefono: debtor.telefono,
+    monto: String(debtor.monto),
+    vencimiento: debtor.vencimiento ? debtor.vencimiento.slice(0, 10) : '',
+  });
+
+  const handleSaveEdits = async () => {
+    setSaving(true);
+    try {
+      const patch: Record<string, string | number> = {};
+      if (editFields.nombre !== debtor.nombre) patch.nombre = editFields.nombre;
+      if (editFields.telefono !== debtor.telefono) patch.telefono = editFields.telefono;
+      if (Number(editFields.monto) !== debtor.monto) patch.monto = Number(editFields.monto);
+      if (editFields.vencimiento !== debtor.vencimiento?.slice(0, 10)) patch.vencimiento = editFields.vencimiento;
+      if (notas !== (debtor.notas || '')) patch.notas = notas;
+      if (!Object.keys(patch).length) { setEditMode(false); return; }
+      const r = await apiFetch(`/api/cobranza/debtors/${debtor._id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        onAction(debtor._id, data.debtor || patch);
+        showToast('Cambios guardados');
+        setEditMode(false);
+      } else {
+        const d = await r.json().catch(() => ({}));
+        showToast((d as { detail?: string }).detail || 'Error al guardar');
+      }
+    } catch { showToast('Error de conexión'); }
+    finally { setSaving(false); }
+  };
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -297,36 +335,104 @@ function DebtorModal({
           display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16,
           flexWrap: 'wrap',
         }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-              <h2 style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 22, color: C.text, letterSpacing: '-0.02em' }}>
-                {debtor.nombre}
-              </h2>
-              <EstadoBadge estado={debtor.estado} />
-            </div>
-            <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted }}>
-              {debtor.telefono} · {debtor.intentos}/{debtor.max_intentos} intentos
-            </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {editMode ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {[
+                    { key: 'nombre', label: 'Nombre', flex: 2 },
+                    { key: 'telefono', label: 'Teléfono', flex: 1 },
+                  ].map(({ key, label, flex }) => (
+                    <div key={key} style={{ flex }}>
+                      <div style={{ ...lbl(C.muted, 8), marginBottom: 3 }}>{label.toUpperCase()}</div>
+                      <input
+                        value={editFields[key as keyof typeof editFields]}
+                        onChange={e => setEditFields(p => ({ ...p, [key]: e.target.value }))}
+                        style={{
+                          width: '100%', boxSizing: 'border-box', background: C.s2,
+                          border: `1px solid rgba(252,152,103,0.4)`, color: C.text,
+                          fontFamily: C.SG, fontSize: 13, padding: '6px 10px', outline: 'none',
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {[
+                    { key: 'monto', label: 'Monto (COP)', type: 'number', flex: 1 },
+                    { key: 'vencimiento', label: 'Vencimiento', type: 'date', flex: 1 },
+                  ].map(({ key, label, type, flex }) => (
+                    <div key={key} style={{ flex }}>
+                      <div style={{ ...lbl(C.muted, 8), marginBottom: 3 }}>{label.toUpperCase()}</div>
+                      <input
+                        type={type}
+                        value={editFields[key as keyof typeof editFields]}
+                        onChange={e => setEditFields(p => ({ ...p, [key]: e.target.value }))}
+                        style={{
+                          width: '100%', boxSizing: 'border-box', background: C.s2,
+                          border: `1px solid rgba(252,152,103,0.4)`, color: C.text,
+                          fontFamily: C.SG, fontSize: 13, padding: '6px 10px', outline: 'none',
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                  <h2 style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 22, color: C.text, letterSpacing: '-0.02em' }}>
+                    {debtor.nombre}
+                  </h2>
+                  <EstadoBadge estado={debtor.estado} />
+                </div>
+                <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted }}>
+                  {debtor.telefono} · {debtor.intentos}/{debtor.max_intentos} intentos
+                </div>
+              </>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-            <div style={{ textAlign: 'right' }}>
-              <div style={lbl(C.muted, 9)}>Monto</div>
-              <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 22, color: estadoCfg.color }}>
-                {formatCOP(debtor.monto)}
+            {!editMode && (
+              <div style={{ textAlign: 'right' }}>
+                <div style={lbl(C.muted, 9)}>Monto</div>
+                <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 22, color: estadoCfg.color }}>
+                  {formatCOP(debtor.monto)}
+                </div>
               </div>
-            </div>
-            <button
-              onClick={handleLlamarAhora}
-              disabled={acting}
-              style={{
-                padding: '9px 18px', border: 'none', cursor: acting ? 'not-allowed' : 'pointer',
-                background: C.cyan, color: C.bg,
-                ...lbl('#000', 11), display: 'flex', alignItems: 'center', gap: 6,
-                opacity: acting ? 0.6 : 1,
-              }}
-            >
-              📞 LLAMAR
-            </button>
+            )}
+            {editMode ? (
+              <>
+                <button
+                  onClick={() => setEditMode(false)}
+                  style={{
+                    padding: '9px 14px', border: `1px solid rgba(255,255,255,0.1)`, cursor: 'pointer',
+                    background: 'transparent', color: C.muted, fontFamily: C.SG, fontSize: 11, fontWeight: 600,
+                  }}
+                >Cancelar</button>
+                <button
+                  onClick={handleSaveEdits}
+                  disabled={saving}
+                  style={{
+                    padding: '9px 18px', border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
+                    background: C.orange, color: C.bg, ...lbl('#000', 11), opacity: saving ? 0.6 : 1,
+                  }}
+                >{saving ? 'Guardando…' : 'Guardar cambios'}</button>
+              </>
+            ) : (
+              <button
+                onClick={handleLlamarAhora}
+                disabled={acting}
+                style={{
+                  padding: '9px 18px', border: 'none', cursor: acting ? 'not-allowed' : 'pointer',
+                  background: C.cyan, color: C.bg,
+                  ...lbl('#000', 11), display: 'flex', alignItems: 'center', gap: 6,
+                  opacity: acting ? 0.6 : 1,
+                }}
+              >
+                📞 LLAMAR
+              </button>
+            )}
             <button
               onClick={onClose}
               style={{
@@ -404,7 +510,7 @@ function DebtorModal({
                             </div>
                           </div>
                           <div style={{ ...lbl(C.muted, 9), marginTop: 2 }}>{call.resultado.toUpperCase()}</div>
-                          {call.transcript && (
+                          {(call.transcript || call.summary) && (
                             <button
                               onClick={() => setExpandedCall(expandedCall === call.call_id ? null : call.call_id)}
                               style={{
@@ -412,17 +518,17 @@ function DebtorModal({
                                 ...lbl(C.cyan, 9), padding: 0,
                               }}
                             >
-                              {expandedCall === call.call_id ? '▲ ocultar' : '▼ ver transcript'}
+                              {expandedCall === call.call_id ? '▲ ocultar' : call.transcript ? '▼ ver transcript' : '▼ ver resumen'}
                             </button>
                           )}
-                          {expandedCall === call.call_id && call.transcript && (
+                          {expandedCall === call.call_id && (call.transcript || call.summary) && (
                             <div style={{
                               marginTop: 6, padding: '8px 10px', background: C.s2,
                               fontFamily: C.IN, fontSize: 11, color: C.muted,
                               lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
-                              borderLeft: `2px solid ${C.cyan}40`,
+                              borderLeft: `2px solid ${call.transcript ? C.cyan : C.purple}40`,
                             }}>
-                              {call.transcript}
+                              {call.transcript || call.summary}
                             </div>
                           )}
                           {call.recording_url && (
@@ -470,6 +576,7 @@ function DebtorModal({
             {/* Action grid */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
               {[
+                { label: 'EDITAR', onClick: () => setEditMode(true), color: C.orange },
                 { label: 'MARCAR PAGADO', onClick: handlePagar, color: C.green },
                 { label: debtor.estado === 'pausado' ? 'REACTIVAR' : 'PAUSAR', onClick: handlePausar, color: C.purple },
                 { label: 'ELIMINAR', onClick: handleEliminar, color: C.pink },
@@ -560,9 +667,35 @@ function DebtorModal({
                         );
                       })}
                     </div>
+                  ) : lastCall.summary ? (
+                    <div>
+                      <div style={{ ...lbl(C.muted, 9), marginBottom: 10 }}>RESUMEN</div>
+                      <div style={{
+                        padding: '12px 14px', background: C.s2,
+                        fontFamily: C.IN, fontSize: 12, color: C.text, lineHeight: 1.6,
+                        borderLeft: `2px solid ${C.purple}60`,
+                      }}>
+                        {lastCall.summary}
+                      </div>
+                    </div>
                   ) : (
-                    <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, fontStyle: 'italic' }}>
-                      Transcript no disponible para esta llamada.
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{
+                        padding: '12px 14px', background: C.s2,
+                        fontFamily: C.IN, fontSize: 12, color: C.muted, lineHeight: 1.6,
+                        borderLeft: `2px solid rgba(255,255,255,0.08)`,
+                      }}>
+                        {lastCall.resultado === 'no-answer' && 'El deudor no contestó la llamada.'}
+                        {lastCall.resultado === 'busy' && 'La línea estaba ocupada.'}
+                        {lastCall.resultado === 'voicemail' && 'La llamada fue al buzón de voz.'}
+                        {lastCall.resultado === 'customer-ended-call' && 'El deudor finalizó la llamada.'}
+                        {lastCall.resultado === 'assistant-ended-call' && 'El agente finalizó la llamada.'}
+                        {lastCall.resultado === 'hangup' && 'La llamada fue cortada.'}
+                        {!['no-answer','busy','voicemail','customer-ended-call','assistant-ended-call','hangup'].includes(lastCall.resultado) && `Llamada finalizada: ${lastCall.resultado}`}
+                      </div>
+                      <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted, fontStyle: 'italic' }}>
+                        Transcript no disponible — puede ser limitación del plan de Vapi.
+                      </div>
                     </div>
                   )}
                 </div>
@@ -587,6 +720,140 @@ function DebtorModal({
   );
 }
 
+// ─── Create Debtor Modal ───────────────────────────────────────────────────────
+function DebtorCreateModal({
+  token,
+  onClose,
+  onCreated,
+}: {
+  token: string;
+  onClose: () => void;
+  onCreated: (debtor: Debtor) => void;
+}) {
+  const [fields, setFields] = useState({
+    nombre: '', telefono: '', monto: '', vencimiento: '', notas: '', max_intentos: '5',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setFields(p => ({ ...p, [key]: e.target.value }));
+
+  const handleSubmit = async () => {
+    if (!fields.nombre.trim() || !fields.telefono.trim() || !fields.monto || !fields.vencimiento) {
+      setError('Nombre, teléfono, monto y vencimiento son obligatorios');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const r = await apiFetch('/api/cobranza/debtors', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombre: fields.nombre.trim(),
+          telefono: fields.telefono.trim(),
+          monto: Number(fields.monto),
+          vencimiento: fields.vencimiento,
+          notas: fields.notas.trim() || null,
+          max_intentos: Number(fields.max_intentos) || 5,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        onCreated((data as { debtor: Debtor }).debtor);
+        onClose();
+      } else {
+        setError((data as { detail?: string }).detail || `Error ${r.status}`);
+      }
+    } catch { setError('Error de conexión'); }
+    finally { setSaving(false); }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', boxSizing: 'border-box', background: C.s2,
+    border: `1px solid rgba(255,255,255,0.1)`, color: C.text,
+    fontFamily: C.IN, fontSize: 13, padding: '9px 12px', outline: 'none',
+  };
+  const focusStyle = `border-color: rgba(252,152,103,0.5)`;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(13,13,24,0.92)', backdropFilter: 'blur(4px)' }} />
+      <div style={{
+        position: 'relative', zIndex: 1, width: '100%', maxWidth: 480,
+        background: C.s1, border: `1px solid rgba(252,152,103,0.2)`,
+        animation: 'cobr-fade-in 0.2s ease',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '18px 24px', borderBottom: `1px solid rgba(255,255,255,0.05)`, background: C.s0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={lbl(C.orange, 9)}>NUEVO DEUDOR</div>
+            <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 16, color: C.text, marginTop: 4 }}>Agregar manualmente</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 16 }}>✕</button>
+        </div>
+        {/* Form */}
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <div style={{ ...lbl(C.muted, 8), marginBottom: 4 }}>NOMBRE *</div>
+              <input style={inputStyle} value={fields.nombre} onChange={set('nombre')} placeholder="Carlos Ramírez" onFocus={e => e.target.setAttribute('style', inputStyle.toString() + focusStyle)} />
+            </div>
+            <div>
+              <div style={{ ...lbl(C.muted, 8), marginBottom: 4 }}>TELÉFONO *</div>
+              <input style={inputStyle} value={fields.telefono} onChange={set('telefono')} placeholder="+57 300 1234567" />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <div style={{ ...lbl(C.muted, 8), marginBottom: 4 }}>MONTO COP *</div>
+              <input style={inputStyle} type="number" value={fields.monto} onChange={set('monto')} placeholder="2500000" />
+            </div>
+            <div>
+              <div style={{ ...lbl(C.muted, 8), marginBottom: 4 }}>VENCIMIENTO *</div>
+              <input style={inputStyle} type="date" value={fields.vencimiento} onChange={set('vencimiento')} />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+            <div>
+              <div style={{ ...lbl(C.muted, 8), marginBottom: 4 }}>NOTAS</div>
+              <textarea style={{ ...inputStyle, resize: 'vertical' } as React.CSSProperties} rows={2} value={fields.notas} onChange={set('notas')} placeholder="Información adicional…" />
+            </div>
+            <div>
+              <div style={{ ...lbl(C.muted, 8), marginBottom: 4 }}>MÁX. INTENTOS</div>
+              <input style={inputStyle} type="number" min={1} max={20} value={fields.max_intentos} onChange={set('max_intentos')} />
+            </div>
+          </div>
+          {error && (
+            <div style={{ padding: '8px 12px', background: C.pinkBg, color: C.pink, fontFamily: C.IN, fontSize: 12 }}>
+              {error}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button onClick={onClose} style={{ padding: '9px 16px', background: 'transparent', border: `1px solid rgba(255,255,255,0.1)`, color: C.muted, fontFamily: C.SG, fontSize: 11, cursor: 'pointer' }}>
+              Cancelar
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={saving}
+              style={{ padding: '9px 20px', border: 'none', background: saving ? C.s3 : C.orange, color: C.bg, fontFamily: C.SG, fontWeight: 700, fontSize: 12, cursor: saving ? 'not-allowed' : 'pointer' }}
+            >
+              {saving ? 'Guardando…' : 'Crear deudor'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Filter pills ─────────────────────────────────────────────────────────────
 const FILTERS: { value: EstadoFilter; label: string }[] = [
   { value: null,                label: 'TODOS' },
@@ -600,16 +867,294 @@ const FILTERS: { value: EstadoFilter; label: string }[] = [
   { value: 'pausado',           label: 'PAUSADO' },
 ];
 
+// ─── Onboarding step types ────────────────────────────────────────────────────
+type OnboardingStep = 'describe' | 'review' | 'upload';
+
+interface Estrategia {
+  tono: string;
+  frecuencia_dias: number;
+  max_intentos: number;
+  guion: { saludo: string; propuesta: string; objeciones: string; cierre: string };
+}
+
+// ─── Onboarding view ─────────────────────────────────────────────────────────
+function CobranzaOnboarding({ token, onDone }: { token: string; onDone: () => void }) {
+  const [step, setStep] = useState<OnboardingStep>('describe');
+  const [descripcion, setDescripcion] = useState('');
+  const [estrategia, setEstrategia] = useState<Estrategia | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [uploadingCsv, setUploadingCsv] = useState(false);
+  const [csvResult, setCsvResult] = useState<{ created: number } | null>(null);
+  const csvRef = useRef<HTMLInputElement>(null);
+
+  const handleStart = async () => {
+    if (!descripcion.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const r = await apiFetch('/api/cobranza/onboarding/start', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ descripcion }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setError(data.detail || 'Error al generar la estrategia'); return; }
+      setEstrategia(data.estrategia);
+      setStep('review');
+    } catch { setError('Error de conexión'); }
+    finally { setLoading(false); }
+  };
+
+  const handleApprove = async () => {
+    if (!estrategia) return;
+    setLoading(true);
+    setError('');
+    try {
+      const r = await apiFetch('/api/cobranza/onboarding/approve', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estrategia }),
+      });
+      if (!r.ok) { const d = await r.json(); setError(d.detail || 'Error al guardar'); return; }
+      setStep('upload');
+    } catch { setError('Error de conexión'); }
+    finally { setLoading(false); }
+  };
+
+  const handleCsvOnboarding = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploadingCsv(true);
+    setCsvResult(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const r = await apiFetch('/api/cobranza/debtors/csv', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const data = await r.json().catch(() => ({})) as { created?: number };
+      if (r.ok) setCsvResult({ created: data.created ?? 0 });
+    } catch { /* non-fatal */ }
+    finally { setUploadingCsv(false); }
+  };
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '40px 28px' }}>
+      {/* Header */}
+      <div style={{ maxWidth: 640, margin: '0 auto' }}>
+        <div style={{ ...lbl(C.orange, 10), marginBottom: 8 }}>CONFIGURACIÓN INICIAL</div>
+        <h1 style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 26, letterSpacing: '-0.03em', color: C.text, margin: 0 }}>
+          Configura tu agente de cobranza
+        </h1>
+        <p style={{ fontFamily: C.IN, fontSize: 13, color: C.muted, marginTop: 8 }}>
+          Cuéntale a la IA cómo es tu cartera y generará una estrategia de llamadas personalizada.
+        </p>
+
+        {/* Step indicator */}
+        {(() => {
+          const steps: OnboardingStep[] = ['describe', 'review', 'upload'];
+          const labels = ['Describir cartera', 'Revisar estrategia', 'Subir cartera'];
+          const currentIdx = steps.indexOf(step);
+          return (
+            <div style={{ display: 'flex', gap: 8, marginTop: 20, marginBottom: 32 }}>
+              {steps.map((s, i) => (
+                <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{
+                    width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: C.SG, fontSize: 11, fontWeight: 700,
+                    background: step === s ? C.orange : (i < currentIdx ? C.green : C.s3),
+                    color: step === s || i < currentIdx ? C.bg : C.muted,
+                  }}>{i + 1}</div>
+                  <span style={{ fontFamily: C.IN, fontSize: 12, color: step === s ? C.text : C.muted }}>
+                    {labels[i]}
+                  </span>
+                  {i < steps.length - 1 && <span style={{ color: C.faint, fontSize: 12 }}>→</span>}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
+        {/* Step 1 — describe */}
+        {step === 'describe' && (
+          <div>
+            <label style={{ ...lbl(C.muted, 10), display: 'block', marginBottom: 8 }}>
+              DESCRIBE TU CARTERA DE COBRO
+            </label>
+            <textarea
+              value={descripcion}
+              onChange={e => setDescripcion(e.target.value)}
+              placeholder="Ej: Tenemos 200 clientes con pagos vencidos entre 30 y 90 días. Son empresas pequeñas del sector retail. Los montos van de $500k a $5M. Preferimos un tono empático pero firme…"
+              rows={6}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: C.s2, border: `1px solid ${descripcion ? 'rgba(252,152,103,0.4)' : C.faint}`,
+                borderRadius: 8, color: C.text, fontFamily: C.IN, fontSize: 13,
+                padding: '14px 16px', resize: 'vertical', outline: 'none',
+                transition: 'border-color 0.15s', lineHeight: 1.6,
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+              <span style={{ fontFamily: C.IN, fontSize: 12, color: C.faint }}>
+                {descripcion.length} caracteres · mínimo 30
+              </span>
+              <button
+                onClick={handleStart}
+                disabled={loading || descripcion.trim().length < 30}
+                style={{
+                  padding: '10px 22px', borderRadius: 7, border: 'none', cursor: descripcion.trim().length >= 30 && !loading ? 'pointer' : 'not-allowed',
+                  background: descripcion.trim().length >= 30 && !loading ? C.orange : C.s3,
+                  color: C.bg, fontFamily: C.SG, fontWeight: 700, fontSize: 13,
+                  transition: 'background 0.15s',
+                }}
+              >
+                {loading ? 'Generando…' : 'Generar estrategia →'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2 — review */}
+        {step === 'review' && estrategia && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Params row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+              {[
+                { label: 'TONO', value: estrategia.tono, key: 'tono' as const },
+                { label: 'FRECUENCIA', value: `Cada ${estrategia.frecuencia_dias} día(s)`, key: null },
+                { label: 'MÁX. INTENTOS', value: String(estrategia.max_intentos), key: null },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ background: C.s2, borderRadius: 8, padding: '12px 14px', border: `1px solid ${C.faint}` }}>
+                  <div style={lbl(C.muted, 9)}>{label}</div>
+                  <div style={{ fontFamily: C.SG, fontSize: 14, fontWeight: 600, color: C.orange, marginTop: 5 }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Guion sections — editable */}
+            <div style={{ ...lbl(C.muted, 10), marginBottom: 4 }}>GUION DE LLAMADA (editable)</div>
+            {(['saludo', 'propuesta', 'objeciones', 'cierre'] as const).map(key => (
+              <div key={key}>
+                <div style={lbl(C.orange, 9)}>{key.toUpperCase()}</div>
+                <textarea
+                  value={estrategia.guion[key]}
+                  onChange={e => setEstrategia(prev => prev ? {
+                    ...prev, guion: { ...prev.guion, [key]: e.target.value }
+                  } : prev)}
+                  rows={3}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', marginTop: 4,
+                    background: C.s2, border: `1px solid ${C.faint}`, borderRadius: 7,
+                    color: C.text, fontFamily: C.IN, fontSize: 12, padding: '10px 12px',
+                    resize: 'vertical', outline: 'none', lineHeight: 1.6,
+                  }}
+                />
+              </div>
+            ))}
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+              <button
+                onClick={() => setStep('describe')}
+                style={{
+                  padding: '10px 18px', borderRadius: 7, border: `1px solid ${C.faint}`,
+                  background: 'transparent', color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
+                }}
+              >← Volver</button>
+              <button
+                onClick={handleApprove}
+                disabled={loading}
+                style={{
+                  padding: '10px 22px', borderRadius: 7, border: 'none', cursor: loading ? 'not-allowed' : 'pointer',
+                  background: loading ? C.s3 : C.green, color: C.bg,
+                  fontFamily: C.SG, fontWeight: 700, fontSize: 13, transition: 'background 0.15s',
+                }}
+              >{loading ? 'Guardando…' : 'Aprobar y activar →'}</button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3 — upload initial CSV */}
+        {step === 'upload' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div style={{ background: C.s2, border: `1px solid ${C.cyanBdr}`, borderRadius: 10, padding: '28px 24px', textAlign: 'center' }}>
+              <div style={{ fontSize: 32, marginBottom: 10 }}>📋</div>
+              <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 16, color: C.text, marginBottom: 6 }}>
+                Sube tu cartera inicial
+              </div>
+              <p style={{ fontFamily: C.IN, fontSize: 13, color: C.muted, margin: '0 0 18px', lineHeight: 1.6 }}>
+                CSV con columnas: <code style={{ color: C.cyan }}>nombre, telefono, monto, vencimiento</code><br />
+                El campo <code style={{ color: C.cyan }}>vencimiento</code> debe ser <code style={{ color: C.cyan }}>YYYY-MM-DD</code>. También puedes omitir esto y subir la cartera después.
+              </p>
+              <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvOnboarding} />
+              {csvResult ? (
+                <div style={{ background: C.greenBg, border: `1px solid rgba(169,220,118,0.3)`, borderRadius: 7, padding: '12px 16px', color: C.green, fontFamily: C.SG, fontWeight: 600, fontSize: 13 }}>
+                  {csvResult.created} deudores importados correctamente
+                </div>
+              ) : (
+                <button
+                  onClick={() => csvRef.current?.click()}
+                  disabled={uploadingCsv}
+                  style={{
+                    padding: '10px 22px', borderRadius: 7, border: `1px solid ${C.cyanBdr}`,
+                    background: C.cyanBg, color: C.cyan,
+                    fontFamily: C.SG, fontWeight: 700, fontSize: 13,
+                    cursor: uploadingCsv ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {uploadingCsv ? 'Subiendo…' : '↑ Seleccionar CSV'}
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={onDone}
+                style={{
+                  padding: '10px 18px', borderRadius: 7, border: `1px solid ${C.faint}`,
+                  background: 'transparent', color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
+                }}
+              >Omitir por ahora</button>
+              <button
+                onClick={onDone}
+                style={{
+                  padding: '10px 22px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                  background: C.green, color: C.bg,
+                  fontFamily: C.SG, fontWeight: 700, fontSize: 13,
+                }}
+              >Ir al panel →</button>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div style={{ marginTop: 12, padding: '10px 14px', background: C.pinkBg, borderRadius: 7, color: C.pink, fontFamily: C.IN, fontSize: 12 }}>
+            {error}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main CobranzaTab ─────────────────────────────────────────────────────────
 export function CobranzaTab() {
   const { authToken } = useOfficeStore();
   const token = authToken || sessionStorage.getItem('hive_token') || '';
 
+  const [configured, setConfigured] = useState<boolean | null>(null);
   const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [loading, setLoading] = useState(true);
   const [estadoFilter, setEstadoFilter] = useState<EstadoFilter>(null);
   const [selectedDebtor, setSelectedDebtor] = useState<Debtor | null>(null);
   const [toasts, setToasts] = useState<CobrToast[]>([]);
+  const [uploadingCsv, setUploadingCsv] = useState<false | 'create' | 'update'>(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const csvUpdateRef = useRef<HTMLInputElement>(null);
 
   // ── Toast helpers ──────────────────────────────────────────────────────────
   const dismissToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
@@ -617,6 +1162,14 @@ export function CobranzaTab() {
     setToasts(prev => [...prev.filter(t => t.id !== toast.id), toast]);
     setTimeout(() => dismissToast(toast.id), duration);
   };
+
+  // ── Check if onboarding is done ───────────────────────────────────────────
+  useEffect(() => {
+    apiFetch('/api/cobranza/status', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => setConfigured(!!d.configured))
+      .catch(() => setConfigured(false));
+  }, [token]);
 
   // ── Fetch debtors ──────────────────────────────────────────────────────────
   const fetchDebtors = useCallback(async () => {
@@ -636,10 +1189,23 @@ export function CobranzaTab() {
   useEffect(() => { fetchDebtors(); }, [fetchDebtors]);
 
   // ── Real-time WS updates ───────────────────────────────────────────────────
+  const fetchDebtorById = useCallback(async (debtor_id: string) => {
+    try {
+      const r = await apiFetch(`/api/cobranza/debtors/${debtor_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return null;
+      const data = await r.json() as { debtor: Debtor };
+      return data.debtor ?? null;
+    } catch { return null; }
+  }, [token]);
+
   useEffect(() => {
-    const handleDebtorUpdate = (e: Event) => {
+    const handleDebtorUpdate = async (e: Event) => {
       const event = e as CustomEvent<{ debtor_id: string; estado: Debtor['estado']; intentos?: number }>;
       const { debtor_id, estado, intentos } = event.detail;
+
+      // Update list immediately with partial data
       setDebtors(prev =>
         prev.map(d =>
           d._id === debtor_id
@@ -647,17 +1213,24 @@ export function CobranzaTab() {
             : d
         )
       );
-      // Also update selected debtor if open
-      setSelectedDebtor(prev =>
-        prev && prev._id === debtor_id
-          ? { ...prev, estado, ...(intentos !== undefined ? { intentos } : {}) }
-          : prev
-      );
+
+      // Refetch full debtor to get historial_llamadas + transcript
+      const full = await fetchDebtorById(debtor_id);
+      if (full) {
+        setDebtors(prev => prev.map(d => d._id === debtor_id ? full : d));
+        setSelectedDebtor(prev => prev && prev._id === debtor_id ? full : prev);
+      } else {
+        setSelectedDebtor(prev =>
+          prev && prev._id === debtor_id
+            ? { ...prev, estado, ...(intentos !== undefined ? { intentos } : {}) }
+            : prev
+        );
+      }
     };
 
     window.addEventListener('cobr:debtor_update', handleDebtorUpdate);
     return () => window.removeEventListener('cobr:debtor_update', handleDebtorUpdate);
-  }, []);
+  }, [fetchDebtorById]);
 
   // ── Quick actions ──────────────────────────────────────────────────────────
   const quickAction = async (debtorId: string, path: string, update: Partial<Debtor>) => {
@@ -700,6 +1273,38 @@ export function CobranzaTab() {
       setDebtors(prev => prev.filter(d => d._id !== id));
     } else {
       setDebtors(prev => prev.map(d => d._id === id ? { ...d, ...updates } : d));
+      setSelectedDebtor(prev => prev && prev._id === id ? { ...prev, ...updates } : prev);
+    }
+  };
+
+  // ── CSV Upload ────────────────────────────────────────────────────────────
+  const handleCsvUpload = (mode: 'create' | 'update') => async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploadingCsv(mode);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const r = await apiFetch(`/api/cobranza/debtors/csv?mode=${mode}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const data = await r.json().catch(() => ({})) as { created?: number; updated?: number; errors?: string[] };
+      if (r.ok) {
+        const msg = mode === 'create'
+          ? `${data.created ?? 0} deudores agregados`
+          : `${data.updated ?? 0} actualizados, ${data.created ?? 0} nuevos`;
+        addToast({ id: `csv-${Date.now()}`, message: msg, ok: true });
+        fetchDebtors();
+      } else {
+        addToast({ id: `csv-err-${Date.now()}`, message: (data as { detail?: string }).detail || `Error ${r.status}`, ok: false });
+      }
+    } catch {
+      addToast({ id: `csv-err-${Date.now()}`, message: 'Error al subir CSV', ok: false });
+    } finally {
+      setUploadingCsv(false);
     }
   };
 
@@ -710,6 +1315,16 @@ export function CobranzaTab() {
 
   // ── Filtered list ──────────────────────────────────────────────────────────
   const visible = estadoFilter ? debtors.filter(d => d.estado === estadoFilter) : debtors;
+
+  // ── Show onboarding if strategy not yet configured ────────────────────────
+  if (configured === null) return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, fontFamily: C.IN, fontSize: 13 }}>
+      Cargando…
+    </div>
+  );
+  if (!configured) return (
+    <CobranzaOnboarding token={token} onDone={() => { setConfigured(true); fetchDebtors(); }} />
+  );
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
@@ -727,16 +1342,65 @@ export function CobranzaTab() {
               Campaña de cobro automatizada con IA — control total de cada deudor.
             </p>
           </div>
-          <button
-            onClick={fetchDebtors}
-            title="Actualizar"
-            style={{
-              width: 32, height: 32, border: 'none', background: C.s1, color: C.muted,
-              cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.s3; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = C.s1; }}
-          >↺</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {/* hidden inputs */}
+            <input ref={csvInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('create')} />
+            <input ref={csvUpdateRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('update')} />
+            {/* Nuevo deudor */}
+            <button
+              onClick={() => setShowCreateModal(true)}
+              title="Agregar deudor manualmente"
+              style={{
+                height: 32, padding: '0 14px', border: `1px solid rgba(169,220,118,0.3)`,
+                background: C.greenBg, color: C.green,
+                cursor: 'pointer', fontSize: 12,
+                fontFamily: C.SG, fontWeight: 600, letterSpacing: '0.05em',
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}
+            >+ Nuevo</button>
+            {/* Agregar CSV */}
+            <button
+              onClick={() => csvInputRef.current?.click()}
+              disabled={!!uploadingCsv}
+              title="Agregar nuevos deudores desde CSV"
+              style={{
+                height: 32, padding: '0 12px', border: `1px solid ${C.cyanBdr}`,
+                background: uploadingCsv === 'create' ? C.s2 : C.cyanBg,
+                color: uploadingCsv === 'create' ? C.muted : C.cyan,
+                cursor: uploadingCsv ? 'not-allowed' : 'pointer', fontSize: 12,
+                fontFamily: C.SG, fontWeight: 600, letterSpacing: '0.05em',
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              {uploadingCsv === 'create' ? '…' : '↑ Agregar CSV'}
+            </button>
+            {/* Actualizar CSV */}
+            <button
+              onClick={() => csvUpdateRef.current?.click()}
+              disabled={!!uploadingCsv}
+              title="Actualizar deudores existentes por teléfono"
+              style={{
+                height: 32, padding: '0 12px', border: `1px solid rgba(171,157,242,0.3)`,
+                background: uploadingCsv === 'update' ? C.s2 : C.purpleBg,
+                color: uploadingCsv === 'update' ? C.muted : C.purple,
+                cursor: uploadingCsv ? 'not-allowed' : 'pointer', fontSize: 12,
+                fontFamily: C.SG, fontWeight: 600, letterSpacing: '0.05em',
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              {uploadingCsv === 'update' ? '…' : '↕ Actualizar CSV'}
+            </button>
+            <button
+              onClick={fetchDebtors}
+              title="Refrescar lista"
+              style={{
+                width: 32, height: 32, border: 'none', background: C.s1, color: C.muted,
+                cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.s3; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = C.s1; }}
+            >↺</button>
+          </div>
         </div>
 
         {/* Stats row */}
@@ -844,6 +1508,18 @@ export function CobranzaTab() {
           token={token}
           onClose={() => setSelectedDebtor(null)}
           onAction={handleModalAction}
+        />
+      )}
+
+      {/* Create debtor modal */}
+      {showCreateModal && (
+        <DebtorCreateModal
+          token={token}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={(debtor) => {
+            setDebtors(prev => [debtor, ...prev]);
+            addToast({ id: `new-${debtor._id}`, message: `${debtor.nombre} agregado`, ok: true });
+          }}
         />
       )}
 

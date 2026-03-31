@@ -79,10 +79,11 @@ async def pre_vencimiento_job() -> None:
             continue
 
         user_id = debtor.get("user_id")
-        config = await db.cobranza_config.find_one({"user_id": user_id})
-        if not config:
+        config_doc = await db.cobranza_config.find_one({"user_id": user_id})
+        if not config_doc:
             logger.debug("[pre_vencimiento_job] No config for user_id=%s — skip debtor %s", user_id, debtor["_id"])
             continue
+        config = config_doc.get("estrategia", {})
 
         await db.debtors.update_one(
             {"_id": debtor["_id"]},
@@ -134,10 +135,11 @@ async def post_vencimiento_job() -> None:
             continue
 
         user_id = debtor.get("user_id")
-        config = await db.cobranza_config.find_one({"user_id": user_id})
-        if not config:
+        config_doc = await db.cobranza_config.find_one({"user_id": user_id})
+        if not config_doc:
             logger.debug("[post_vencimiento_job] No config for user_id=%s — skip debtor %s", user_id, debtor["_id"])
             continue
+        config = config_doc.get("estrategia", {})
 
         # Respect frecuencia_dias: days since last contact
         frecuencia_dias = config.get("frecuencia_dias", 1)

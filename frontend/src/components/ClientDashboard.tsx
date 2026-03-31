@@ -351,9 +351,18 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   const [selectedLead, setSelectedLead] = useState<ApiLead | null>(null);
   const [toasts, setToasts]    = useState<ToastItem[]>([]);
   const [query, setQuery]      = useState('');
+  const [cobranzaEnabled, setCobranzaEnabled] = useState(false);
 
   // tracks pending reject timeouts — keyed by lead id
   const pendingRejects = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // ── Check cobranza access ────────────────────────────────────────────────────
+  useEffect(() => {
+    apiFetch(`${API}/api/cobranza/status`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.enabled) setCobranzaEnabled(true); })
+      .catch(() => {});
+  }, [token]);
 
   // ── Data fetching ────────────────────────────────────────────────────────────
   const fetchLeads = useCallback(async (silent = false) => {
@@ -465,10 +474,10 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         <nav style={{ flex: 1, paddingTop: 4 }}>
           {/* Section switcher */}
           <div style={{ display: 'flex', margin: '0 12px 8px', gap: 4 }}>
-            {(['leads', 'cobranza'] as const).map(s => (
+            {(['leads', ...(cobranzaEnabled ? ['cobranza'] : [])] as const).map(s => (
               <button
                 key={s}
-                onClick={() => setSection(s)}
+                onClick={() => setSection(s as 'leads' | 'cobranza')}
                 style={{
                   flex: 1, padding: '6px 0', border: 'none', cursor: 'pointer',
                   background: section === s ? (s === 'cobranza' ? 'rgba(252,152,103,0.12)' : C.cyanBg) : 'transparent',
