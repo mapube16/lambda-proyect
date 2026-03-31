@@ -2,30 +2,46 @@ import React, { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/apiFetch';
 import { useOfficeStore } from '../store/officeStore';
 
-// Checklist and hito definitions (copied from tu HTML original)
+// ── Design tokens (dark theme, matches StaffDashboard) ─────────────────
+const bg    = '#0d0d18';
+const s0    = '#12121f';
+const s1    = '#1a1a2e';
+const s2    = '#22223a';
+const text  = '#e8e8f0';
+const muted = '#8b8ba8';
+const faint = '#4a4a6a';
+const cyan  = '#78dce8';
+const green = '#a9dc76';
+const pink  = '#ff6188';
+const amber = '#ffd866';
+const purple= '#ab9df2';
+const SG    = "'Space Grotesk', 'Segoe UI', sans-serif";
+const IN    = "'Inter', 'Segoe UI', sans-serif";
+
+// ── Data ────────────────────────────────────────────────────────────────
 const CHECKLISTS = {
   current: [
-    { id: 'cur1',  label: 'Constituir SAS',                                        tag: 'urgent' },
-    { id: 'cur2',  label: 'Comprar dominio',                                        tag: null },
-    { id: 'cur3',  label: 'Ciberseguridad del desarrollo',                          tag: null },
-    { id: 'cur4',  label: 'Definir pricing beta',                                   tag: 'urgent' },
-    { id: 'cur5',  label: 'Actualizar landing page con lógica real del negocio',    tag: null },
-    { id: 'cur6',  label: 'Mejorar UI del desarrollo',                              tag: null },
-    { id: 'cur7',  label: 'Estrategia de propuesta a clientes prospectos',          tag: null },
-    { id: 'cur8',  label: 'Agente SECOP listo para despliegue',                     tag: null },
+    { id: 'cur1',  label: 'Constituir SAS',                                        tag: 'urgent'   },
+    { id: 'cur2',  label: 'Comprar dominio',                                        tag: null       },
+    { id: 'cur3',  label: 'Ciberseguridad del desarrollo',                          tag: null       },
+    { id: 'cur4',  label: 'Definir pricing beta',                                   tag: 'urgent'   },
+    { id: 'cur5',  label: 'Actualizar landing page con lógica real del negocio',    tag: null       },
+    { id: 'cur6',  label: 'Mejorar UI del desarrollo',                              tag: null       },
+    { id: 'cur7',  label: 'Estrategia de propuesta a clientes prospectos',          tag: null       },
+    { id: 'cur8',  label: 'Agente SECOP listo para despliegue',                     tag: null       },
     { id: 'cur9',  label: 'NDA socios estratégicos',                                tag: 'prelabel' },
     { id: 'cur10', label: 'NDA freelancers y consultores',                          tag: 'prelabel' },
     { id: 'cur11', label: 'NDA mutuo entre cofundadores',                           tag: 'prelabel' },
   ],
   f1: [
-    { id: 'f1-1', label: 'Cliente 1 activo con ingreso recurrente',                tag: null },
-    { id: 'f1-2', label: 'Cliente 2 activo con ingreso recurrente',                tag: null },
-    { id: 'f1-3', label: 'Cliente 3 activo con ingreso recurrente',                tag: null },
-    { id: 'f1-4', label: 'Cliente 4 activo con ingreso recurrente',                tag: 'signal' },
-    { id: 'f1-5', label: 'Segundo vertical validado con cliente real',             tag: null },
-    { id: 'f1-6', label: 'Pricing definitivo por vertical documentado',            tag: null },
-    { id: 'f1-7', label: 'LLC en US constituida y operativa',                      tag: null },
-    { id: 'f1-8', label: 'Estructura legal CO–US definida',                        tag: null },
+    { id: 'f1-1', label: 'Cliente 1 activo con ingreso recurrente',                tag: null       },
+    { id: 'f1-2', label: 'Cliente 2 activo con ingreso recurrente',                tag: null       },
+    { id: 'f1-3', label: 'Cliente 3 activo con ingreso recurrente',                tag: null       },
+    { id: 'f1-4', label: 'Cliente 4 activo con ingreso recurrente',                tag: 'signal'   },
+    { id: 'f1-5', label: 'Segundo vertical validado con cliente real',             tag: null       },
+    { id: 'f1-6', label: 'Pricing definitivo por vertical documentado',            tag: null       },
+    { id: 'f1-7', label: 'LLC en US constituida y operativa',                      tag: null       },
+    { id: 'f1-8', label: 'Estructura legal CO–US definida',                        tag: null       },
   ],
   f2: [
     { id: 'f2-1', label: 'Agentes multi-canal operativos — WhatsApp, email, CRM', tag: null },
@@ -50,37 +66,205 @@ const HITOS = [
   { id: 'h6', label: 'NDAs completos',                desc: 'socios estratégicos, freelancers y cofundadores',                  badge: 'done', badgeText: '✓ Listo'    },
 ];
 
+const PHASES = [
+  { key: 'current' as const, label: 'Ahora mismo',  title: 'Estado actual',                       accent: amber,  accentBg: `${amber}10`, accentBorder: `${amber}30` },
+  { key: 'f1'      as const, label: 'Fase 1',        title: 'Oficina Funcional',                   accent: green,  accentBg: `${green}10`, accentBorder: `${green}30` },
+  { key: 'f2'      as const, label: 'Fase 2',        title: 'Oficina Conectada',                   accent: purple, accentBg: `${purple}10`, accentBorder: `${purple}30` },
+  { key: 'f3'      as const, label: 'Fase 3',        title: 'Oficina con Presencia + Marketplace', accent: cyan,   accentBg: `${cyan}10`, accentBorder: `${cyan}30` },
+];
+
+// ── Subcomponents ───────────────────────────────────────────────────────
+function ProgressBar({ done, total, accent }: { done: number; total: number; accent: string }) {
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+      <div style={{ flex: 1, height: 4, background: s2, borderRadius: 999, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: accent, borderRadius: 999, transition: 'width 0.3s ease' }} />
+      </div>
+      <span style={{ fontSize: 11, color: muted, fontFamily: SG, minWidth: 48, textAlign: 'right' }}>
+        {done}/{total}
+      </span>
+    </div>
+  );
+}
+
+function CheckItem({
+  item, done, accent, onToggle,
+}: {
+  item: { id: string; label: string; tag: string | null };
+  done: boolean;
+  accent: string;
+  onToggle: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  const tagBadge = () => {
+    if (done) return null;
+    if (item.tag === 'urgent')   return <span style={{ fontSize: 10, background: `${pink}18`, color: pink,   borderRadius: 20, padding: '2px 8px', fontFamily: SG, flexShrink: 0 }}>urgente</span>;
+    if (item.tag === 'signal')   return <span style={{ fontSize: 10, background: `${amber}18`, color: amber, borderRadius: 20, padding: '2px 8px', fontFamily: SG, flexShrink: 0 }}>señal de salida</span>;
+    if (item.tag === 'prelabel') return <span style={{ fontSize: 10, background: `${muted}18`, color: muted, borderRadius: 20, padding: '2px 8px', fontFamily: SG, flexShrink: 0 }}>prelegal</span>;
+    return null;
+  };
+
+  return (
+    <div
+      role="checkbox"
+      aria-checked={done}
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={e => (e.key === ' ' || e.key === 'Enter') && onToggle()}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
+        border: `1px solid ${hovered && !done ? `${accent}40` : done ? `${accent}25` : faint + '55'}`,
+        background: done ? `${accent}08` : hovered ? `${accent}06` : s1,
+        marginBottom: 6, transition: 'all 0.15s ease',
+        outline: 'none',
+      }}
+    >
+      {/* Checkbox */}
+      <span style={{
+        width: 16, height: 16, flexShrink: 0,
+        border: `1.5px solid ${done ? accent : faint}`,
+        borderRadius: 4,
+        background: done ? accent : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'all 0.15s ease',
+      }}>
+        {done && (
+          <svg width="9" height="7" viewBox="0 0 9 7" fill="none">
+            <path d="M1 3.5L3.2 5.5L8 1" stroke={bg} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )}
+      </span>
+      {/* Label */}
+      <span style={{
+        fontSize: 13, flex: 1, fontFamily: IN,
+        color: done ? muted : text,
+        textDecoration: done ? 'line-through' : 'none',
+        textDecorationColor: faint,
+      }}>
+        {item.label}
+      </span>
+      {tagBadge()}
+    </div>
+  );
+}
+
+function PhaseCard({
+  phase, items, state, onToggle,
+}: {
+  phase: typeof PHASES[number];
+  items: typeof CHECKLISTS[keyof typeof CHECKLISTS];
+  state: Record<string, boolean>;
+  onToggle: (id: string) => void;
+}) {
+  const done = items.filter(i => state[i.id]).length;
+  const total = items.length;
+  const complete = done === total;
+
+  return (
+    <div style={{
+      background: complete ? `${phase.accent}08` : s0,
+      border: `1px solid ${complete ? phase.accent + '40' : faint + '44'}`,
+      borderRadius: 12, padding: '20px 22px', marginBottom: 10,
+      transition: 'border-color 0.2s ease',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: phase.accent, fontFamily: SG }}>
+          {phase.label}
+        </span>
+        {complete && (
+          <span style={{ fontSize: 10, color: phase.accent, fontFamily: SG, fontWeight: 600 }}>✓ Completado</span>
+        )}
+      </div>
+      <h2 style={{ fontSize: 17, fontWeight: 700, color: text, marginBottom: 14, fontFamily: SG, letterSpacing: '-0.02em' }}>
+        {phase.title}
+      </h2>
+      <ProgressBar done={done} total={total} accent={phase.accent} />
+      <div>
+        {items.map(item => (
+          <CheckItem key={item.id} item={item} done={!!state[item.id]} accent={phase.accent} onToggle={() => onToggle(item.id)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HitosCard({ state, onToggle }: { state: Record<string, boolean>; onToggle: (id: string) => void }) {
+  const badgeStyle = (h: typeof HITOS[number], done: boolean): React.CSSProperties => {
+    if (done) return { background: `${green}18`, color: green, border: `1px solid ${green}30` };
+    if (h.badge === 'urg')  return { background: `${pink}18`,   color: pink,   border: `1px solid ${pink}30`  };
+    if (h.badge === 'wip')  return { background: `${amber}18`,  color: amber,  border: `1px solid ${amber}30` };
+    if (h.badge === 'done') return { background: `${green}18`,  color: green,  border: `1px solid ${green}30` };
+    return { background: s2, color: muted, border: `1px solid ${faint}44` };
+  };
+
+  return (
+    <div style={{ background: s0, border: `1px solid ${faint}44`, borderRadius: 12, padding: '20px 22px', marginTop: 10 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: muted, marginBottom: 16, fontFamily: SG }}>
+        Hitos transversales
+      </div>
+      {HITOS.map((h, i) => {
+        const done = !!state[h.id];
+        return (
+          <div
+            key={h.id}
+            role="checkbox"
+            aria-checked={done}
+            tabIndex={0}
+            onClick={() => onToggle(h.id)}
+            onKeyDown={e => (e.key === ' ' || e.key === 'Enter') && onToggle(h.id)}
+            style={{
+              display: 'flex', alignItems: 'flex-start', gap: 12,
+              padding: '11px 0',
+              borderBottom: i < HITOS.length - 1 ? `1px solid ${faint}33` : 'none',
+              cursor: 'pointer', outline: 'none',
+              opacity: done ? 0.6 : 1, transition: 'opacity 0.15s',
+            }}
+          >
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
+              minWidth: 76, textAlign: 'center', fontFamily: SG, flexShrink: 0,
+              ...badgeStyle(h, done),
+            }}>
+              {done ? '✓ Listo' : h.badgeText}
+            </span>
+            <span style={{ fontSize: 13, color: done ? muted : text, fontFamily: IN, textDecoration: done ? 'line-through' : 'none', textDecorationColor: faint }}>
+              <strong style={{ color: done ? muted : text }}>{h.label}</strong>
+              {h.desc ? <span style={{ color: muted }}> — {h.desc}</span> : null}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Main Component ───────────────────────────────────────────────────────
 export const RoadmapTab: React.FC = () => {
   const { userRole, authToken } = useOfficeStore();
   const [state, setState] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Cargar estado desde backend
   useEffect(() => {
     if (!authToken) return;
     setLoading(true);
-    apiFetch('/api/roadmap-state', {
-      headers: { Authorization: 'Bearer ' + authToken }
-    })
+    apiFetch('/api/roadmap-state', { headers: { Authorization: 'Bearer ' + authToken } })
       .then(r => r.json())
-      .then(data => {
-        setState(data.state || {});
-        setLoading(false);
-      })
-      .catch(() => {
-        setError('No se pudo cargar el estado');
-        setLoading(false);
-      });
+      .then(data => { setState(data.state || {}); setLoading(false); })
+      .catch(() => { setError('No se pudo cargar el estado'); setLoading(false); });
   }, [authToken]);
 
-  // Guardar estado en backend
   const saveState = (newState: Record<string, boolean>) => {
     if (!authToken) return;
     apiFetch('/api/roadmap-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
-      body: JSON.stringify({ state: newState })
+      body: JSON.stringify({ state: newState }),
     });
   };
 
@@ -90,83 +274,61 @@ export const RoadmapTab: React.FC = () => {
     saveState(newState);
   };
 
-  // Render helpers
-  const renderChecklist = (listId: keyof typeof CHECKLISTS, items: typeof CHECKLISTS[typeof listId]) => (
-    <div style={{ marginBottom: 24 }}>
-      {items.map(item => {
-        const done = !!state[item.id];
-        return (
-          <div
-            key={item.id}
-            onClick={() => toggle(item.id)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 8,
-              border: '1px solid #e0e0e0', background: done ? '#EAF3DE' : '#f0efe9', cursor: 'pointer',
-              opacity: done ? 0.7 : 1, marginBottom: 6
-            }}
-          >
-            <span style={{ width: 18, height: 18, border: '1.5px solid #9FE1CB', borderRadius: 5, background: done ? '#9FE1CB' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-            </span>
-            <span style={{ fontSize: 13, color: done ? '#085041' : '#5a5a55', textDecoration: done ? 'line-through' : 'none' }}>{item.label}</span>
-            {item.tag === 'urgent' && !done && <span style={{ fontSize: 11, background: '#FAECE7', color: '#993C1D', borderRadius: 20, padding: '2px 8px' }}>urgente</span>}
-            {item.tag === 'signal' && !done && <span style={{ fontSize: 11, background: '#FAECE7', color: '#993C1D', borderRadius: 20, padding: '2px 8px' }}>señal de salida</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
-
-  const renderHitos = () => (
-    <div style={{ marginTop: 24, background: '#fff', border: '1px solid #e0e0e0', borderRadius: 16, padding: '24px 28px' }}>
-      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#999892', marginBottom: 16 }}>Hitos transversales</div>
-      {HITOS.map(h => {
-        const done = !!state[h.id];
-        return (
-          <div key={h.id} onClick={() => toggle(h.id)} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 0', borderBottom: '1px solid #e0e0e0', cursor: 'pointer', opacity: done ? 0.7 : 1 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 20, minWidth: 78, textAlign: 'center', background: done ? '#EAF3DE' : h.badge === 'urg' ? '#FAECE7' : h.badge === 'wip' ? '#FAEEDA' : h.badge === 'pend' ? '#f0efe9' : '#fff', color: done ? '#085041' : h.badge === 'urg' ? '#993C1D' : h.badge === 'wip' ? '#633806' : h.badge === 'pend' ? '#5a5a55' : '#085041', border: '1px solid #9FE1CB' }}>{done ? '✓ Listo' : h.badgeText}</span>
-            <p style={{ fontSize: 14, color: done ? '#085041' : '#5a5a55', textDecoration: done ? 'line-through' : 'none', flex: 1 }}><strong>{h.label}</strong>{h.desc ? ' — ' + h.desc : ''}</p>
-          </div>
-        );
-      })}
-    </div>
-  );
-
   if (userRole !== 'staff') return null;
-  if (loading) return <div>Cargando roadmap...</div>;
-  if (error) return <div style={{ color: 'red' }}>{error}</div>;
+
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: muted, fontFamily: IN, fontSize: 13 }}>
+      Cargando roadmap...
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: pink, fontFamily: IN, fontSize: 13 }}>
+      {error}
+    </div>
+  );
+
+  // Overall progress
+  const allItems = Object.values(CHECKLISTS).flat();
+  const totalDone = allItems.filter(i => state[i.id]).length;
+  const totalAll  = allItems.length;
+  const overallPct = Math.round((totalDone / totalAll) * 100);
 
   return (
-    <div style={{ maxWidth: 780, margin: '0 auto', padding: '48px 24px 80px' }}>
-      <div style={{ marginBottom: 48, paddingBottom: 24, borderBottom: '1px solid #e0e0e0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#999892' }}>LANDA PROJECT</span>
-          <span style={{ fontSize: 12, color: '#999892', fontFamily: 'monospace' }}>Roadmap · Confidencial</span>
+    <div style={{ maxWidth: 720, margin: '0 auto', padding: '36px 24px 80px', background: bg, minHeight: '100%' }}>
+      {/* Header */}
+      <div style={{ marginBottom: 32 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: muted, fontFamily: SG }}>LANDA PROJECT · Confidencial</span>
+          <span style={{ fontSize: 11, color: muted, fontFamily: SG }}>{overallPct}% completado</span>
         </div>
-        <h1 style={{ fontSize: 32, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a18', marginBottom: 6 }}>Roadmap de fases</h1>
-        <p style={{ fontSize: 15, color: '#5a5a55' }}>Sin fechas — las fases avanzan por señales, no por calendario</p>
+        <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: text, marginBottom: 4, fontFamily: SG }}>
+          Roadmap de fases
+        </h1>
+        <p style={{ fontSize: 13, color: muted, fontFamily: IN }}>Sin fechas — las fases avanzan por señales, no por calendario</p>
+        {/* Global progress bar */}
+        <div style={{ marginTop: 16, height: 3, background: s2, borderRadius: 999, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${overallPct}%`, background: `linear-gradient(to right, ${cyan}, ${green})`, borderRadius: 999, transition: 'width 0.4s ease' }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
+          <span style={{ fontSize: 10, color: faint, fontFamily: SG }}>{totalDone} de {totalAll} tareas</span>
+          <span style={{ fontSize: 10, color: faint, fontFamily: SG }}>{totalAll - totalDone} pendientes</span>
+        </div>
       </div>
-      <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 16, padding: 28, marginBottom: 12 }}>
-        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4, color: '#BA7517' }}>Ahora mismo</p>
-        <h2 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a18', marginBottom: 20 }}>Estado actual</h2>
-        {renderChecklist('current', CHECKLISTS.current)}
-      </div>
-      <div style={{ background: '#E1F5EE', border: '1px solid #9FE1CB', borderRadius: 16, padding: 28, marginBottom: 12 }}>
-        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4, color: '#0F6E56' }}>Fase 1</p>
-        <h2 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a18', marginBottom: 20 }}>Oficina Funcional</h2>
-        {renderChecklist('f1', CHECKLISTS.f1)}
-      </div>
-      <div style={{ background: '#EEEDFE', border: '1px solid #CECBF6', borderRadius: 16, padding: 28, marginBottom: 12 }}>
-        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4, color: '#534AB7' }}>Fase 2</p>
-        <h2 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a18', marginBottom: 20 }}>Oficina Conectada</h2>
-        {renderChecklist('f2', CHECKLISTS.f2)}
-      </div>
-      <div style={{ background: '#E6F1FB', border: '1px solid #B5D4F4', borderRadius: 16, padding: 28, marginBottom: 12 }}>
-        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4, color: '#185FA5' }}>Fase 3</p>
-        <h2 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a18', marginBottom: 20 }}>Oficina con Presencia + Marketplace</h2>
-        {renderChecklist('f3', CHECKLISTS.f3)}
-      </div>
-      {renderHitos()}
+
+      {/* Phase cards */}
+      {PHASES.map(phase => (
+        <PhaseCard
+          key={phase.key}
+          phase={phase}
+          items={CHECKLISTS[phase.key]}
+          state={state}
+          onToggle={toggle}
+        />
+      ))}
+
+      {/* Hitos */}
+      <HitosCard state={state} onToggle={toggle} />
     </div>
   );
 };
