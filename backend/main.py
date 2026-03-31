@@ -78,31 +78,6 @@ async def lifespan(app: FastAPI):
         {"email": "samuel@landa",              "hashed_password": _hash("landa2026"),   "role": "staff"},
         {"email": "maxi@landa",                "hashed_password": _hash("landa2026"),   "role": "staff"},
     ])
-# ============ Roadmap State API ============
-from models import RoadmapState
-from database import get_roadmap_state, set_roadmap_state
-
-from fastapi import Security
-
-@app.get("/api/roadmap-state", response_model=RoadmapState)
-async def api_get_roadmap_state(current_user=Depends(get_current_user)):
-    """Get roadmap state for current user (staff only)."""
-    if current_user.get("role") != "staff":
-        raise HTTPException(status_code=403, detail="Staff only")
-    user_id = current_user["user_id"]
-    state = await get_roadmap_state(user_id)
-    if not state:
-        return {"user_id": user_id, "state": {}, "updated_at": None}
-    return state
-
-@app.post("/api/roadmap-state", response_model=dict)
-async def api_set_roadmap_state(body: dict = Body(...), current_user=Depends(get_current_user)):
-    """Set roadmap state for current user (staff only)."""
-    if current_user.get("role") != "staff":
-        raise HTTPException(status_code=403, detail="Staff only")
-    user_id = current_user["user_id"]
-    state = body.get("state", {})
-    return await set_roadmap_state(user_id, state)
 
 # --- Configuración de logging global para FastAPI/Uvicorn ---
 import logging
@@ -379,6 +354,28 @@ app.add_middleware(
 )
 
 # ============ REST API Endpoints ============
+
+# ── Roadmap State ──────────────────────────────────────────────────────
+from models import RoadmapState
+from database import get_roadmap_state, set_roadmap_state
+
+@app.get("/api/roadmap-state", response_model=RoadmapState)
+async def api_get_roadmap_state(current_user=Depends(get_current_user)):
+    if current_user.get("role") != "staff":
+        raise HTTPException(status_code=403, detail="Staff only")
+    user_id = current_user["user_id"]
+    state = await get_roadmap_state(user_id)
+    if not state:
+        return {"user_id": user_id, "state": {}, "updated_at": None}
+    return state
+
+@app.post("/api/roadmap-state", response_model=dict)
+async def api_set_roadmap_state(body: dict = Body(...), current_user=Depends(get_current_user)):
+    if current_user.get("role") != "staff":
+        raise HTTPException(status_code=403, detail="Staff only")
+    user_id = current_user["user_id"]
+    state = body.get("state", {})
+    return await set_roadmap_state(user_id, state)
 
 @app.get("/api/staff/wa-config/{phone}")
 async def get_wa_config(phone: str, _staff=Depends(require_staff)):
