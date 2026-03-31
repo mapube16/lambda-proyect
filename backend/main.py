@@ -104,13 +104,6 @@ async def api_set_roadmap_state(body: dict = Body(...), current_user=Depends(get
     state = body.get("state", {})
     return await set_roadmap_state(user_id, state)
 
-    # Legacy orchestrator (kept for non-prospect agent ops)
-    api_key = os.getenv("OPENAI_API_KEY", "demo-key")
-    print("Isomorph Office started!")
-    yield
-    shutdown_scheduler()
-    print("Shutting down...")
-
 # --- Configuración de logging global para FastAPI/Uvicorn ---
 import logging
 logging.basicConfig(
