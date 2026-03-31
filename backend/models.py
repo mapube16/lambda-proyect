@@ -1,3 +1,8 @@
+# ─── Roadmap State Model ────────────────────────────────────────────────
+class RoadmapState(BaseModel):
+    user_id: str
+    state: dict  # {check_id: bool, ...}
+    updated_at: Optional[datetime] = None
 from enum import Enum
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel

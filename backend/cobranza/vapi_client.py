@@ -40,17 +40,31 @@ async def initiate_call(debtor: dict, config: dict) -> str:
 
     client = AsyncVapi(token=api_key)
     try:
+        nombre = debtor.get("nombre", "")
+        monto_fmt = f"{debtor.get('monto', 0):,.0f}"
+        first_message = (
+            f"Hola, ¿estoy hablando con {nombre}? "
+            f"Le llamo para informarle sobre una obligación pendiente "
+            f"por valor de ${monto_fmt} COP con vencimiento el {vencimiento_str}."
+            if nombre
+            else (
+                f"Hola, le llamo para informarle sobre una obligación pendiente "
+                f"por valor de ${monto_fmt} COP."
+            )
+        )
+
         call = await client.calls.create(
             assistant_id=assistant_id,
             phone_number_id=phone_number_id,
-            customer={"number": debtor["telefono"], "name": debtor.get("nombre", "")},
+            customer={"number": debtor["telefono"], "name": nombre},
             assistant_overrides={
+                "first_message": first_message,
                 "variable_values": {
                     "debtor_id": str(debtor["_id"]),
-                    "debtor_name": debtor.get("nombre", ""),
-                    "monto": f"{debtor.get('monto', 0):,.0f}",
+                    "debtor_name": nombre,
+                    "monto": monto_fmt,
                     "vencimiento": vencimiento_str,
-                }
+                },
             },
         )
         logger.info("[Vapi] Call created: %s → debtor %s", call.id, debtor["_id"])

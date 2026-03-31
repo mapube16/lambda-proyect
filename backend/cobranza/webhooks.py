@@ -104,16 +104,25 @@ async def dispatch_tool(name: str, params: dict, call_obj: dict) -> str:
 # ── POST /api/vapi/tool-call ──────────────────────────────────────────────────
 
 @vapi_router.post("/api/vapi/tool-call")
+@vapi_router.post("/api/vapi/webhook")
 async def handle_tool_call(request: Request):
     """
-    Vapi calls this endpoint during a live conversation when the assistant
-    wants to invoke a tool. We dispatch and return results immediately.
-
-    Always returns HTTP 200 — Vapi aborts the call on non-200.
+    Unified Vapi serverUrl handler.
+    Routes by message.type:
+      - tool-calls / toolWithToolCallList  → dispatch tools
+      - end-of-call-report                 → update debtor state (same as /call-ended)
+    Always returns HTTP 200.
     """
     try:
         body = await request.json()
         message = body.get("message", {})
+        msg_type = message.get("type", "")
+
+        # ── end-of-call-report: delegate to call-ended logic ──────────────────
+        if msg_type == "end-of-call-report":
+            return await _process_call_ended(body)
+
+        # ── tool call ─────────────────────────────────────────────────────────
         call_obj = message.get("call", {})
         tool_list = message.get("toolWithToolCallList", [])
 
@@ -134,19 +143,11 @@ async def handle_tool_call(request: Request):
         return JSONResponse({"results": []}, status_code=200)
 
 
-# ── POST /api/vapi/call-ended ─────────────────────────────────────────────────
+# ── Shared call-ended processing logic ───────────────────────────────────────
 
-@vapi_router.post("/api/vapi/call-ended")
-async def handle_call_ended(request: Request):
-    """
-    Vapi sends an end-of-call-report when the call finishes.
-    We update debtor state, increment intentos, append to historial_llamadas,
-    and push a debtor_update WebSocket event to the debtor owner.
-
-    Always returns HTTP 200.
-    """
+async def _process_call_ended(body: dict) -> JSONResponse:
+    """Process an end-of-call-report payload. Returns JSONResponse."""
     try:
-        body = await request.json()
         message = body.get("message", {})
 
         # Only process end-of-call-report messages
@@ -189,12 +190,14 @@ async def handle_call_ended(request: Request):
         # Build call record for historial
         transcript = artifact.get("transcript", "") or ""
         recording_url = artifact.get("recordingUrl", "") or ""
+        summary = artifact.get("summary", "") or ""
         call_record = {
             "call_id": call_id,
             "fecha": datetime.now(timezone.utc),
             "duracion_segundos": int(duration_seconds),
             "resultado": ended_reason,
             "transcript": transcript[:2000],
+            "summary": summary[:1000],
             "recording_url": recording_url,
         }
 
@@ -232,5 +235,14 @@ async def handle_call_ended(request: Request):
         return JSONResponse({"ok": True})
 
     except Exception as exc:
-        logger.error("[webhook] handle_call_ended top-level error: %s", exc)
+        logger.error("[webhook] _process_call_ended error: %s", exc)
         return JSONResponse({"ok": True})
+
+
+# ── POST /api/vapi/call-ended ─────────────────────────────────────────────────
+
+@vapi_router.post("/api/vapi/call-ended")
+async def handle_call_ended(request: Request):
+    """Kept for backwards compatibility. Delegates to _process_call_ended."""
+    body = await request.json()
+    return await _process_call_ended(body)

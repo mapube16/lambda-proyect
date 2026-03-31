@@ -1,5 +1,407 @@
+import { RoadmapTab } from './RoadmapTab';
+type StaffTab = 'roadmap' | 'dashboard';
+
+export function StaffDashboard() {
+  const { userEmail, clearAuth } = useOfficeStore();
+  const [tab, setTab] = useState<StaffTab>('dashboard');
+  const [clients, setClients] = useState<ClientData[]>([]);
+  const [clientSearch, setClientSearch] = useState('');
+  const [selectedClient, setSelectedClient] = useState<ClientData | null>(null);
+  const [clientDetail, setClientDetail] = useState<ClientDetail | null>(null);
+  const [clientLeads, setClientLeads] = useState<Lead[]>([]);
+  const [clientLearning, setClientLearning] = useState<LearningData | null>(null);
+  const [loadingClients, setLoadingClients] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [checkingMaps, setCheckingMaps] = useState(false);
+
+  const auth = () => ({ Authorization: `Bearer ${useOfficeStore.getState().authToken}` });
+
+  const loadClients = useCallback(async () => {
+    setLoadingClients(true);
+    try {
+      const res = await apiFetch(`${API_URL}/api/staff/clients`, { headers: auth() });
+      if (res.ok) setClients(await res.json());
+    } finally {
+      setLoadingClients(false);
+    }
+  }, []);
+
+  useEffect(() => { loadClients(); }, [loadClients]);
+
+  const sendLeadEmail = async (leadId: string) => {
+    try {
+      const res = await apiFetch(`${API_URL}/api/leads/${leadId}/send-email`, {
+        method: 'POST',
+        headers: { ...auth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject_index: 0 }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        alert(d.detail || 'No se pudo enviar el correo');
+        return;
+      }
+      setClientLeads(prev => prev.map(l => l._id === leadId ? { ...l, email_sent: true } : l));
+    } catch {
+      alert('Error de conexión');
+    }
+  };
+
+  const selectClient = async (client: ClientData) => {
+    setSelectedClient(client);
+    setClientDetail(null);
+    setClientLeads([]);
+    setClientLearning(null);
+    setLoadingDetail(true);
+    try {
+      const [detailRes, leadsRes, learningRes] = await Promise.all([
+        apiFetch(`${API_URL}/api/staff/clients/${client.id}`, { headers: auth() }),
+        apiFetch(`${API_URL}/api/staff/clients/${client.id}/leads`, { headers: auth() }),
+        apiFetch(`${API_URL}/api/staff/clients/${client.id}/learning`, { headers: auth() }),
+      ]);
+      if (detailRes.ok) setClientDetail(await detailRes.json());
+      if (leadsRes.ok) setClientLeads(await leadsRes.json());
+      if (learningRes.ok) setClientLearning(await learningRes.json());
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  const checkMapsDiagnostics = async () => {
+    setCheckingMaps(true);
+    try {
+      const res = await apiFetch(`${API_URL}/api/diagnostics/maps`, { headers: auth() });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data?.detail || 'No se pudo consultar el diagnóstico de Maps');
+        return;
+      }
+      const providers = Array.isArray(data.discovery_providers)
+        ? data.discovery_providers.join(' → ')
+        : 'N/D';
+      const fallback = Array.isArray(data.fallback_if_maps_fails)
+        ? data.fallback_if_maps_fails.join(' → ')
+        : 'N/D';
+      alert(
+        `Google Maps configurado: ${data.google_maps_configured ? 'Sí' : 'No'}\n`
+        + `Key preview: ${data.google_maps_key_preview || 'No disponible'}\n`
+        + `Providers: ${providers}\n`
+        + `Fallback: ${fallback}`
+      );
+    } catch {
+      alert('Error de conexión al consultar diagnóstico de Maps');
+    } finally {
+      setCheckingMaps(false);
+    }
+  };
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: bg, color: text, fontFamily: IN, overflow: 'hidden' }}>
+      <nav style={{ display: 'flex', gap: 24, padding: '16px 32px', background: s0, flexShrink: 0 }}>
+        <span
+          style={{
+            fontWeight: 700,
+            fontSize: 18,
+            color: cyan,
+            letterSpacing: '-0.03em',
+            fontFamily: SG,
+            marginRight: 32,
+          }}
+        >LANDA STAFF</span>
+        <button
+          onClick={() => setTab('roadmap')}
+          style={{
+            background: 'none', border: 'none', color: tab === 'roadmap' ? cyan : muted,
+            fontWeight: tab === 'roadmap' ? 700 : 400, fontSize: 15, cursor: 'pointer',
+            borderBottom: tab === 'roadmap' ? `2px solid ${cyan}` : '2px solid transparent',
+            padding: '8px 0', marginRight: 12,
+          }}
+        >Roadmap</button>
+        <button
+          onClick={() => setTab('dashboard')}
+          style={{
+            background: 'none', border: 'none', color: tab === 'dashboard' ? cyan : muted,
+            fontWeight: tab === 'dashboard' ? 700 : 400, fontSize: 15, cursor: 'pointer',
+            borderBottom: tab === 'dashboard' ? `2px solid ${cyan}` : '2px solid transparent',
+            padding: '8px 0',
+          }}
+        >Panel</button>
+      </nav>
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {tab === 'roadmap' && <div style={{ flex: 1, overflow: 'auto' }}><RoadmapTab /></div>}
+        {tab === 'dashboard' && (
+          <div style={{ ...s.page, height: '100%' }}>
+            {showOnboarding && (
+              <OnboardingWizard
+                onClose={() => setShowOnboarding(false)}
+                onSuccess={() => loadClients()}
+              />
+            )}
+            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+              {/* Client list sidebar */}
+              <div style={s.sidebar}>
+                <div style={s.sidebarStatus}>Nodes activos</div>
+                <div style={s.sidebarTitle}>{loadingClients ? 'Cargando...' : `${clients.length} clientes`}</div>
+                <input
+                  placeholder="Buscar cliente..."
+                  value={clientSearch}
+                  onChange={e => setClientSearch(e.target.value)}
+                  style={{ marginBottom: 8, padding: '6px 10px', background: 'rgba(120,220,232,0.06)', border: '1px solid rgba(120,220,232,0.1)', borderRadius: 6, color: text, fontSize: 12, fontFamily: IN, outline: 'none' }}
+                />
+                {clients
+                  .filter(c => !clientSearch || c.email.toLowerCase().includes(clientSearch.toLowerCase()))
+                  .map(client => (
+                    <div
+                      key={client.id}
+                      onClick={() => selectClient(client)}
+                      style={{ ...s.clientCard, ...(selectedClient?.id === client.id ? s.clientCardActive : {}) }}
+                    >
+                      <div style={selectedClient?.id === client.id ? s.clientEmailActive : s.clientEmail}>{client.email}</div>
+                      {client.active_campaign && (
+                        <div style={s.clientCampaignLabel}>campaña activa</div>
+                      )}
+                    </div>
+                  ))}
+                <button
+                  onClick={() => setShowOnboarding(true)}
+                  style={{ marginTop: 'auto', padding: '8px 12px', background: `${cyan}20`, border: `1px solid ${cyan}44`, borderRadius: 8, color: cyan, fontSize: 12, cursor: 'pointer', fontFamily: SG, width: '100%' }}
+                >+ Nuevo cliente</button>
+              </div>
+              {/* Client detail */}
+              <div style={s.detail}>
+                {!selectedClient ? (
+                  <div style={s.emptyState}>
+                    <div style={s.emptyStateText}>Selecciona un cliente para ver su pipeline</div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={s.detailHeader}>
+                      <div style={s.detailNodeRow}>
+                        <span style={s.detailNodeLabel}>
+                          Nodo de Monitoreo: {selectedClient.id.slice(0, 5).toUpperCase()}-{selectedClient.id.slice(5, 8).toUpperCase()}
+                        </span>
+                        <span style={s.activeChip}>ACTIVO</span>
+                      </div>
+                      <div style={s.detailEmail}>{selectedClient.email}</div>
+                      {clientDetail && (
+                        <div style={s.detailSubRow}>
+                          <div style={{ ...s.statCard, borderLeftColor: cyan }}>
+                            <div style={s.statCardValue}>{clientDetail.total_runs}</div>
+                            <div style={s.statCardLabel}>runs</div>
+                          </div>
+                          <div style={{ ...s.statCard, borderLeftColor: cyan }}>
+                            <div style={s.statCardValue}>{clientDetail.total_leads}</div>
+                            <div style={s.statCardLabel}>leads totales</div>
+                          </div>
+                          <div style={{ ...s.statCard, borderLeftColor: green }}>
+                            <div style={{ ...s.statCardValue, color: green }}>{clientDetail.approved_leads}</div>
+                            <div style={s.statCardLabel}>aprobados</div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {loadingDetail ? (
+                      <div style={s.loading}>Cargando...</div>
+                    ) : (
+                      <>
+                        {/* Agents */}
+                        <Section title="Agentes del pipeline">
+                          {(() => {
+                            const runtimeAgents = (clientDetail?.user_root_onboarding?.onboarding_agents?.length
+                              ? clientDetail.user_root_onboarding.onboarding_agents.map((agent, i) => ({
+                                  id: agent.id || `agent-${i + 1}`,
+                                  name: agent.name || `Agente ${i + 1}`,
+                                  role: agent.role || 'reviewer',
+                                  palette: i,
+                                }))
+                              : PIPELINE_AGENTS);
+                            const barWidths = ['0%', '30%', '65%', '90%'];
+                            return (
+                              <div style={s.agentGrid}>
+                                {runtimeAgents.map((agent, i) => {
+                                  const color = PALETTE_COLORS[i % PALETTE_COLORS.length];
+                                  return (
+                                    <div key={agent.id} style={s.agentCard}>
+                                      <div style={{ ...s.agentStatusDot, background: cyan, boxShadow: `0 0 6px ${cyan}` }} />
+                                      <div style={{ ...s.agentIcon, background: `${color}15`, color }}>
+                                        {agent.name.charAt(0).toUpperCase()}
+                                      </div>
+                                      <div style={s.agentName}>{agent.name}</div>
+                                      <div style={s.agentRole}>{agent.role}</div>
+                                      <div style={s.agentProgressTrack}>
+                                        <div style={{ ...s.agentProgressBar, background: color, width: barWidths[i % barWidths.length] }} />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                          {!!clientDetail?.runtime_pipeline_agents && (
+                            <div style={s.runtimeLimitNote}>
+                              Runtime actual: {clientDetail.runtime_pipeline_agents} agentes ejecutándose por corrida.
+                            </div>
+                          )}
+                        </Section>
+                        {/* Root onboarding snapshot */}
+                        <Section title="Onboarding guardado (raíz users)">
+                          {clientDetail?.user_root_onboarding ? (
+                            <>
+                              <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                                <span style={s.statPill}>
+                                  {clientDetail.user_root_onboarding.onboarding_agents_count ?? clientDetail.user_root_onboarding.onboarding_agents?.length ?? 0} agentes configurados
+                                </span>
+                                {clientDetail.user_root_onboarding.onboarding_updated_at && (
+                                  <span style={s.statPill}>
+                                    actualizado {new Date(clientDetail.user_root_onboarding.onboarding_updated_at).toLocaleString('es-CO')}
+                                  </span>
+                                )}
+                              </div>
+                              {!!clientDetail.user_root_onboarding.onboarding_personality_prompt && (
+                                <div style={s.rootPromptBox}>{clientDetail.user_root_onboarding.onboarding_personality_prompt}</div>
+                              )}
+                              {(clientDetail.user_root_onboarding.onboarding_agents?.length ?? 0) > 0 && (
+                                <div style={s.rootAgentsList}>
+                                  {clientDetail.user_root_onboarding.onboarding_agents?.map((agent, idx) => (
+                                    <div key={`${agent.id || agent.name || 'agent'}-${idx}`} style={s.rootAgentRow}>
+                                      <div style={s.rootAgentName}>{agent.name || `Agente ${idx + 1}`}</div>
+                                      <div style={s.rootAgentMeta}>{agent.role || 'sin rol'} · {agent.model || 'sin modelo'}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin snapshot onboarding en raíz de usuario</div>
+                          )}
+                        </Section>
+                        {/* Campaign personality */}
+                        <Section title="Personalidad activa (campaña)">
+                          {clientDetail?.active_campaign ? (
+                            <div style={s.campaignGrid}>
+                              {Object.entries(CAMPAIGN_LABELS).map(([key, label]) => {
+                                const val = clientDetail.active_campaign?.[key];
+                                if (!val) return null;
+                                return (
+                                  <div key={key} style={s.campaignRow}>
+                                    <div style={s.campaignLabel}>{label}</div>
+                                    <div style={s.campaignValue}>{val}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin campaña configurada</div>
+                          )}
+                        </Section>
+                        {/* Fuentes de descubrimiento */}
+                        <Section title="Fuentes de descubrimiento">
+                          <FuentesPanel client={selectedClient} />
+                        </Section>
+                        {/* Agente de Llamadas */}
+                        <Section title="Agente de Llamadas (Cobranza)">
+                          <CobranzaToggle
+                            clientId={selectedClient.id}
+                            enabled={!!clientDetail?.cobranza_enabled}
+                            onToggle={(val) => setClientDetail(prev => prev ? { ...prev, cobranza_enabled: val } : prev)}
+                          />
+                        </Section>
+                        {/* Leads */}
+                        <Section title={`Leads (${clientLeads.length})`}>
+                          {clientLeads.length === 0 ? (
+                            <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin leads aún</div>
+                          ) : (
+                            <div style={s.leadsList}>
+                              {clientLeads.map(lead => {
+                                const approved = lead.system_state === 'SUCCESS_READY_FOR_REVIEW';
+                                const score = lead.expediente_json?.score as number | null;
+                                const decisor = lead.expediente_json?.decisor as Record<string, string> | null;
+                                return (
+                                  <div key={lead._id} style={s.leadRow}>
+                                    <div style={{ ...s.leadDot, background: approved ? green : pink }} />
+                                    <div style={s.leadInfo}>
+                                      <div style={s.leadName}>{lead.company_name || lead.url}</div>
+                                      <div style={s.leadUrl}>{lead.url.replace(/^https?:\/\//, '').slice(0, 45)}</div>
+                                      {decisor?.email && (
+                                        <div style={s.leadDecissor}>{decisor.email}</div>
+                                      )}
+                                    </div>
+                                    <div style={s.leadMeta}>
+                                      {score != null && <span style={s.scoreBadge}>{score}pts</span>}
+                                      <span style={{ ...s.hitlBadge, color: lead.hitl_status === 'approved' ? green : lead.hitl_status === 'rejected' ? pink : muted }}>
+                                        {lead.hitl_status === 'approved' ? '✓ aprobado' : lead.hitl_status === 'rejected' ? '✗ rechazado' : 'pendiente'}
+                                      </span>
+                                      {decisor?.email && !!((lead.expediente_json?.borradores as Record<string,unknown> | null)?.email_cuerpo) && (
+                                        <button
+                                          style={{ ...s.sendEmailBtn, ...(lead.email_sent ? s.sendEmailBtnSent : {}) }}
+                                          onClick={() => !lead.email_sent && sendLeadEmail(lead._id)}
+                                          title={lead.email_sent ? 'Correo enviado' : `Enviar a ${decisor.email}`}
+                                        >
+                                          {lead.email_sent ? 'enviado' : 'enviar'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </Section>
+                        {/* Learning — Tu cliente ideal */}
+                        {clientLearning && (clientLearning.ideal_count > 0 || clientLearning.patterns.length > 0) && (
+                          <Section title="Tu cliente ideal">
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                              <span style={s.statPill}>{clientLearning.ideal_count} aprobados analizados</span>
+                              <span style={{ ...s.statPill, color: pink }}>{clientLearning.rejected_count} rechazados</span>
+                            </div>
+                            {clientLearning.patterns.length === 0 ? (
+                              <div style={{ color: faint, fontSize: 12, fontFamily: IN }}>
+                                Se necesitan al menos 3 leads aprobados para detectar patrones.
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {clientLearning.patterns.map((p, i) => (
+                                  <div key={i} style={{
+                                    ...s.patternCard,
+                                    borderLeft: `2px solid ${p.confidence === 'alta' ? green : purple}`,
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <span style={{ fontSize: 16 }}>{['🥇','🥈','🥉'][i]}</span>
+                                      <span style={s.patternText}>{p.description}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 6, marginTop: 4, paddingLeft: 24 }}>
+                                      <span style={{
+                                        ...s.statPill, fontSize: 10,
+                                        background: p.confidence === 'alta' ? `${green}1a` : `${purple}1a`,
+                                        color: p.confidence === 'alta' ? green : purple,
+                                      }}>
+                                        {p.confidence === 'alta' ? 'Alta confianza' : 'Confianza media'}
+                                      </span>
+                                      {p.evidence_count > 0 && (
+                                        <span style={{ ...s.statPill, fontSize: 10 }}>{p.evidence_count} evidencias</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </Section>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useOfficeStore } from '../store/officeStore';
+import { apiFetch } from '../lib/apiFetch';
 
 const API_URL = '';
 
@@ -104,6 +506,7 @@ interface ClientDetail {
     onboarding_agents_count?: number;
     onboarding_updated_at?: string;
   } | null;
+  cobranza_enabled?: boolean;
 }
 
 interface KnowledgeSource {
@@ -165,7 +568,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
 
   const resetOnboardingWorkspace = async (userId: string) => {
     try {
-      await fetch(`${API_URL}/api/staff/clients/${userId}/knowledge`, {
+      await apiFetch(`${API_URL}/api/staff/clients/${userId}/knowledge`, {
         method: 'DELETE',
         headers: auth(),
       });
@@ -184,7 +587,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
   const closeWizard = async () => {
     if (!approved && tempUserId) {
       try {
-        await fetch(`${API_URL}/api/staff/onboard/discard/${tempUserId}`, {
+        await apiFetch(`${API_URL}/api/staff/onboard/discard/${tempUserId}`, {
           method: 'POST',
           headers: auth(),
         });
@@ -199,7 +602,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     if (!tempUserId) return;
     setKnowledgeDebugLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/staff/onboard/debug-knowledge/${tempUserId}`, {
+      const res = await apiFetch(`${API_URL}/api/staff/onboard/debug-knowledge/${tempUserId}`, {
         headers: auth(),
       });
       if (!res.ok) {
@@ -234,7 +637,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     if (!email.trim() || !password.trim()) return setError('Email y contraseña requeridos');
     setError('');
     try {
-      const res = await fetch(`${API_URL}/auth/register`, {
+      const res = await apiFetch(`${API_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim(), password: password.trim() }),
@@ -243,7 +646,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
         const d = await res.json();
         const detail = String(d?.detail || '');
         if (detail.toLowerCase().includes('already registered')) {
-          const loginRes = await fetch(`${API_URL}/auth/login`, {
+          const loginRes = await apiFetch(`${API_URL}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: email.trim(), password: password.trim() }),
@@ -281,7 +684,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     setTranscriptSaving(true);
     setError('');
     try {
-      const res = await fetch(`${API_URL}/api/staff/onboard/save-conversation/${tempUserId}`, {
+      const res = await apiFetch(`${API_URL}/api/staff/onboard/save-conversation/${tempUserId}`, {
         method: 'POST',
         headers: { ...auth(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: transcript.trim() }),
@@ -307,7 +710,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     const form = new FormData();
     Array.from(files).forEach(f => form.append('files', f));
     try {
-      const res = await fetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/upload`, {
+      const res = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/upload`, {
         method: 'POST',
         headers: auth(),
         body: form,
@@ -331,7 +734,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     setUploading(true);
     setError('');
     try {
-      const res = await fetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/url`, {
+      const res = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/url`, {
         method: 'POST',
         headers: { ...auth(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -397,12 +800,12 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
 
   const refreshSources = async () => {
     if (!tempUserId) return;
-    const res = await fetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge`, { headers: auth() });
+    const res = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge`, { headers: auth() });
     if (res.ok) setSources(await res.json());
   };
 
   const deleteSource = async (filename: string) => {
-    await fetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/${encodeURIComponent(filename)}`, {
+    await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/${encodeURIComponent(filename)}`, {
       method: 'DELETE', headers: auth(),
     });
     setSources(prev => prev.filter(s => s.filename !== filename));
@@ -413,7 +816,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     setAnalyzing(true);
     setError('');
     try {
-      const res = await fetch(`${API_URL}/api/staff/onboard/propose/${tempUserId}`, {
+      const res = await apiFetch(`${API_URL}/api/staff/onboard/propose/${tempUserId}`, {
         method: 'POST', headers: auth(),
       });
       if (!res.ok) {
@@ -437,7 +840,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     setError('');
     try {
       // Log in as the new client to get their token, then save campaign
-      const loginRes = await fetch(`${API_URL}/auth/login`, {
+      const loginRes = await apiFetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -446,14 +849,14 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
       const loginData = await loginRes.json();
       const clientToken = loginData.access_token;
 
-      const saveCampRes = await fetch(`${API_URL}/api/campaigns`, {
+      const saveCampRes = await apiFetch(`${API_URL}/api/campaigns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${clientToken}` },
         body: JSON.stringify(editedProposal.campaign),
       });
       if (!saveCampRes.ok) throw new Error('No se pudo guardar la campaña');
 
-      const saveProfileRes = await fetch(`${API_URL}/api/staff/clients/${tempUserId}/profile`, {
+      const saveProfileRes = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/profile`, {
         method: 'POST',
         headers: { ...auth(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -466,7 +869,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
       if (!saveProfileRes.ok) throw new Error('No se pudo guardar el perfil de onboarding');
 
       // Send welcome email (fire & forget — don't block UX if it fails)
-      fetch(`${API_URL}/api/staff/clients/${tempUserId}/send-welcome`, {
+      apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/send-welcome`, {
         method: 'POST',
         headers: { ...auth(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1042,396 +1445,74 @@ interface LearningData {
   patterns: Array<{ description: string; confidence: string; evidence_count: number }>;
 }
 
-export function StaffDashboard() {
-  const { userEmail, clearAuth } = useOfficeStore();
-  const [clients, setClients] = useState<ClientData[]>([]);
-  const [selectedClient, setSelectedClient] = useState<ClientData | null>(null);
-  const [clientDetail, setClientDetail] = useState<ClientDetail | null>(null);
-  const [clientLeads, setClientLeads] = useState<Lead[]>([]);
-  const [clientLearning, setClientLearning] = useState<LearningData | null>(null);
-  const [loadingClients, setLoadingClients] = useState(true);
-  const [loadingDetail, setLoadingDetail] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [checkingMaps, setCheckingMaps] = useState(false);
+// Duplicate StaffDashboard removed. Only the merged, tabbed version remains at the top.
 
-  const auth = () => ({ Authorization: `Bearer ${useOfficeStore.getState().authToken}` });
 
-  const loadClients = useCallback(async () => {
-    setLoadingClients(true);
+function CobranzaToggle({ clientId, enabled, onToggle }: {
+  clientId: string;
+  enabled: boolean;
+  onToggle: (val: boolean) => void;
+}) {
+  const token = useOfficeStore.getState().authToken;
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const toggle = async () => {
+    setLoading(true);
+    setError('');
+    const action = enabled ? 'disable' : 'enable';
     try {
-      const res = await fetch(`${API_URL}/api/staff/clients`, { headers: auth() });
-      if (res.ok) setClients(await res.json());
-    } finally {
-      setLoadingClients(false);
-    }
-  }, []);
-
-  useEffect(() => { loadClients(); }, [loadClients]);
-
-  const sendLeadEmail = async (leadId: string) => {
-    try {
-      const res = await fetch(`${API_URL}/api/leads/${leadId}/send-email`, {
+      const res = await apiFetch(`${API_URL}/api/staff/clients/${clientId}/cobranza/${action}`, {
         method: 'POST',
-        headers: { ...auth(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subject_index: 0 }),
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
-        const d = await res.json();
-        alert(d.detail || 'No se pudo enviar el correo');
+        const d = await res.json().catch(() => ({}));
+        setError((d as { detail?: string }).detail || 'Error');
         return;
       }
-      // Mark as sent locally
-      setClientLeads(prev => prev.map(l => l._id === leadId ? { ...l, email_sent: true } : l));
+      onToggle(!enabled);
     } catch {
-      alert('Error de conexión');
-    }
-  };
-
-  const selectClient = async (client: ClientData) => {
-    setSelectedClient(client);
-    setClientDetail(null);
-    setClientLeads([]);
-    setClientLearning(null);
-    setLoadingDetail(true);
-    try {
-      const [detailRes, leadsRes, learningRes] = await Promise.all([
-        fetch(`${API_URL}/api/staff/clients/${client.id}`, { headers: auth() }),
-        fetch(`${API_URL}/api/staff/clients/${client.id}/leads`, { headers: auth() }),
-        fetch(`${API_URL}/api/staff/clients/${client.id}/learning`, { headers: auth() }),
-      ]);
-      if (detailRes.ok) setClientDetail(await detailRes.json());
-      if (leadsRes.ok) setClientLeads(await leadsRes.json());
-      if (learningRes.ok) setClientLearning(await learningRes.json());
+      setError('Error de conexión');
     } finally {
-      setLoadingDetail(false);
-    }
-  };
-
-  const checkMapsDiagnostics = async () => {
-    setCheckingMaps(true);
-    try {
-      const res = await fetch(`${API_URL}/api/diagnostics/maps`, { headers: auth() });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data?.detail || 'No se pudo consultar el diagnóstico de Maps');
-        return;
-      }
-      const providers = Array.isArray(data.discovery_providers)
-        ? data.discovery_providers.join(' → ')
-        : 'N/D';
-      const fallback = Array.isArray(data.fallback_if_maps_fails)
-        ? data.fallback_if_maps_fails.join(' → ')
-        : 'N/D';
-      alert(
-        `Google Maps configurado: ${data.google_maps_configured ? 'Sí' : 'No'}\n`
-        + `Key preview: ${data.google_maps_key_preview || 'No disponible'}\n`
-        + `Providers: ${providers}\n`
-        + `Fallback: ${fallback}`
-      );
-    } catch {
-      alert('Error de conexión al consultar diagnóstico de Maps');
-    } finally {
-      setCheckingMaps(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div style={s.page}>
-      {showOnboarding && (
-        <OnboardingWizard
-          onClose={() => setShowOnboarding(false)}
-          onSuccess={() => loadClients()}
-        />
-      )}
-
-      {/* Header */}
-      <header style={s.header}>
-        <div style={s.logoRow}>
-          <div>
-            <div style={s.logoText}>Landa</div>
-            <div style={s.logoSub}>STAFF_CONSOLE</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 13, color: text, fontFamily: IN, fontWeight: 500 }}>
+            {enabled ? 'Habilitado' : 'Deshabilitado'}
+          </div>
+          <div style={{ fontSize: 12, color: muted, fontFamily: IN, marginTop: 3 }}>
+            {enabled
+              ? 'El cliente verá el onboarding de cobranza en su dashboard.'
+              : 'El cliente no tiene acceso al agente de llamadas.'}
           </div>
         </div>
-        <div style={s.headerRight}>
-          <button style={s.onboardBtn} onClick={() => setShowOnboarding(true)}>
-            + Nuevo cliente
-          </button>
-          <button style={s.diagBtn} onClick={checkMapsDiagnostics} disabled={checkingMaps}>
-            {checkingMaps ? 'Revisando Maps...' : 'Diagnóstico Maps'}
-          </button>
-          <span style={s.emailBadge}>{userEmail}</span>
-          <button style={s.logoutBtn} onClick={clearAuth}>Salir</button>
-        </div>
-        <div style={s.headerGradSep} />
-      </header>
-
-      <div style={s.body}>
-        {/* Client list */}
-        <div style={s.sidebar}>
-          <div style={s.sidebarStatus}>SYSTEM_READY</div>
-          <div style={s.sidebarTitle}>CLIENTES_ACTIVOS</div>
-          {loadingClients ? (
-            <div style={s.loading}>Cargando...</div>
-          ) : clients.length === 0 ? (
-            <div style={{ color: faint, fontSize: 12, padding: '12px 4px', fontFamily: IN }}>
-              Sin clientes activos. Onboarda el primero →
-            </div>
-          ) : (
-            clients.map(client => (
-              <div
-                key={client.id}
-                style={{
-                  ...s.clientCard,
-                  ...(selectedClient?.id === client.id ? s.clientCardActive : {}),
-                }}
-                onClick={() => selectClient(client)}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={selectedClient?.id === client.id ? s.clientEmailActive : s.clientEmail}>
-                    {client.email}
-                  </div>
-                  <div style={{
-                    width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                    background: client.active_campaign ? green : faint,
-                    boxShadow: client.active_campaign ? `0 0 6px ${green}` : 'none',
-                  }} />
-                </div>
-                <div style={s.clientCampaignLabel}>
-                  CAMPAIGN: {client.active_campaign ? 'ACTIVE' : 'NONE'}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Client detail */}
-        <div style={s.detail}>
-          {!selectedClient ? (
-            <div style={s.emptyState}>
-              <div style={s.emptyStateText}>Selecciona un cliente para ver su pipeline</div>
-            </div>
-          ) : (
-            <>
-              <div style={s.detailHeader}>
-                <div style={s.detailNodeRow}>
-                  <span style={s.detailNodeLabel}>
-                    Nodo de Monitoreo: {selectedClient.id.slice(0, 5).toUpperCase()}-{selectedClient.id.slice(5, 8).toUpperCase()}
-                  </span>
-                  <span style={s.activeChip}>ACTIVO</span>
-                </div>
-                <div style={s.detailEmail}>{selectedClient.email}</div>
-                {clientDetail && (
-                  <div style={s.detailSubRow}>
-                    <div style={{ ...s.statCard, borderLeftColor: cyan }}>
-                      <div style={s.statCardValue}>{clientDetail.total_runs}</div>
-                      <div style={s.statCardLabel}>runs</div>
-                    </div>
-                    <div style={{ ...s.statCard, borderLeftColor: cyan }}>
-                      <div style={s.statCardValue}>{clientDetail.total_leads}</div>
-                      <div style={s.statCardLabel}>leads totales</div>
-                    </div>
-                    <div style={{ ...s.statCard, borderLeftColor: green }}>
-                      <div style={{ ...s.statCardValue, color: green }}>{clientDetail.approved_leads}</div>
-                      <div style={s.statCardLabel}>aprobados</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {loadingDetail ? (
-                <div style={s.loading}>Cargando...</div>
-              ) : (
-              <>
-              {/* Agents */}
-              <Section title="Agentes del pipeline">
-                {(() => {
-                  const runtimeAgents = (clientDetail?.user_root_onboarding?.onboarding_agents?.length
-                    ? clientDetail.user_root_onboarding.onboarding_agents.map((agent, i) => ({
-                        id: agent.id || `agent-${i + 1}`,
-                        name: agent.name || `Agente ${i + 1}`,
-                        role: agent.role || 'reviewer',
-                        palette: i,
-                      }))
-                    : PIPELINE_AGENTS);
-
-                  const barWidths = ['0%', '30%', '65%', '90%'];
-
-                  return (
-                <div style={s.agentGrid}>
-                  {runtimeAgents.map((agent, i) => {
-                    const color = PALETTE_COLORS[i % PALETTE_COLORS.length];
-                    return (
-                    <div key={agent.id} style={s.agentCard}>
-                      <div style={{ ...s.agentStatusDot, background: cyan, boxShadow: `0 0 6px ${cyan}` }} />
-                      <div style={{ ...s.agentIcon, background: `${color}15`, color }}>
-                        {agent.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div style={s.agentName}>{agent.name}</div>
-                      <div style={s.agentRole}>{agent.role}</div>
-                      <div style={s.agentProgressTrack}>
-                        <div style={{ ...s.agentProgressBar, background: color, width: barWidths[i % barWidths.length] }} />
-                      </div>
-                    </div>
-                    );
-                  })}
-                </div>
-                  );
-                })()}
-                {!!clientDetail?.runtime_pipeline_agents && (
-                  <div style={s.runtimeLimitNote}>
-                    Runtime actual: {clientDetail.runtime_pipeline_agents} agentes ejecutándose por corrida.
-                  </div>
-                )}
-              </Section>
-
-              {/* Root onboarding snapshot */}
-              <Section title="Onboarding guardado (raíz users)">
-                {clientDetail?.user_root_onboarding ? (
-                  <>
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-                      <span style={s.statPill}>
-                        {clientDetail.user_root_onboarding.onboarding_agents_count ?? clientDetail.user_root_onboarding.onboarding_agents?.length ?? 0} agentes configurados
-                      </span>
-                      {clientDetail.user_root_onboarding.onboarding_updated_at && (
-                        <span style={s.statPill}>
-                          actualizado {new Date(clientDetail.user_root_onboarding.onboarding_updated_at).toLocaleString('es-CO')}
-                        </span>
-                      )}
-                    </div>
-
-                    {!!clientDetail.user_root_onboarding.onboarding_personality_prompt && (
-                      <div style={s.rootPromptBox}>{clientDetail.user_root_onboarding.onboarding_personality_prompt}</div>
-                    )}
-
-                    {(clientDetail.user_root_onboarding.onboarding_agents?.length ?? 0) > 0 && (
-                      <div style={s.rootAgentsList}>
-                        {clientDetail.user_root_onboarding.onboarding_agents?.map((agent, idx) => (
-                          <div key={`${agent.id || agent.name || 'agent'}-${idx}`} style={s.rootAgentRow}>
-                            <div style={s.rootAgentName}>{agent.name || `Agente ${idx + 1}`}</div>
-                            <div style={s.rootAgentMeta}>{agent.role || 'sin rol'} · {agent.model || 'sin modelo'}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin snapshot onboarding en raíz de usuario</div>
-                )}
-              </Section>
-
-              {/* Campaign personality */}
-              <Section title="Personalidad activa (campaña)">
-                {clientDetail?.active_campaign ? (
-                  <div style={s.campaignGrid}>
-                    {Object.entries(CAMPAIGN_LABELS).map(([key, label]) => {
-                      const val = clientDetail.active_campaign?.[key];
-                      if (!val) return null;
-                      return (
-                        <div key={key} style={s.campaignRow}>
-                          <div style={s.campaignLabel}>{label}</div>
-                          <div style={s.campaignValue}>{val}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin campaña configurada</div>
-                )}
-              </Section>
-
-              {/* Fuentes de descubrimiento */}
-              <Section title="Fuentes de descubrimiento">
-                <FuentesPanel client={selectedClient} />
-              </Section>
-
-              {/* Leads */}
-              <Section title={`Leads (${clientLeads.length})`}>
-                {clientLeads.length === 0 ? (
-                  <div style={{ color: muted, fontSize: 13, fontFamily: IN }}>Sin leads aún</div>
-                ) : (
-                  <div style={s.leadsList}>
-                    {clientLeads.map(lead => {
-                      const approved = lead.system_state === 'SUCCESS_READY_FOR_REVIEW';
-                      const score = lead.expediente_json?.score as number | null;
-                      const decisor = lead.expediente_json?.decisor as Record<string, string> | null;
-                      return (
-                        <div key={lead._id} style={s.leadRow}>
-                          <div style={{ ...s.leadDot, background: approved ? green : pink }} />
-                          <div style={s.leadInfo}>
-                            <div style={s.leadName}>{lead.company_name || lead.url}</div>
-                            <div style={s.leadUrl}>{lead.url.replace(/^https?:\/\//, '').slice(0, 45)}</div>
-                            {decisor?.email && (
-                              <div style={s.leadDecissor}>{decisor.email}</div>
-                            )}
-                          </div>
-                          <div style={s.leadMeta}>
-                            {score != null && <span style={s.scoreBadge}>{score}pts</span>}
-                            <span style={{ ...s.hitlBadge, color: lead.hitl_status === 'approved' ? green : lead.hitl_status === 'rejected' ? pink : muted }}>
-                              {lead.hitl_status === 'approved' ? '✓ aprobado' : lead.hitl_status === 'rejected' ? '✗ rechazado' : 'pendiente'}
-                            </span>
-                            {decisor?.email && !!((lead.expediente_json?.borradores as Record<string,unknown> | null)?.email_cuerpo) && (
-                              <button
-                                style={{ ...s.sendEmailBtn, ...(lead.email_sent ? s.sendEmailBtnSent : {}) }}
-                                onClick={() => !lead.email_sent && sendLeadEmail(lead._id)}
-                                title={lead.email_sent ? 'Correo enviado' : `Enviar a ${decisor.email}`}
-                              >
-                                {lead.email_sent ? 'enviado' : 'enviar'}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </Section>
-
-              {/* Learning — Tu cliente ideal */}
-              {clientLearning && (clientLearning.ideal_count > 0 || clientLearning.patterns.length > 0) && (
-                <Section title="Tu cliente ideal">
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                    <span style={s.statPill}>{clientLearning.ideal_count} aprobados analizados</span>
-                    <span style={{ ...s.statPill, color: pink }}>{clientLearning.rejected_count} rechazados</span>
-                  </div>
-                  {clientLearning.patterns.length === 0 ? (
-                    <div style={{ color: faint, fontSize: 12, fontFamily: IN }}>
-                      Se necesitan al menos 3 leads aprobados para detectar patrones.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {clientLearning.patterns.map((p, i) => (
-                        <div key={i} style={{
-                          ...s.patternCard,
-                          borderLeft: `2px solid ${p.confidence === 'alta' ? green : purple}`,
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 16 }}>{['🥇','🥈','🥉'][i]}</span>
-                            <span style={s.patternText}>{p.description}</span>
-                          </div>
-                          <div style={{ display: 'flex', gap: 6, marginTop: 4, paddingLeft: 24 }}>
-                            <span style={{
-                              ...s.statPill, fontSize: 10,
-                              background: p.confidence === 'alta' ? `${green}1a` : `${purple}1a`,
-                              color: p.confidence === 'alta' ? green : purple,
-                            }}>
-                              {p.confidence === 'alta' ? 'Alta confianza' : 'Confianza media'}
-                            </span>
-                            {p.evidence_count > 0 && (
-                              <span style={{ ...s.statPill, fontSize: 10 }}>{p.evidence_count} evidencias</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Section>
-              )}
-              </>
-              )}
-            </>
-          )}
-        </div>
+        <button
+          onClick={toggle}
+          disabled={loading}
+          style={{
+            padding: '8px 18px',
+            borderRadius: 8,
+            border: 'none',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            fontFamily: IN,
+            fontWeight: 600,
+            fontSize: 13,
+            opacity: loading ? 0.6 : 1,
+            background: enabled ? `${pink}22` : `${green}22`,
+            color: enabled ? pink : green,
+            transition: 'all 0.2s',
+          }}
+        >
+          {loading ? '...' : enabled ? 'Deshabilitar' : 'Habilitar'}
+        </button>
       </div>
+      {error && <div style={{ fontSize: 12, color: pink, fontFamily: IN }}>{error}</div>}
     </div>
   );
 }
@@ -1448,7 +1529,7 @@ function FuentesPanel({ client }: { client: ClientData }) {
   // Load bot flags from backend on mount
   React.useEffect(() => {
     if (!client.wa_phone_number) return;
-    fetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(client.wa_phone_number)}`, {
+    apiFetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(client.wa_phone_number)}`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(r => r.ok ? r.json() : null).then(d => {
       if (d?.bots) setWaBots(d.bots);
@@ -1480,7 +1561,7 @@ function FuentesPanel({ client }: { client: ClientData }) {
       if (phoneNum) body.wa_phone_number = phoneNum;
       if (phoneId) body.wa_phone_id = phoneId;
 
-      await fetch(`${API_URL}/api/staff/clients/${client.id}/sources`, {
+      await apiFetch(`${API_URL}/api/staff/clients/${client.id}/sources`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(body),
@@ -1606,7 +1687,7 @@ function FuentesPanel({ client }: { client: ClientData }) {
                     onChange={async (e) => {
                       const updated = { ...waBots, [key]: e.target.checked };
                       setWaBots(updated);
-                      await fetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(waPhoneNumber)}`, {
+                      await apiFetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(waPhoneNumber)}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                         body: JSON.stringify({ bots: updated }),

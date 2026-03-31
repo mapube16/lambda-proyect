@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useState } from 'react';
 import { useOfficeStore } from '../store/officeStore';
+import { apiFetch } from '../lib/apiFetch';
 
 const API_URL = '';
 
@@ -89,7 +90,7 @@ export function LoginView() {
     setLoading(true);
     try {
       if (tab === 'register') {
-        const res = await fetch(`${API_URL}/auth/register-request`, {
+        const res = await apiFetch(`${API_URL}/auth/register-request`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -121,7 +122,7 @@ export function LoginView() {
       }
       
       // Login flow
-      const res = await fetch(`${API_URL}/auth/login`, {
+      const res = await apiFetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -165,7 +166,7 @@ export function LoginView() {
     const token = response.credential;
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/auth/google-login`, {
+      const res = await apiFetch(`${API_URL}/auth/google-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
