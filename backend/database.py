@@ -1,20 +1,3 @@
-# ── Roadmap State ───────────────────────────────────────────────────────
-async def get_roadmap_state(user_id: str) -> Optional[dict]:
-    db = get_db()
-    doc = await db.roadmap_state.find_one({"user_id": user_id})
-    if not doc:
-        return None
-    return {"user_id": doc["user_id"], "state": doc["state"], "updated_at": doc.get("updated_at")}
-
-async def set_roadmap_state(user_id: str, state: dict) -> dict:
-    db = get_db()
-    from datetime import datetime, timezone
-    result = await db.roadmap_state.update_one(
-        {"user_id": user_id},
-        {"$set": {"state": state, "updated_at": datetime.now(timezone.utc)}},
-        upsert=True
-    )
-    return {"ok": True, "updated": result.modified_count > 0 or result.upserted_id is not None}
 """
 database.py — Motor (async MongoDB) persistence layer.
 All DB operations are here. No other module touches Motor directly.
@@ -1109,4 +1092,22 @@ async def delete_all_agents_db() -> None:
     """Delete all agents from the DB."""
     db = get_db()
     await db.agents.delete_many({})
+
+
+# ── Roadmap State ───────────────────────────────────────────────────────
+async def get_roadmap_state(user_id: str) -> Optional[dict]:
+    db = get_db()
+    doc = await db.roadmap_state.find_one({"user_id": user_id})
+    if not doc:
+        return None
+    return {"user_id": doc["user_id"], "state": doc["state"], "updated_at": doc.get("updated_at")}
+
+async def set_roadmap_state(user_id: str, state: dict) -> dict:
+    db = get_db()
+    result = await db.roadmap_state.update_one(
+        {"user_id": user_id},
+        {"$set": {"state": state, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    return {"ok": True, "updated": result.modified_count > 0 or result.upserted_id is not None}
 
