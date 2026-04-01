@@ -2,7 +2,7 @@ import { RoadmapTab } from './RoadmapTab';
 type StaffTab = 'roadmap' | 'dashboard';
 
 export function StaffDashboard() {
-  useOfficeStore();
+  const { clearAuth, userEmail } = useOfficeStore();
   const [tab, setTab] = useState<StaffTab>('dashboard');
   const [clients, setClients] = useState<ClientData[]>([]);
   const [clientSearch, setClientSearch] = useState('');
@@ -68,7 +68,7 @@ export function StaffDashboard() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: bg, color: text, fontFamily: IN, overflow: 'hidden' }}>
-      <nav style={{ display: 'flex', gap: 24, padding: '16px 32px', background: s0, flexShrink: 0 }}>
+      <nav style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '16px 32px', background: s0, flexShrink: 0 }}>
         <span
           style={{
             fontWeight: 700,
@@ -97,6 +97,21 @@ export function StaffDashboard() {
             padding: '8px 0',
           }}
         >Panel</button>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+          {userEmail && (
+            <span style={{ fontFamily: SG, fontSize: 11, color: muted }}>{userEmail}</span>
+          )}
+          <button
+            onClick={clearAuth}
+            style={{
+              padding: '4px 12px', borderRadius: 2,
+              border: `1px solid rgba(120,220,232,0.2)`,
+              background: 'transparent', color: cyan,
+              fontFamily: SG, fontSize: 11, letterSpacing: '0.04em',
+              cursor: 'pointer',
+            }}
+          >logout</button>
+        </div>
       </nav>
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {tab === 'roadmap' && <div style={{ flex: 1, overflow: 'auto' }}><RoadmapTab /></div>}
