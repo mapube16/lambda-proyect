@@ -57,15 +57,13 @@ async def initiate_call(debtor: dict, config: dict) -> str:
             monto_fmt = f"{monto / 1_000:.0f} mil" if monto % 1_000 == 0 else f"{monto / 1_000:.1f} mil".rstrip('0').rstrip('.')
         else:
             monto_fmt = f"{monto:.0f}"
+
+        # STRICT GATE: first_message only validates identity, NO mention of debt/obligation/amount
+        # This forces the deudor to confirm "yes, it's me" before agent reveals purpose
         first_message = (
-            f"Hola, ¿estoy hablando con {nombre}? "
-            f"Le llamo para informarle sobre una obligación pendiente "
-            f"por valor de {monto_fmt} pesos con vencimiento el {vencimiento_str}."
+            f"Hola, ¿estoy hablando con {nombre}?"
             if nombre
-            else (
-                f"Hola, le llamo para informarle sobre una obligación pendiente "
-                f"por valor de {monto_fmt} pesos."
-            )
+            else "Hola, ¿cómo estás? ¿Tengo el número correcto?"
         )
 
         call = await client.calls.create(
@@ -79,6 +77,7 @@ async def initiate_call(debtor: dict, config: dict) -> str:
                     "debtor_name": nombre,
                     "monto": monto_fmt,
                     "vencimiento": vencimiento_str,
+                    # Next step (after validation): "Perfecto, le llamo de gestión de cuenta. Es rapidito, ¿me da un momento?"
                 },
             },
         )
