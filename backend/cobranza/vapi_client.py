@@ -27,10 +27,18 @@ async def initiate_call(debtor: dict, config: dict) -> str:
 
     api_key = config.get("vapi_api_key") or os.getenv("VAPI_API_KEY")
     if not api_key:
+        logger.error("[Vapi] VAPI_API_KEY not found in config or environment")
         raise ValueError("VAPI_API_KEY not configured")
 
     assistant_id = config.get("vapi_assistant_id") or os.getenv("VAPI_ASSISTANT_ID")
     phone_number_id = config.get("vapi_phone_number_id") or os.getenv("VAPI_PHONE_NUMBER_ID")
+
+    if not assistant_id:
+        logger.error("[Vapi] VAPI_ASSISTANT_ID not found in config or environment")
+        raise ValueError("VAPI_ASSISTANT_ID not configured")
+    if not phone_number_id:
+        logger.error("[Vapi] VAPI_PHONE_NUMBER_ID not found in config or environment")
+        raise ValueError("VAPI_PHONE_NUMBER_ID not configured")
 
     vencimiento_str = ""
     if isinstance(debtor.get("vencimiento"), datetime):

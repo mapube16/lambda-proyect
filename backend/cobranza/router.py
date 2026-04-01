@@ -362,11 +362,15 @@ async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict
     """Fire-and-forget: initiate Vapi call and update debtor state on result."""
     debtor_id = str(debtor["_id"])
     try:
+        logger.info("[llamar-ahora] Starting call for debtor %s with config keys: %s", debtor_id, list(config.keys()))
         call_id = await initiate_call(debtor, config)
         await update_debtor(db, user_id, debtor_id, {"vapi_call_id": call_id})
         logger.info("[llamar-ahora] Call initiated %s for debtor %s", call_id, debtor_id)
     except (ValueError, RuntimeError) as e:
-        logger.error("[llamar-ahora] Call failed for debtor %s: %s", debtor_id, e)
+        logger.error("[llamar-ahora] Call failed for debtor %s: %s", debtor_id, e, exc_info=True)
+        await update_debtor(db, user_id, debtor_id, {"estado": "pendiente"})
+    except Exception as e:
+        logger.error("[llamar-ahora] Unexpected error for debtor %s: %s", debtor_id, e, exc_info=True)
         await update_debtor(db, user_id, debtor_id, {"estado": "pendiente"})
 
 
