@@ -365,7 +365,7 @@ async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict
         call_id = await initiate_call(debtor, config)
         await update_debtor(db, user_id, debtor_id, {"vapi_call_id": call_id})
         logger.info("[llamar-ahora] Call initiated %s for debtor %s", call_id, debtor_id)
-    except RuntimeError as e:
+    except (ValueError, RuntimeError) as e:
         logger.error("[llamar-ahora] Call failed for debtor %s: %s", debtor_id, e)
         await update_debtor(db, user_id, debtor_id, {"estado": "pendiente"})
 
