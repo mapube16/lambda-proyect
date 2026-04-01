@@ -13,6 +13,19 @@ from pydantic import BaseModel
 
 from auth import get_current_user
 from database import get_db, get_client_profile
+from cobranza.debtor_crud import (
+    bulk_create_debtors,
+    bulk_upsert_debtors,
+    create_debtor,
+    delete_debtor,
+    get_debtor_by_id,
+    get_debtors,
+    update_debtor,
+)
+from cobranza.csv_parser import normalize_phone, parse_debtor_csv
+from cobranza.cobranza_queen import generate_cobranza_proposal
+from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_today
+from cobranza.vapi_client import initiate_call
 
 
 # ── Cobranza-enabled guard ─────────────────────────────────────────────────────
@@ -31,19 +44,6 @@ async def _require_cobranza_enabled(current_user: dict) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cobranza no habilitado para esta cuenta. Contacte al staff para activarlo.",
         )
-from cobranza.debtor_crud import (
-    bulk_create_debtors,
-    bulk_upsert_debtors,
-    create_debtor,
-    delete_debtor,
-    get_debtor_by_id,
-    get_debtors,
-    update_debtor,
-)
-from cobranza.csv_parser import normalize_phone, parse_debtor_csv
-from cobranza.cobranza_queen import generate_cobranza_proposal
-from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_today
-from cobranza.vapi_client import initiate_call
 
 logger = logging.getLogger("cobranza.router")
 
