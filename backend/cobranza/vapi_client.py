@@ -49,15 +49,22 @@ async def initiate_call(debtor: dict, config: dict) -> str:
     client = AsyncVapi(token=api_key)
     try:
         nombre = debtor.get("nombre", "")
-        monto_fmt = f"{debtor.get('monto', 0):,.0f}"
+        monto = debtor.get('monto', 0)
+        # Format amount in a natural way for speech (e.g., "quinientos mil" not "500,000")
+        if monto >= 1_000_000:
+            monto_fmt = f"{monto / 1_000_000:.0f} millones" if monto % 1_000_000 == 0 else f"{monto / 1_000_000:.1f} millones".rstrip('0').rstrip('.')
+        elif monto >= 1_000:
+            monto_fmt = f"{monto / 1_000:.0f} mil" if monto % 1_000 == 0 else f"{monto / 1_000:.1f} mil".rstrip('0').rstrip('.')
+        else:
+            monto_fmt = f"{monto:.0f}"
         first_message = (
             f"Hola, ¿estoy hablando con {nombre}? "
             f"Le llamo para informarle sobre una obligación pendiente "
-            f"por valor de ${monto_fmt} COP con vencimiento el {vencimiento_str}."
+            f"por valor de {monto_fmt} pesos con vencimiento el {vencimiento_str}."
             if nombre
             else (
                 f"Hola, le llamo para informarle sobre una obligación pendiente "
-                f"por valor de ${monto_fmt} COP."
+                f"por valor de {monto_fmt} pesos."
             )
         )
 
