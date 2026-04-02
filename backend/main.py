@@ -809,6 +809,102 @@ async def smtp_disconnect(current_user: dict = Depends(get_current_user)):
     return {"message": "SMTP configuration removed", "configured": False}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Email Template Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/me/email-template")
+async def get_email_template(current_user: dict = Depends(get_current_user)):
+    """Obtiene el template personalizado de correos del usuario."""
+    from database import get_email_template
+
+    user_id = current_user.get("user_id")
+    template = await get_email_template(user_id)
+    return template or {}
+
+
+@app.post("/api/me/email-template")
+async def save_email_template(
+    current_user: dict = Depends(get_current_user),
+    template: dict = Body(...),
+):
+    """Guarda el template personalizado de correos."""
+    from database import save_email_template
+
+    user_id = current_user.get("user_id")
+    success = await save_email_template(user_id, template)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save email template")
+
+    return {"message": "Template saved successfully", "template": template}
+
+
+@app.post("/api/me/email-test")
+async def send_test_email(current_user: dict = Depends(get_current_user)):
+    """
+    Envía un correo de prueba a la dirección del usuario para validar que todo funciona.
+    """
+    from database import get_email_oauth_tokens, get_email_template
+    from email_oauth import decrypt_tokens
+    from email_sender_oauth import send_email_oauth
+    from email_sender import send_email_html
+
+    user_id = current_user.get("user_id")
+    user_email = current_user.get("email")
+
+    # Obtener tokens OAuth
+    tokens_info = await get_email_oauth_tokens(user_id)
+    if not tokens_info:
+        raise HTTPException(status_code=400, detail="Email not configured. Please connect Gmail first.")
+
+    provider = tokens_info.get("provider")
+    encrypted_tokens = tokens_info.get("encrypted_tokens")
+    sender_email = tokens_info.get("email_sender_address")
+
+    # Obtener template
+    template = await get_email_template(user_id)
+
+    # Crear correo de prueba
+    subject = "🧪 Correo de prueba - Landa"
+    body = f"""
+    <h2>¡Hola! 👋</h2>
+    <p>Este es un correo de prueba para validar que tu conexión con {provider.title()} funciona correctamente.</p>
+    <p>Si recibes este mensaje, ¡estás listo para empezar a enviar correos desde <strong>{sender_email}</strong>!</p>
+    <hr>
+    <p style="font-size: 12px; color: #999;">
+      {template.get('footer', 'Landa - Plataforma de prospección con IA')}
+    </p>
+    """
+
+    try:
+        tokens = decrypt_tokens(encrypted_tokens)
+        access_token = tokens.get("access_token")
+
+        success = await send_email_oauth(
+            provider=provider,
+            access_token=access_token,
+            to_email=user_email,
+            to_name=user_email,
+            subject=subject,
+            html_body=body,
+            sender_email=sender_email,
+            sender_name="Landa Test",
+        )
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to send test email")
+
+        return {
+            "message": "Test email sent successfully!",
+            "sent_to": user_email,
+            "from": sender_email,
+        }
+    except Exception as e:
+        logger.error(f"[test_email] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error sending test email: {str(e)}")
+
+
 @app.get("/admin/registration-requests")
 async def get_registration_requests(current_user: dict = Depends(get_current_user)):
     """Get all registration requests (staff-only endpoint)."""
