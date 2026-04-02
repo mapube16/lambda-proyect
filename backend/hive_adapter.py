@@ -77,6 +77,7 @@ class HiveAdapter:
         personality_prompt = inputs.get("personality_prompt", "")
         runtime_agents = inputs.get("runtime_agents", []) or []
         excluded_domains = inputs.get("excluded_domains", []) or []
+        source_priority   = inputs.get("source_priority", campaign.get("source_priority", "serper"))
 
         if not runtime_agents:
             from hive_graph import PIPELINE_AGENTS as DEFAULT_PIPELINE_AGENTS
@@ -109,6 +110,7 @@ class HiveAdapter:
             runtime_agents=runtime_agents,
             excluded_domains=excluded_domains,
             use_openrouter=use_openrouter_for_tools,
+            source_priority=source_priority,
         )
         all_tools    = list(registry.get_tools().values())
         tool_executor = registry.get_executor()

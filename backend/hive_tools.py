@@ -48,11 +48,17 @@ def make_prospecting_registry(
     runtime_agents: list[dict] | None = None,
     excluded_domains: list[str] | None = None,
     use_openrouter: bool = False,
+    source_priority: str = "serper",  # "serper" | "bright_data" | "hybrid"
 ) -> ToolRegistry:
     """
     Build and return a ToolRegistry with two tools:
       - discover_companies: search by industry + city, returns list of company dicts
       - analyze_company:    scrape + LLM-analyze a single company URL
+
+    source_priority: Controls which data source to use:
+      - "serper": economical Serper search
+      - "bright_data": premium Bright Data Web Scraper (emails, phones, full contact)
+      - "hybrid": both sources combined for maximum coverage
     """
     from openai import AsyncOpenAI
 
@@ -166,6 +172,7 @@ def make_prospecting_registry(
             gmaps_key,
             excluded_domains=excluded_set,
             use_secop=use_secop,
+            source_priority=source_priority,
         )
         if use_secop_radar:
             try:
