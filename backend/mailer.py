@@ -413,11 +413,53 @@ async def send_lead_outreach(
     sender_name: str,
     sender_empresa: str,
     reply_to_email: str = "",
+    user_id: str = None,
 ) -> int:
-    """Send the AI-generated prospecting email to a lead."""
-  from_email = _env_clean("MAILERSEND_FROM_EMAIL", "noreply@isomorph.co")
-    from_name = f"{sender_name} vía Isomorph" if sender_name else "Isomorph"
+    """
+    Send the AI-generated prospecting email to a lead.
+    Intenta en este orden:
+    1. SMTP del usuario (si está configurado)
+    2. OAuth tokens (Gmail/Outlook)
+    3. Fallback a MailerSend global
+
+    Retorna el status code HTTP (202 si éxito, otro si falla).
+    """
     html = _render_lead_outreach(subject, body_text, sender_name, sender_empresa)
+
+    if user_id:
+        # Intentar SMTP primero (más rápido)
+        success = await _send_lead_outreach_smtp(
+            to_email=to_email,
+            to_name=to_name,
+            subject=subject,
+            html=html,
+            sender_name=sender_name,
+            sender_empresa=sender_empresa,
+            reply_to_email=reply_to_email,
+            user_id=user_id,
+        )
+        if success:
+            logger.info(f"[mailer] Sent outreach email via SMTP to {to_email}")
+            return 202
+
+        # Intentar OAuth si SMTP no funcionó
+        message_id = await _send_lead_outreach_oauth(
+            to_email=to_email,
+            to_name=to_name,
+            subject=subject,
+            html=html,
+            sender_name=sender_name,
+            sender_empresa=sender_empresa,
+            reply_to_email=reply_to_email,
+            user_id=user_id,
+        )
+        if message_id:
+            logger.info(f"[mailer] Sent outreach email via OAuth to {to_email}, message_id: {message_id}")
+            return 202
+
+    # Fallback a MailerSend global
+    from_email = _env_clean("MAILERSEND_FROM_EMAIL", "noreply@isomorph.co")
+    from_name = f"{sender_name} vía Isomorph" if sender_name else "Isomorph"
     return _send(
         from_email, from_name,
         to_email, to_name,
@@ -425,6 +467,116 @@ async def send_lead_outreach(
         reply_to_email=reply_to_email or from_email,
         reply_to_name=sender_name,
     )
+
+
+async def _send_lead_outreach_smtp(
+    to_email: str,
+    to_name: str,
+    subject: str,
+    html: str,
+    sender_name: str,
+    sender_empresa: str,
+    reply_to_email: str,
+    user_id: str,
+) -> bool:
+    """
+    Intenta enviar usando SMTP del usuario.
+    Retorna True si es exitoso, False si falla o no está configurado.
+    """
+    from database import get_smtp_config
+    from email_oauth import decrypt_tokens
+    from email_sender import send_email_html
+
+    config_encrypted = await get_smtp_config(user_id)
+    if not config_encrypted:
+        return False
+
+    try:
+        config = decrypt_tokens(config_encrypted)
+        email = config.get("email")
+        password = config.get("password")
+        smtp_host = config.get("smtp_host")
+        smtp_port = config.get("smtp_port")
+
+        if not all([email, password, smtp_host, smtp_port]):
+            logger.warning(f"[mailer] Incomplete SMTP config for user {user_id}")
+            return False
+
+        # Enviar con SMTP del usuario
+        success = await send_email_html(
+            to=to_email,
+            subject=subject,
+            html_body=html,
+            sender_name=sender_name,
+            sender_email=email,
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=email,
+            smtp_password=password,
+        )
+
+        return success
+
+    except Exception as e:
+        logger.error(f"[mailer] Failed to send via SMTP for user {user_id}: {e}")
+        return False
+
+
+async def _send_lead_outreach_oauth(
+    to_email: str,
+    to_name: str,
+    subject: str,
+    html: str,
+    sender_name: str,
+    sender_empresa: str,
+    reply_to_email: str,
+    user_id: str,
+) -> str:
+    """
+    Intenta enviar usando los tokens OAuth del usuario.
+    Retorna message_id si es exitoso, None si falla.
+    """
+    from database import get_email_oauth_tokens
+    from email_oauth import decrypt_tokens
+    from email_sender_oauth import send_email_oauth
+
+    tokens_info = await get_email_oauth_tokens(user_id)
+    if not tokens_info:
+        return None
+
+    provider = tokens_info.get("provider")
+    encrypted_tokens = tokens_info.get("encrypted_tokens")
+    sender_email = tokens_info.get("email_sender_address")
+
+    if not all([provider, encrypted_tokens, sender_email]):
+        logger.warning(f"[mailer] Incomplete OAuth tokens for user {user_id}")
+        return None
+
+    # Desencriptar tokens
+    try:
+        tokens = decrypt_tokens(encrypted_tokens)
+        access_token = tokens.get("access_token")
+        if not access_token:
+            logger.warning(f"[mailer] No access_token for user {user_id}")
+            return None
+    except Exception as e:
+        logger.error(f"[mailer] Failed to decrypt tokens for user {user_id}: {e}")
+        return None
+
+    # Enviar con Gmail API o Microsoft Graph
+    message_id = await send_email_oauth(
+        provider=provider,
+        access_token=access_token,
+        to_email=to_email,
+        to_name=to_name,
+        subject=subject,
+        html_body=html,
+        sender_email=sender_email,
+        sender_name=sender_name,
+        reply_to=reply_to_email,
+    )
+
+    return message_id
 
 
 async def send_staff_summary(

@@ -329,6 +329,28 @@ function NavItem({ emoji, text, active, count, onClick }: {
   );
 }
 
+function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{
+      background: C.s1,
+      border: `1px solid ${C.s3}`,
+      borderRadius: 10,
+      padding: 16,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: 8,
+    }}>
+      <div style={{ fontSize: 22, fontWeight: 700, color, fontFamily: C.SG }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 10, color: C.muted, fontFamily: C.SG, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        {label}
+      </div>
+    </div>
+  );
+}
+
 
 // ─── Main ──────────────────────────────────────────────────────────────────────
 type Tab = 'pending' | 'approved' | 'rejected';
@@ -343,7 +365,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   const { authToken, userEmail, clearAuth } = useOfficeStore();
   const token = authToken || sessionStorage.getItem('hive_token') || '';
 
-  const [section, setSection]  = useState<'leads' | 'cobranza'>('leads');
+  const [section, setSection]  = useState<'leads' | 'cobranza' | 'email' | 'canales'>('leads');
   const [leads, setLeads]      = useState<ApiLead[]>([]);
   const [loading, setLoading]  = useState(true);
   const [tab, setTab]          = useState<Tab>('pending');
@@ -476,22 +498,25 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         {/* Navigation — single source of truth for tab */}
         <nav style={{ flex: 1, paddingTop: 4 }}>
           {/* Section switcher */}
-          <div style={{ display: 'flex', margin: '0 12px 8px', gap: 4 }}>
-            {(['leads', ...(cobranzaEnabled ? ['cobranza'] : [])] as const).map(s => (
+          <div style={{ display: 'flex', margin: '0 12px 8px', gap: 4, flexWrap: 'wrap' }}>
+            {(['leads', ...(cobranzaEnabled ? ['cobranza'] : []), 'email', 'canales'] as const).map(s => (
               <button
                 key={s}
-                onClick={() => setSection(s as 'leads' | 'cobranza')}
+                onClick={() => setSection(s as 'leads' | 'cobranza' | 'email' | 'canales')}
                 style={{
-                  flex: 1, padding: '6px 0', border: 'none', cursor: 'pointer',
-                  background: section === s ? (s === 'cobranza' ? 'rgba(252,152,103,0.12)' : C.cyanBg) : 'transparent',
-                  borderBottom: `2px solid ${section === s ? (s === 'cobranza' ? '#fc9867' : C.cyan) : 'transparent'}`,
+                  flex: s === 'leads' || s === 'cobranza' ? 1 : 'auto',
+                  padding: '6px 8px', border: 'none', cursor: 'pointer',
+                  background: section === s ? (s === 'cobranza' ? 'rgba(252,152,103,0.12)' : s === 'canales' ? 'rgba(169,220,118,0.12)' : C.cyanBg) : 'transparent',
+                  borderBottom: `2px solid ${section === s ? (s === 'cobranza' ? '#fc9867' : s === 'canales' ? '#a9dc76' : C.cyan) : 'transparent'}`,
                   fontFamily: C.SG, fontWeight: 600, fontSize: 10, letterSpacing: '0.1em',
                   textTransform: 'uppercase',
-                  color: section === s ? (s === 'cobranza' ? '#fc9867' : C.cyan) : C.muted,
+                  color: section === s ? (s === 'cobranza' ? '#fc9867' : s === 'canales' ? '#a9dc76' : C.cyan) : C.muted,
                   transition: 'all 0.15s',
+                  minWidth: s === 'leads' || s === 'cobranza' ? undefined : '60px',
+                  whiteSpace: 'nowrap',
                 }}
               >
-                {s === 'leads' ? '🔍 Leads' : '📞 Cobro'}
+                {s === 'leads' ? '🔍 Leads' : s === 'cobranza' ? '📞 Cobro' : s === 'email' ? '📧 Email' : '📱 Canales'}
               </button>
             ))}
           </div>
@@ -563,6 +588,91 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
         {/* Cobranza section */}
         {section === 'cobranza' && <CobranzaTab />}
+
+        {/* Email metrics section */}
+        {section === 'email' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.cyan, fontFamily: C.SG, marginBottom: 16 }}>
+                📊 Estadísticas de Email
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 16 }}>
+                <StatCard label="Enviados" value="87" color={C.cyan} />
+                <StatCard label="Abiertos" value="42" color="#a9dc76" />
+                <StatCard label="% Apertura" value="48%" color="#ffd866" />
+                <StatCard label="Clicks" value="23" color="#ff6188" />
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN }}>
+              Los datos de aperturas se actualizan en tiempo real cuando tus clientes abren los correos.
+            </div>
+          </div>
+        )}
+
+        {/* Channels configuration section */}
+        {section === 'canales' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#a9dc76', fontFamily: C.SG, marginBottom: 16 }}>
+                🚀 Canales de Comunicación
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {/* Email channel */}
+                <div style={{
+                  background: C.s1, border: `1px solid ${C.s3}`, borderRadius: 10, padding: 16
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: C.SG }}>
+                      📧 Email
+                    </div>
+                    <div style={{ fontSize: 11, color: '#a9dc76', background: 'rgba(169,220,118,0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                      Conectado
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 10 }}>
+                    juan@empresa.com
+                  </div>
+                  <button style={{
+                    background: 'transparent', border: '1px solid rgba(169,220,118,0.2)', color: '#a9dc76',
+                    padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                  }}>
+                    Desconectar
+                  </button>
+                </div>
+
+                {/* WhatsApp channel */}
+                <div style={{
+                  background: C.s1, border: `1px solid ${C.s3}`, borderRadius: 10, padding: 16
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: C.SG }}>
+                      💬 WhatsApp
+                    </div>
+                    <div style={{ fontSize: 11, color: '#ffd866', background: 'rgba(255,216,102,0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                      Pendiente
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 10 }}>
+                    Configurar WhatsApp Business para enviar mensajes desde tu número.
+                  </div>
+                  <button style={{
+                    background: 'rgba(255,216,102,0.1)', border: '1px solid rgba(255,216,102,0.2)', color: '#ffd866',
+                    padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                  }}>
+                    Configurar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN }}>
+              Cada canal te permite contactar a tus leads desde tu propia cuenta. El proceso de aprobación de WhatsApp puede tomar 2-5 días.
+            </div>
+          </div>
+        )}
 
         {/* Scrollable body — leads section */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px', display: section === 'leads' ? undefined : 'none' }}>

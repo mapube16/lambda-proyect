@@ -527,7 +527,7 @@ interface OnboardKnowledgeDebug {
 
 // ── Onboarding Wizard ──────────────────────────────────────────────────────────
 
-type WizardStep = 'account' | 'conversation' | 'upload' | 'analyze' | 'review' | 'done';
+type WizardStep = 'account' | 'conversation' | 'upload' | 'analyze' | 'email' | 'review' | 'done';
 
 function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [step, setStep] = useState<WizardStep>('account');
@@ -550,6 +550,12 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
   const [knowledgeDebugLoading, setKnowledgeDebugLoading] = useState(false);
   const [knowledgeDebug, setKnowledgeDebug] = useState<OnboardKnowledgeDebug | null>(null);
   const [error, setError] = useState('');
+  // SMTP configuration step
+  const [smtpEmail, setSmtpEmail] = useState('');
+  const [smtpPassword, setSmtpPassword] = useState('');
+  const [smtpHost, setSmtpHost] = useState('smtp.gmail.com');
+  const [smtpPort, setSmtpPort] = useState('587');
+  const [smtpSaving, setSmtpSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const auth = () => ({ Authorization: `Bearer ${useOfficeStore.getState().authToken}` });
@@ -899,7 +905,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
           <div style={wz.title}>Onboarding de nuevo cliente</div>
           <div style={wz.steps}>
             {(() => {
-              const ORDER: WizardStep[] = ['account','conversation','upload','analyze','review','done'];
+              const ORDER: WizardStep[] = ['account','conversation','upload','analyze','email','review','done'];
               const cur = ORDER.indexOf(step);
               return ORDER.map((s, i) => (
                 <div key={s} style={{ ...wz.stepDot, background: i === cur ? cyan : i < cur ? green : s4 }} />
@@ -1141,10 +1147,88 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
             </div>
           )}
 
-          {/* Step 4 — Review */}
+          {/* Step 5 — Email Configuration */}
+          {step === 'email' && (
+            <div style={{ ...wz.stepBody, alignItems: 'center', textAlign: 'center' }}>
+              <div style={wz.stepTitle}>Paso 5: Configurar correo personal</div>
+              <div style={wz.hint}>
+                Los correos se enviarán desde tu cuenta de email personal. Puedes conectar Gmail, Outlook u otro proveedor.
+              </div>
+
+              <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', marginTop: 24 }}>
+                <button
+                  style={{
+                    padding: '14px 24px',
+                    background: 'rgba(120,220,232,0.08)',
+                    border: '1px solid rgba(120,220,232,0.3)',
+                    borderRadius: 10,
+                    color: '#78dce8',
+                    fontFamily: SG,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.background = 'rgba(120,220,232,0.15)';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.background = 'rgba(120,220,232,0.08)';
+                  }}
+                  onClick={() => {
+                    window.location.href = `${API_URL}/auth/gmail/connect`;
+                  }}
+                >
+                  📧 Conectar Gmail
+                </button>
+
+                <button
+                  style={{
+                    padding: '14px 24px',
+                    background: 'rgba(169,220,118,0.08)',
+                    border: '1px solid rgba(169,220,118,0.3)',
+                    borderRadius: 10,
+                    color: '#a9dc76',
+                    fontFamily: SG,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.background = 'rgba(169,220,118,0.15)';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.background = 'rgba(169,220,118,0.08)';
+                  }}
+                  onClick={() => {
+                    window.location.href = `${API_URL}/auth/outlook/connect`;
+                  }}
+                >
+                  💼 Conectar Outlook
+                </button>
+              </div>
+
+              <div style={{ marginTop: 24 }}>
+                <button
+                  style={{
+                    ...wz.primaryBtn,
+                    background: 'rgba(255,211,136,0.1)',
+                    color: '#ffd866',
+                    border: '1px solid rgba(255,211,136,0.2)',
+                  }}
+                  onClick={() => setStep('review')}
+                >
+                  Configurar después →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 6 — Review */}
           {step === 'review' && editedProposal && (
             <div style={wz.stepBody}>
-              <div style={wz.stepTitle}>Paso 5: Revisar y aprobar propuesta</div>
+              <div style={wz.stepTitle}>Paso 6: Revisar y aprobar propuesta</div>
 
               {/* Business summary */}
               <div style={wz.proposalSection}>
