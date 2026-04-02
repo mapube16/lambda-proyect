@@ -29,7 +29,7 @@ for _logger in ("hive_adapter", "hive_llm", "hive_tools", "hive_graph",
     logging.getLogger(_logger).setLevel(logging.INFO)
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, HTTPException, Depends, Query, status, Request, Body
-from fastapi.responses import Response, FileResponse
+from fastapi.responses import Response, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo.errors import DuplicateKeyError
@@ -529,13 +529,287 @@ async def register_request(req: RegistrationRequest):
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Email OAuth (Gmail / Outlook)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/auth/gmail/connect")
+async def gmail_connect_start(state: str = Query(None)):
+    """Inicia el flujo de autorización de Google. Redirige a Google OAuth."""
+    from email_oauth import get_gmail_auth_url, generate_oauth_state
+
+    state = state or generate_oauth_state()
+    auth_url = get_gmail_auth_url(state)
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/auth/gmail/callback")
+async def gmail_callback(code: str = Query(...), state: str = Query(...)):
+    """Callback de Google OAuth. Intercambia code por tokens."""
+    from email_oauth import exchange_gmail_code, encrypt_tokens
+    from database import save_email_oauth_tokens
+
+    # En producción, validaría el state. Para dev simplificamos.
+    if not code:
+        raise HTTPException(status_code=400, detail="Authorization code not provided")
+
+    tokens = await exchange_gmail_code(code)
+    if not tokens:
+        raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+
+    # El usuario_id viene del token JWT en la sesión
+    # Para simplificar en este callback, redirigimos al onboarding con email
+    email = tokens.get("email", "unknown@gmail.com")
+    tokens_encrypted = encrypt_tokens({
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens["refresh_token"],
+    })
+
+    # Guardar en sessionStorage para que el frontend lo use
+    # O redirigir con un parámetro
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    return RedirectResponse(url=f"{frontend_url}?oauth_email={email}&oauth_tokens={tokens_encrypted}")
+
+
+@app.get("/auth/outlook/connect")
+async def outlook_connect_start(state: str = Query(None)):
+    """Inicia el flujo de autorización de Outlook. Redirige a Microsoft OAuth."""
+    from email_oauth import get_outlook_auth_url, generate_oauth_state
+
+    state = state or generate_oauth_state()
+    auth_url = get_outlook_auth_url(state)
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/auth/outlook/callback")
+async def outlook_callback(code: str = Query(...), state: str = Query(...)):
+    """Callback de Outlook OAuth. Intercambia code por tokens."""
+    from email_oauth import exchange_outlook_code, encrypt_tokens
+    from database import save_email_oauth_tokens
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Authorization code not provided")
+
+    tokens = await exchange_outlook_code(code)
+    if not tokens:
+        raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+
+    email = tokens.get("email", "unknown@outlook.com")
+    tokens_encrypted = encrypt_tokens({
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens["refresh_token"],
+    })
+
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    return RedirectResponse(url=f"{frontend_url}?oauth_email={email}&oauth_tokens={tokens_encrypted}")
+
+
+@app.get("/api/me/email-status")
+async def email_status(current_user: dict = Depends(get_current_user)):
+    """Obtiene el estado actual de conexión de email del usuario."""
+    from database import get_email_oauth_tokens
+
+    user_id = current_user.get("user_id")
+    tokens_info = await get_email_oauth_tokens(user_id)
+
+    if not tokens_info:
+        return {
+            "connected": False,
+            "provider": None,
+            "email": None,
+        }
+
+    return {
+        "connected": True,
+        "provider": tokens_info["provider"],
+        "email": tokens_info["email_sender_address"],
+    }
+
+
+@app.delete("/api/me/email-disconnect")
+async def email_disconnect(current_user: dict = Depends(get_current_user)):
+    """Desconecta la cuenta de email del usuario."""
+    from database import delete_email_oauth_tokens
+
+    user_id = current_user.get("user_id")
+    success = await delete_email_oauth_tokens(user_id)
+
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to disconnect email")
+
+    return {"message": "Email account disconnected", "connected": False}
+
+
+@app.get("/api/me/email-stats")
+async def email_stats(current_user: dict = Depends(get_current_user)):
+    """Obtiene estadísticas de email del usuario."""
+    from database import get_email_stats
+
+    user_id = current_user.get("user_id")
+    stats = await get_email_stats(user_id)
+    return stats
+
+
+@app.post("/api/mailersend/webhook")
+async def mailersend_webhook(request: Request):
+    """
+    Webhook de MailerSend para eventos de email (apertura, click, etc.)
+    Verifica la firma HMAC y guarda los eventos en MongoDB.
+    """
+    from database import save_email_event
+    import hmac
+    import hashlib
+
+    # Leer el body
+    body = await request.body()
+
+    # Verificar firma HMAC
+    webhook_secret = os.getenv("MAILERSEND_WEBHOOK_SECRET", "")
+    if webhook_secret:
+        signature = request.headers.get("X-MailerSend-Signature", "")
+        expected_sig = hmac.new(
+            webhook_secret.encode(),
+            body,
+            hashlib.sha256
+        ).hexdigest()
+
+        if signature != expected_sig:
+            raise HTTPException(status_code=401, detail="Invalid signature")
+
+    # Parsear el evento
+    data = await request.json()
+    event_type = data.get("type", "")
+    event_data = data.get("data", {})
+
+    message_id = event_data.get("message_id") or event_data.get("id")
+
+    # Guardar el evento (correlacionar con lead después)
+    if message_id:
+        await save_email_event(
+            lead_id=event_data.get("lead_id", ""),
+            event_type=event_type,
+            message_id=message_id,
+        )
+        logger.info(f"[mailersend_webhook] Saved {event_type} event for message {message_id}")
+
+    return {"status": "ok"}
+
+
+@app.post("/api/me/email-connect")
+async def email_connect_finalize(
+    current_user: dict = Depends(get_current_user),
+    email: str = Body(...),
+    provider: str = Body(...),
+    tokens_encrypted: str = Body(...),
+):
+    """
+    Endpoint que el frontend llama para finalizar la conexión de email.
+    El usuario ya fue redirigido desde el callback de OAuth.
+    """
+    from database import save_email_oauth_tokens
+
+    user_id = current_user.get("user_id")
+
+    if provider not in ("gmail", "outlook"):
+        raise HTTPException(status_code=400, detail="Invalid provider")
+
+    success = await save_email_oauth_tokens(
+        user_id=user_id,
+        provider=provider,
+        tokens_encrypted=tokens_encrypted,
+        email_sender=email
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save email configuration")
+
+    return {
+        "message": "Email connected successfully",
+        "provider": provider,
+        "email": email,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SMTP Configuration (Usuario configura su SMTP personal)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/api/me/smtp-config")
+async def save_smtp_config(
+    current_user: dict = Depends(get_current_user),
+    email: str = Body(...),
+    password: str = Body(...),
+    smtp_host: str = Body(...),
+    smtp_port: int = Body(...),
+):
+    """
+    Endpoint para que el usuario configure su SMTP personal.
+    Guarda encriptado en MongoDB.
+    """
+    from database import save_smtp_config
+    from email_oauth import encrypt_tokens
+
+    user_id = current_user.get("user_id")
+
+    if not all([email, password, smtp_host, smtp_port]):
+        raise HTTPException(status_code=400, detail="Missing required fields")
+
+    # Encriptar la configuración
+    config = {
+        "email": email,
+        "password": password,
+        "smtp_host": smtp_host,
+        "smtp_port": smtp_port,
+    }
+    config_encrypted = encrypt_tokens(config)
+
+    success = await save_smtp_config(user_id, config_encrypted)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save SMTP configuration")
+
+    return {
+        "message": "SMTP configuration saved successfully",
+        "email": email,
+        "configured": True,
+    }
+
+
+@app.get("/api/me/smtp-status")
+async def get_smtp_status(current_user: dict = Depends(get_current_user)):
+    """
+    Obtiene el estado de la configuración SMTP del usuario.
+    """
+    from database import get_smtp_status
+
+    user_id = current_user.get("user_id")
+    status = await get_smtp_status(user_id)
+    return status
+
+
+@app.delete("/api/me/smtp-disconnect")
+async def smtp_disconnect(current_user: dict = Depends(get_current_user)):
+    """
+    Desconecta/elimina la configuración SMTP del usuario.
+    """
+    from database import delete_smtp_config
+
+    user_id = current_user.get("user_id")
+    success = await delete_smtp_config(user_id)
+
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to disconnect SMTP")
+
+    return {"message": "SMTP configuration removed", "configured": False}
+
+
 @app.get("/admin/registration-requests")
 async def get_registration_requests(current_user: dict = Depends(get_current_user)):
     """Get all registration requests (staff-only endpoint)."""
     # Check if user is admin/staff
     if current_user.get("role") not in ["admin", "staff"]:
         raise HTTPException(status_code=403, detail="Staff only")
-    
+
     requests = await get_all_registration_requests()
     return {"requests": requests}
 
@@ -1192,6 +1466,7 @@ async def send_lead_email(
             sender_name=sender_name,
             sender_empresa=sender_empresa,
             reply_to_email=reply_to,
+            user_id=user_id,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))

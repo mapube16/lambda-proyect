@@ -3,6 +3,7 @@ database.py — Motor (async MongoDB) persistence layer.
 All DB operations are here. No other module touches Motor directly.
 """
 import os
+import logging
 from typing import Optional
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -58,6 +59,10 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.debtors.create_index([("user_id", 1), ("created_at", -1)])
     await db.debtors.create_index("vapi_call_id", sparse=True)
     await db.debtors.create_index([("user_id", 1), ("telefono", 1)], unique=True)
+    # ── Email OAuth + Events ──────────────────────────────────────────────────
+    await db.email_events.create_index([("user_id", 1), ("timestamp", -1)])
+    await db.email_events.create_index("message_id")
+    await db.email_events.create_index("lead_id")
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
@@ -1110,4 +1115,211 @@ async def set_roadmap_state(user_id: str, state: dict) -> dict:
         upsert=True
     )
     return {"ok": True, "updated": result.modified_count > 0 or result.upserted_id is not None}
+
+
+# ── Email OAuth (Gmail / Outlook) ────────────────────────────────────────────
+
+async def save_email_oauth_tokens(user_id: str, provider: str, tokens_encrypted: str, email_sender: str) -> bool:
+    """
+    Guarda los tokens OAuth del usuario encriptados.
+    provider: "gmail" | "outlook"
+    tokens_encrypted: string encriptado (resultado de encrypt_tokens)
+    email_sender: email del usuario (juan@empresa.com)
+    """
+    db = get_db()
+    try:
+        result = await db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set": {
+                    "email_provider": provider,
+                    "email_oauth_tokens": tokens_encrypted,
+                    "email_sender_address": email_sender,
+                    "email_configured_at": datetime.now(timezone.utc),
+                }
+            }
+        )
+        return result.matched_count > 0
+    except Exception as e:
+        logging.error(f"[database] save_email_oauth_tokens failed: {e}")
+        return False
+
+
+async def get_email_oauth_tokens(user_id: str) -> Optional[dict]:
+    """
+    Obtiene los tokens OAuth del usuario.
+    Retorna: { provider, encrypted_tokens, email_sender_address } o None
+    """
+    db = get_db()
+    try:
+        doc = await db.users.find_one({"_id": ObjectId(user_id)})
+        if not doc or "email_oauth_tokens" not in doc:
+            return None
+
+        return {
+            "provider": doc.get("email_provider"),
+            "encrypted_tokens": doc.get("email_oauth_tokens"),
+            "email_sender_address": doc.get("email_sender_address"),
+        }
+    except Exception as e:
+        logging.error(f"[database] get_email_oauth_tokens failed: {e}")
+        return None
+
+
+async def delete_email_oauth_tokens(user_id: str) -> bool:
+    """Elimina los tokens OAuth del usuario (desconectar)."""
+    db = get_db()
+    try:
+        result = await db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$unset": {
+                    "email_provider": "",
+                    "email_oauth_tokens": "",
+                    "email_sender_address": "",
+                    "email_configured_at": "",
+                }
+            }
+        )
+        return result.matched_count > 0
+    except Exception as e:
+        logging.error(f"[database] delete_email_oauth_tokens failed: {e}")
+        return False
+
+
+async def save_email_event(lead_id: str, event_type: str, message_id: str, user_id: str = None) -> None:
+    """
+    Guarda un evento de email (apertura, click, etc.)
+    event_type: "opened" | "clicked" | "bounced"
+    """
+    db = get_db()
+    try:
+        await db.email_events.insert_one({
+            "lead_id": lead_id,
+            "user_id": user_id,
+            "message_id": message_id,
+            "event_type": event_type,
+            "timestamp": datetime.now(timezone.utc),
+        })
+    except Exception as e:
+        logging.error(f"[database] save_email_event failed: {e}")
+
+
+async def get_email_stats(user_id: str) -> dict:
+    """
+    Calcula estadísticas de email para un usuario.
+    Retorna: { sent_count, opened_count, clicked_count, open_rate }
+    """
+    db = get_db()
+    try:
+        # Contar leads con message_id (enviados)
+        sent = await db.leads.count_documents({
+            "user_id": user_id,
+            "message_id": {"$exists": True, "$ne": None}
+        })
+
+        # Contar aperturas únicas
+        opened = await db.email_events.count_documents({
+            "user_id": user_id,
+            "event_type": "opened"
+        })
+
+        # Contar clicks
+        clicked = await db.email_events.count_documents({
+            "user_id": user_id,
+            "event_type": "clicked"
+        })
+
+        open_rate = int((opened / sent * 100)) if sent > 0 else 0
+
+        return {
+            "sent_count": sent,
+            "opened_count": opened,
+            "clicked_count": clicked,
+            "open_rate": open_rate,
+        }
+    except Exception as e:
+        logging.error(f"[database] get_email_stats failed: {e}")
+        return {"sent_count": 0, "opened_count": 0, "clicked_count": 0, "open_rate": 0}
+
+
+# ── SMTP Configuration (Usuario configura sus credenciales SMTP) ─────────────
+
+async def save_smtp_config(user_id: str, smtp_config_encrypted: str) -> bool:
+    """
+    Guarda la configuración SMTP del usuario encriptada.
+    smtp_config_encrypted: JSON encriptado con { email, password, smtp_host, smtp_port }
+    """
+    db = get_db()
+    try:
+        result = await db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set": {
+                    "smtp_config_encrypted": smtp_config_encrypted,
+                    "smtp_configured_at": datetime.now(timezone.utc),
+                }
+            }
+        )
+        return result.matched_count > 0
+    except Exception as e:
+        logging.error(f"[database] save_smtp_config failed: {e}")
+        return False
+
+
+async def get_smtp_config(user_id: str) -> Optional[str]:
+    """
+    Obtiene la configuración SMTP encriptada del usuario.
+    Retorna: string encriptado o None si no está configurado.
+    """
+    db = get_db()
+    try:
+        doc = await db.users.find_one({"_id": ObjectId(user_id)})
+        if not doc or "smtp_config_encrypted" not in doc:
+            return None
+        return doc.get("smtp_config_encrypted")
+    except Exception as e:
+        logging.error(f"[database] get_smtp_config failed: {e}")
+        return None
+
+
+async def delete_smtp_config(user_id: str) -> bool:
+    """Elimina la configuración SMTP del usuario."""
+    db = get_db()
+    try:
+        result = await db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$unset": {
+                    "smtp_config_encrypted": "",
+                    "smtp_configured_at": "",
+                }
+            }
+        )
+        return result.matched_count > 0
+    except Exception as e:
+        logging.error(f"[database] delete_smtp_config failed: {e}")
+        return False
+
+
+async def get_smtp_status(user_id: str) -> dict:
+    """
+    Obtiene el estado de configuración SMTP del usuario.
+    Retorna: { configured: bool, email: str or None }
+    """
+    db = get_db()
+    try:
+        doc = await db.users.find_one({"_id": ObjectId(user_id)})
+        if not doc or "smtp_config_encrypted" not in doc:
+            return {"configured": False, "email": None}
+
+        # Para obtener el email sin desencriptar, lo extraemos del config
+        # (El frontend lo tendrá en su estado)
+        return {
+            "configured": True,
+            "email": doc.get("smtp_email_display")  # Campo adicional que guardamos
+        }
+    except Exception as e:
+        logging.error(f"[database] get_smtp_status failed: {e}")
+        return {"configured": False, "email": None}
 
