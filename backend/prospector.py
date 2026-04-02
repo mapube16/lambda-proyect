@@ -307,6 +307,40 @@ async def discover_via_serper(
     return results
 
 
+# ── Enrichment: Serper Places (fallback for Google Maps) ──────────────────────
+
+async def enrich_via_serper_places(
+    company_name: str, ciudad: str, api_key: str
+) -> dict:
+    """
+    Enrich company data with phone/address via Serper Places endpoint.
+    Fallback when Google Maps is unavailable.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                "https://google.serper.dev/places",
+                headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+                json={"q": f"{company_name} {ciudad}", "gl": "co", "hl": "es", "limit": 1},
+            )
+            if resp.status_code != 200:
+                return {}
+            data = resp.json()
+            places = data.get("places", [])
+            if not places:
+                return {}
+            place = places[0]
+            return {
+                "phone": place.get("phone", ""),
+                "address": place.get("address", ""),
+                "rating": place.get("rating"),
+                "review_count": place.get("review_count"),
+            }
+    except Exception as e:
+        logger.debug("[Serper Places] enrichment failed for %r: %s", company_name, e)
+        return {}
+
+
 # ── Discovery: Bing web search ────────────────────────────────────────────────
 
 async def discover_companies_bing(
@@ -508,15 +542,32 @@ async def discover_companies(
     if serper_key:
         serper_results = await discover_via_serper(industria, ciudad, max_results, serper_key)
         add(serper_results)
-        # Also run GMaps in parallel for phone/address enrichment
-        if gmaps_key and len(merged) < max_results:
-            gmaps_results = await discover_companies_gmaps(industria, ciudad, per_source, gmaps_key)
-            add(gmaps_results)
-        else:
-            gmaps_results = []
+
+        # Enrich with phone/address: try GMaps first, fallback to Serper Places
+        enriched_count = 0
+        for item in merged:
+            if not item.get("phone") or not item.get("address"):
+                enrichment = {}
+                if gmaps_key:
+                    try:
+                        # Try Google Maps first
+                        enrichment = await discover_companies_gmaps(item["title"], ciudad, 1, gmaps_key)
+                        if enrichment:
+                            enrichment = enrichment[0]
+                    except Exception as e:
+                        logger.debug("[Discovery] GMaps enrichment failed for %r: %s", item["title"], e)
+
+                # Fallback to Serper Places if GMaps didn't work
+                if not enrichment and serper_key:
+                    enrichment = await enrich_via_serper_places(item["title"], ciudad, serper_key)
+
+                if enrichment:
+                    item.update(enrichment)
+                    enriched_count += 1
+
         logger.info(
-            "[Discovery] Serper=%d GMaps=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
-            len(serper_results), len(gmaps_results), len(merged), skipped_history, skipped_low_quality
+            "[Discovery] Serper=%d enriched=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
+            len(serper_results), enriched_count, len(merged), skipped_history, skipped_low_quality
         )
     else:
         # No Serper key — try Bing + DDG (may be blocked in cloud environments)
