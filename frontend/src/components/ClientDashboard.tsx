@@ -390,6 +390,53 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
       .catch(() => {});
   }, [token]);
 
+  // ── Handle OAuth callback and save email config ──────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthEmail = params.get('oauth_email');
+    const oauthTokens = params.get('oauth_tokens');
+    const oauthProvider = params.get('oauth_provider');
+    const oauthSuccess = params.get('oauth_success');
+
+    // Si viene del callback OAuth, guardar los datos en la BD
+    if (oauthSuccess === 'true' && oauthEmail && oauthTokens && oauthProvider && token) {
+      apiFetch(`${API}/api/me/email-connect`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email: oauthEmail,
+          provider: oauthProvider,
+          tokens_encrypted: oauthTokens
+        })
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (d) {
+            setEmailConnected(true);
+            setEmailAddress(oauthEmail);
+            setToasts([...toasts, {
+              id: Date.now().toString(),
+              message: `✅ ${oauthProvider.charAt(0).toUpperCase() + oauthProvider.slice(1)} conectado!\nAhora enviarás desde: ${oauthEmail}`,
+              type: 'approve'
+            }]);
+            // Limpiar URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        })
+        .catch(err => {
+          console.error('[OAuth] Error saving config:', err);
+          setToasts([...toasts, {
+            id: Date.now().toString(),
+            message: `❌ Error guardando configuración. Intenta de nuevo.`,
+            type: 'reject'
+          }]);
+        });
+    }
+  }, [token, toasts]);
+
   // ── Check email status ─────────────────────────────────────────────────────────
   useEffect(() => {
     apiFetch(`${API}/api/me/email-status`, { headers: { Authorization: `Bearer ${token}` } })
@@ -398,17 +445,6 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         if (d?.connected) {
           setEmailConnected(true);
           setEmailAddress(d.email || '');
-          // Mostrar notificación si acaba de conectarse (URL param)
-          const params = new URLSearchParams(window.location.search);
-          if (params.get('oauth_success') === 'true') {
-            setToasts([...toasts, {
-              id: Date.now().toString(),
-              message: `✅ Gmail conectado exitosamente!\nAhora enviarás correos desde: ${d.email}`,
-              type: 'approve'
-            }]);
-            // Limpiar URL
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
         } else {
           setEmailConnected(false);
           setEmailAddress('');
