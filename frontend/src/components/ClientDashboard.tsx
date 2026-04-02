@@ -396,6 +396,17 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         if (d?.connected) {
           setEmailConnected(true);
           setEmailAddress(d.email || '');
+          // Mostrar notificación si acaba de conectarse (URL param)
+          const params = new URLSearchParams(window.location.search);
+          if (params.get('oauth_success') === 'true') {
+            setToasts([...toasts, {
+              id: Date.now().toString(),
+              message: `✅ Gmail conectado exitosamente!\nAhora enviarás correos desde: ${d.email}`,
+              type: 'approve'
+            }]);
+            // Limpiar URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
         } else {
           setEmailConnected(false);
           setEmailAddress('');
