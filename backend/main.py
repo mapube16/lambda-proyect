@@ -623,8 +623,8 @@ async def gmail_callback(code: str = Query(...), state: str = Query(...)):
             )
 
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    # Redirigir al dashboard con indicador de éxito
-    redirect_url = f"{frontend_url}/dashboard?oauth_success={'true' if user_id else 'false'}&oauth_email={email}&oauth_provider=gmail"
+    # Redirigir a home con indicador de éxito
+    redirect_url = f"{frontend_url}/?oauth_success={'true' if user_id else 'false'}&oauth_email={email}&oauth_provider=gmail"
     return RedirectResponse(url=redirect_url)
 
 
@@ -713,8 +713,8 @@ async def outlook_callback(code: str = Query(...), state: str = Query(...)):
             )
 
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    # Redirigir al dashboard con indicador de éxito
-    redirect_url = f"{frontend_url}/dashboard?oauth_success={'true' if user_id else 'false'}&oauth_email={email}&oauth_provider=outlook"
+    # Redirigir a home con indicador de éxito
+    redirect_url = f"{frontend_url}/?oauth_success={'true' if user_id else 'false'}&oauth_email={email}&oauth_provider=outlook"
     return RedirectResponse(url=redirect_url)
 
 
