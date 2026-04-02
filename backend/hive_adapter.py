@@ -85,17 +85,13 @@ class HiveAdapter:
 
         self._runtime_agents[user_id] = runtime_agents
 
-        # LLM provider — Use OpenRouter but with OpenRouter key
+        # LLM provider — OpenAI directly (gpt-4o-mini)
         from hive_llm import OpenRouterProvider
-        openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
-        if not openrouter_key:
-            logger.warning("[HiveAdapter] OPENROUTER_API_KEY not set, falling back to OpenAI")
-            openrouter_key = openai_key
 
         llm = OpenRouterProvider(
-            api_key=openrouter_key,
+            api_key=openai_key,
             model="gpt-4o-mini",
-            base_url="https://openrouter.ai/api/v1",
+            base_url="https://api.openai.com/v1",
             max_output_tokens=2000,
         )
 
