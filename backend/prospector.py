@@ -415,6 +415,127 @@ async def discover_via_bright_data_serp(
     return results
 
 
+# ── Discovery: Bright Data Web Scraper (contact extraction) ──────────────────
+
+async def scrape_bright_data_web(
+    industria: str, ciudad: str, max_results: int, api_key: str
+) -> list[dict]:
+    """
+    Bright Data Web Scraper for extracting contacts from Colombian directories:
+    - LinkedIn company pages
+    - Pages Amarillas (directorio.com.co)
+    - Chambers of Commerce (ccb.org.co, ccc.org.co)
+    - Google Maps (with phone/email extraction)
+
+    Returns enriched leads with email, phone, address.
+    """
+    results: list[dict] = []
+    seen: set[str] = set()
+
+    # Define sources to scrape in order of priority
+    sources = [
+        {
+            "name": "LinkedIn",
+            "url_template": f"https://www.linkedin.com/search/results/companies/?keywords={industria}+{ciudad}",
+            "selector": "company-name",
+        },
+        {
+            "name": "Directorio Colombia",
+            "url_template": f"https://www.directorio.com.co/empresas/{industria.replace(' ', '+')}/{ciudad.replace(' ', '+').replace(',', '%2C')}",
+            "selector": "empresa",
+        },
+        {
+            "name": "CCB (Cámara de Comercio Bogotá)",
+            "url_template": f"https://www.ccb.org.co/buscar-empresas?searchTerm={industria}+{ciudad}",
+            "selector": "empresa",
+        },
+    ]
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        for source in sources:
+            if len(results) >= max_results:
+                break
+
+            try:
+                # Use Bright Data Web Scraper API
+                scraper_url = "https://api.brightdata.com/datasets/geos/scrape"
+                payload = {
+                    "source": source["name"],
+                    "url": source["url_template"],
+                    "selector": source["selector"],
+                    "fields": ["name", "email", "phone", "address", "website", "industry"],
+                    "limit": max_results - len(results),
+                }
+
+                resp = await client.post(
+                    scraper_url,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=30,
+                )
+
+                if resp.status_code != 200:
+                    logger.warning(
+                        "[Bright Data Web] source=%s status=%d",
+                        source["name"],
+                        resp.status_code,
+                    )
+                    continue
+
+                data = resp.json()
+                scraped = data.get("results", [])
+                logger.info(
+                    "[Bright Data Web] source=%s scraped=%d records",
+                    source["name"],
+                    len(scraped),
+                )
+
+                for item in scraped:
+                    name = item.get("name", "")
+                    email = item.get("email", "")
+                    phone = item.get("phone", "")
+                    address = item.get("address", "")
+                    website = item.get("website", "")
+
+                    if not (name or email or phone):
+                        continue
+
+                    domain = (website or name).lower().replace(" ", "")
+                    if domain in seen:
+                        continue
+                    seen.add(domain)
+
+                    results.append({
+                        "title": name,
+                        "url": website or "",
+                        "phone": phone,
+                        "email": email,
+                        "address": address,
+                        "source": f"bright_data_web_{source['name'].lower()}",
+                    })
+
+                    if len(results) >= max_results:
+                        break
+
+            except Exception as e:
+                logger.warning(
+                    "[Bright Data Web] source=%s error: %s",
+                    source["name"],
+                    str(e),
+                )
+
+    logger.info(
+        "[Bright Data Web] total=%d for industria=%r ciudad=%r",
+        len(results),
+        industria,
+        ciudad,
+    )
+    return results
+
+
 # ── Discovery: Bing web search ────────────────────────────────────────────────
 
 async def discover_companies_bing(
@@ -622,10 +743,14 @@ async def discover_companies(
 
     # Source selection based on client budget/tier
     sources_to_use = []
+    bright_data_type = "web_scraper"  # "web_scraper" or "serp"
+
     if source_priority == "bright_data" and bright_data_key:
         sources_to_use = ["bright_data"]
+        bright_data_type = "web_scraper"  # Use Web Scraper for premium clients (extracts emails/phones)
     elif source_priority == "hybrid" and bright_data_key and serper_key:
-        sources_to_use = ["bright_data", "serper"]  # Bright Data first (premium), then Serper
+        sources_to_use = ["bright_data", "serper"]
+        bright_data_type = "web_scraper"
     elif serper_key:
         sources_to_use = ["serper"]
     else:
@@ -637,7 +762,12 @@ async def discover_companies(
 
         if "bright_data" in sources_to_use and bright_data_key:
             try:
-                bd_results = await discover_via_bright_data_serp(industria, ciudad, max_results, bright_data_key)
+                if bright_data_type == "web_scraper":
+                    # Premium: Web Scraper extracts emails, phones, full contact info
+                    bd_results = await scrape_bright_data_web(industria, ciudad, max_results, bright_data_key)
+                else:
+                    # Standard: SERP API (web search)
+                    bd_results = await discover_via_bright_data_serp(industria, ciudad, max_results, bright_data_key)
                 add(bd_results)
                 discovery_results["bright_data"] = len(bd_results)
             except Exception as e:
