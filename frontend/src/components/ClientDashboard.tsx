@@ -455,26 +455,23 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
     },
   });
 
-  // ── Handle OAuth callback ──────────────────────────────────────────────────────
+  // ── Handle OAuth callback (SECURE) ────────────────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const oauthEmail = params.get('oauth_email');
-    const oauthTokens = params.get('oauth_tokens');
-    const oauthProvider = params.get('oauth_provider');
-    const oauthSuccess = params.get('oauth_success');
+    const sessionId = params.get('session_id');
 
-    if (oauthSuccess === 'true' && oauthEmail && oauthTokens && oauthProvider && token) {
-      apiFetch(`${API}/api/me/email-connect`, {
+    if (sessionId) {
+      // ✅ SECURE: Clear URL immediately to remove session_id
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      // ✅ SECURE: Confirm session with backend via POST (not GET)
+      apiFetch(`${API}/api/auth/oauth-confirm`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          email: oauthEmail,
-          provider: oauthProvider,
-          tokens_encrypted: oauthTokens
-        })
+        body: JSON.stringify({ session_id: sessionId })
       })
         .then(r => r.ok ? r.json() : null)
         .then(d => {
@@ -482,17 +479,16 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
             queryClient.invalidateQueries({ queryKey: ['email-status'] });
             addToast({
               id: Date.now().toString(),
-              message: `✅ ${oauthProvider.charAt(0).toUpperCase() + oauthProvider.slice(1)} conectado!\nAhora enviarás desde: ${oauthEmail}`,
+              message: `✅ ${d.provider.charAt(0).toUpperCase() + d.provider.slice(1)} conectado!\nAhora enviarás desde: ${d.email}`,
               type: 'approve'
             });
-            window.history.replaceState({}, document.title, window.location.pathname);
           }
         })
         .catch(err => {
-          console.error('[OAuth] Error saving config:', err);
+          console.error('[OAuth] Error confirming session:', err);
           addToast({
             id: Date.now().toString(),
-            message: `❌ Error guardando configuración. Intenta de nuevo.`,
+            message: `❌ Error al conectar. Intenta de nuevo.`,
             type: 'reject'
           });
         });
@@ -781,7 +777,16 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                           alert('No authentication token found. Please refresh the page.');
                           return;
                         }
-                        window.location.href = `${API}/auth/gmail/connect?token=${encodeURIComponent(token)}`;
+                        // ✅ SECURE: Get redirect URL from backend
+                        apiFetch(`${API}/api/email/connect`, {
+                          method: 'POST',
+                          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ provider: 'gmail' })
+                        })
+                          .then(r => r.ok ? r.json() : null)
+                          .then(d => {
+                            if (d?.redirect_url) window.location.href = d.redirect_url;
+                          });
                       }}>
                         📧 Gmail
                       </button>
@@ -793,7 +798,16 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                           alert('No authentication token found. Please refresh the page.');
                           return;
                         }
-                        window.location.href = `${API}/auth/outlook/connect?token=${encodeURIComponent(token)}`;
+                        // ✅ SECURE: Get redirect URL from backend
+                        apiFetch(`${API}/api/email/connect`, {
+                          method: 'POST',
+                          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ provider: 'outlook' })
+                        })
+                          .then(r => r.ok ? r.json() : null)
+                          .then(d => {
+                            if (d?.redirect_url) window.location.href = d.redirect_url;
+                          });
                       }}>
                         💼 Outlook
                       </button>
