@@ -341,6 +341,80 @@ async def enrich_via_serper_places(
         return {}
 
 
+# ── Discovery: Bright Data SERP API ──────────────────────────────────────────
+
+async def discover_via_bright_data_serp(
+    industria: str, ciudad: str, max_results: int, api_key: str
+) -> list[dict]:
+    """
+    Google Search results via Bright Data SERP API.
+    Higher quality than Serper, but more expensive (~$0.01-0.02 per search).
+    Sign up: https://brightdata.com
+    """
+    queries = [
+        f'empresas {industria} {ciudad} sitio web',
+        f'"{industria}" {ciudad} empresa contacto',
+        f'{industria} {ciudad} "quienes somos" OR "nuestros servicios"',
+    ]
+    seen: set[str] = set()
+    results: list[dict] = []
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        for query in queries:
+            if len(results) >= max_results:
+                break
+            try:
+                # Bright Data SERP API endpoint
+                resp = await client.post(
+                    "https://api.brightdata.com/serp",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={
+                        "query": query,
+                        "country": "CO",
+                        "language": "es",
+                        "num": 10,
+                    },
+                    timeout=15,
+                )
+                if resp.status_code != 200:
+                    logger.warning("[Bright Data SERP] status=%d query=%r", resp.status_code, query)
+                    continue
+
+                data = resp.json()
+                organic = data.get("results", [])
+                logger.info("[Bright Data SERP] query=%r → %d organic hits", query, len(organic))
+
+                for item in organic:
+                    url = item.get("url", "")
+                    title = item.get("title", "")
+                    if not url or not title:
+                        continue
+                    if any(b in url.lower() for b in BLOCKED_DOMAINS):
+                        continue
+
+                    from urllib.parse import urlparse
+                    domain = urlparse(url).netloc.replace("www.", "")
+                    if domain in seen:
+                        continue
+                    seen.add(domain)
+
+                    results.append({
+                        "title": title,
+                        "url": url,
+                        "phone": item.get("phone", ""),
+                        "address": item.get("address", ""),
+                        "rating": item.get("rating"),
+                        "source": "bright_data_serp",
+                    })
+                    if len(results) >= max_results:
+                        break
+            except Exception as e:
+                logger.warning("[Bright Data SERP] query=%r error: %s", query, e)
+
+    logger.info("[Bright Data SERP] total=%d for industria=%r ciudad=%r", len(results), industria, ciudad)
+    return results
+
+
 # ── Discovery: Bing web search ────────────────────────────────────────────────
 
 async def discover_companies_bing(
@@ -485,12 +559,20 @@ async def discover_companies(
     gmaps_key: str = "",
     excluded_domains: set[str] | None = None,
     use_secop: bool = False,
+    source_priority: str = "serper",  # "serper" | "bright_data" | "hybrid"
 ) -> list[dict]:
     """
-    Multi-source discovery:
+    Multi-source discovery with dynamic source selection:
+
+    source_priority options:
+    - "serper": Serper (economical, ~$1/1k searches)
+    - "bright_data": Bright Data SERP (higher quality, ~$0.01-0.02/search)
+    - "hybrid": Serper + Bright Data (best quality, combine results)
+
+    Also integrates:
     1. Google Maps (local businesses with contact info)
     2. Bing web search (companies with web presence)
-    3. SECOP II (Colombian government contractors) — optional, enabled via use_secop=True
+    3. SECOP II (Colombian government contractors) — optional
     4. DuckDuckGo (fallback)
     Deduplicates by domain and merges up to max_results.
     """
@@ -536,12 +618,40 @@ async def discover_companies(
     loop = asyncio.get_event_loop()
     per_source = max(10, max_results // 2)
     serper_key = os.getenv("SERPER_API_KEY", "")
+    bright_data_key = os.getenv("BRIGHT_DATA_API_KEY", "")
 
-    # Primary: Serper.dev (works from cloud IPs — Bing/DDG are blocked by Railway)
-    # Fallback: Bing scraper + DDG (work locally, blocked in prod)
-    if serper_key:
-        serper_results = await discover_via_serper(industria, ciudad, max_results, serper_key)
-        add(serper_results)
+    # Source selection based on client budget/tier
+    sources_to_use = []
+    if source_priority == "bright_data" and bright_data_key:
+        sources_to_use = ["bright_data"]
+    elif source_priority == "hybrid" and bright_data_key and serper_key:
+        sources_to_use = ["bright_data", "serper"]  # Bright Data first (premium), then Serper
+    elif serper_key:
+        sources_to_use = ["serper"]
+    else:
+        sources_to_use = []
+
+    # Execute discovery based on selected sources
+    if sources_to_use:
+        discovery_results = {}
+
+        if "bright_data" in sources_to_use and bright_data_key:
+            try:
+                bd_results = await discover_via_bright_data_serp(industria, ciudad, max_results, bright_data_key)
+                add(bd_results)
+                discovery_results["bright_data"] = len(bd_results)
+            except Exception as e:
+                logger.warning("[Discovery] Bright Data failed, falling back: %s", str(e))
+                discovery_results["bright_data"] = 0
+
+        if "serper" in sources_to_use and serper_key and len(merged) < max_results:
+            try:
+                serper_results = await discover_via_serper(industria, ciudad, max_results - len(merged), serper_key)
+                add(serper_results)
+                discovery_results["serper"] = len(serper_results)
+            except Exception as e:
+                logger.warning("[Discovery] Serper failed: %s", str(e))
+                discovery_results["serper"] = 0
 
         # Enrich with phone/address: try GMaps first, fallback to Serper Places
         enriched_count = 0
@@ -565,9 +675,10 @@ async def discover_companies(
                     item.update(enrichment)
                     enriched_count += 1
 
+        sources_str = "+".join(sources_to_use).upper()
         logger.info(
-            "[Discovery] Serper=%d enriched=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
-            len(serper_results), enriched_count, len(merged), skipped_history, skipped_low_quality
+            "[Discovery] Sources=%s Results=%s enriched=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
+            sources_str, discovery_results, enriched_count, len(merged), skipped_history, skipped_low_quality
         )
     else:
         # No Serper key — try Bing + DDG (may be blocked in cloud environments)
