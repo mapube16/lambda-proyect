@@ -61,7 +61,13 @@ def get_gmail_auth_url(state: str) -> str:
     if not client_id:
         raise RuntimeError("GOOGLE_CLIENT_ID not configured")
 
-    scope = "https://www.googleapis.com/auth/gmail.send"
+    scopes = [
+        "https://www.googleapis.com/auth/gmail.send",
+        "openid",
+        "email",
+        "profile"
+    ]
+    scope = " ".join(scopes)
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
