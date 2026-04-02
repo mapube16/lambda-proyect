@@ -374,6 +374,8 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   const [toasts, setToasts]    = useState<ToastItem[]>([]);
   const [query, setQuery]      = useState('');
   const [cobranzaEnabled, setCobranzaEnabled] = useState(false);
+  const [emailConnected, setEmailConnected] = useState(false);
+  const [emailAddress, setEmailAddress] = useState('');
 
   // tracks pending reject timeouts — keyed by lead id
   const pendingRejects = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -383,6 +385,22 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
     apiFetch(`${API}/api/cobranza/status`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.enabled) setCobranzaEnabled(true); })
+      .catch(() => {});
+  }, [token]);
+
+  // ── Check email status ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    apiFetch(`${API}/api/me/email-status`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.connected) {
+          setEmailConnected(true);
+          setEmailAddress(d.email || '');
+        } else {
+          setEmailConnected(false);
+          setEmailAddress('');
+        }
+      })
       .catch(() => {});
   }, [token]);
 
@@ -628,19 +646,46 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: C.SG }}>
                       📧 Email
                     </div>
-                    <div style={{ fontSize: 11, color: '#a9dc76', background: 'rgba(169,220,118,0.1)', padding: '2px 8px', borderRadius: 4 }}>
-                      Conectado
+                    <div style={{ fontSize: 11, color: emailConnected ? '#a9dc76' : '#ffd866', background: emailConnected ? 'rgba(169,220,118,0.1)' : 'rgba(255,216,102,0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                      {emailConnected ? 'Conectado' : 'No configurado'}
                     </div>
                   </div>
-                  <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 10 }}>
-                    juan@empresa.com
-                  </div>
-                  <button style={{
-                    background: 'transparent', border: '1px solid rgba(169,220,118,0.2)', color: '#a9dc76',
-                    padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
-                  }}>
-                    Desconectar
-                  </button>
+                  {emailConnected ? (
+                    <>
+                      <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 10 }}>
+                        {emailAddress}
+                      </div>
+                      <button style={{
+                        background: 'transparent', border: '1px solid rgba(169,220,118,0.2)', color: '#a9dc76',
+                        padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                      }} onClick={() => {
+                        apiFetch(`${API}/api/me/email-disconnect`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+                          .then(() => { setEmailConnected(false); setEmailAddress(''); })
+                          .catch();
+                      }}>
+                        Desconectar
+                      </button>
+                    </>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button style={{
+                        background: 'rgba(120,220,232,0.08)', border: '1px solid rgba(120,220,232,0.3)', color: C.cyan,
+                        padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                      }} onClick={() => {
+                        window.location.href = `${API}/auth/gmail/connect`;
+                      }}>
+                        📧 Gmail
+                      </button>
+                      <button style={{
+                        background: 'rgba(169,220,118,0.08)', border: '1px solid rgba(169,220,118,0.3)', color: '#a9dc76',
+                        padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                      }} onClick={() => {
+                        window.location.href = `${API}/auth/outlook/connect`;
+                      }}>
+                        💼 Outlook
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* WhatsApp channel */}
