@@ -749,6 +749,7 @@ from pydantic import BaseModel as _BaseModel, Field as _Field
 class ProspectRequest(_BaseModel):
     campaign: dict = {}
     max_results: int = 20
+    source_priority: str = "serper"  # "serper" | "bright_data" | "hybrid"
 
 
 @app.post("/api/prospect")
@@ -821,6 +822,7 @@ async def prospect(
             "personality_prompt": personality_prompt,
             "runtime_agents": runtime_agents,
             "excluded_domains": exclusions.get("excluded_domains", []),
+            "source_priority": request.source_priority,
         },
         run_id=run_id,
         save_lead=save_lead,
