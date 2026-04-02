@@ -463,11 +463,14 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         boxShadow: '6px 0 24px rgba(0,0,0,0.3)',
       }}>
         {/* Logo */}
-        <div style={{ padding: '26px 20px 18px' }}>
-          <div style={{ fontFamily: C.SG, fontWeight: 900, fontSize: 21, color: C.purple, fontStyle: 'italic', letterSpacing: '-0.03em' }}>
-            LANDA
+        <div style={{ padding: '16px 20px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <img src="/assets/logo.svg" alt="Landa AI" style={{ width: 40, height: 40 }} />
+          <div>
+            <div style={{ fontFamily: C.SG, fontWeight: 900, fontSize: 21, color: C.purple, fontStyle: 'italic', letterSpacing: '-0.03em' }}>
+              LANDA
+            </div>
+            <div style={lbl(C.cyan, 9)}>SYSTEM_READY</div>
           </div>
-          <div style={lbl(C.cyan, 9)}>SYSTEM_READY</div>
         </div>
 
         {/* Navigation — single source of truth for tab */}

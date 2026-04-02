@@ -69,16 +69,18 @@ export function StaffDashboard() {
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: bg, color: text, fontFamily: IN, overflow: 'hidden' }}>
       <nav style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '16px 32px', background: s0, flexShrink: 0 }}>
-        <span
-          style={{
-            fontWeight: 700,
-            fontSize: 18,
-            color: cyan,
-            letterSpacing: '-0.03em',
-            fontFamily: SG,
-            marginRight: 32,
-          }}
-        >LANDA STAFF</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginRight: 32 }}>
+          <img src="/assets/logo.svg" alt="Landa AI" style={{ width: 32, height: 32 }} />
+          <span
+            style={{
+              fontWeight: 700,
+              fontSize: 18,
+              color: cyan,
+              letterSpacing: '-0.03em',
+              fontFamily: SG,
+            }}
+          >LANDA STAFF</span>
+        </div>
         <button
           onClick={() => setTab('roadmap')}
           style={{

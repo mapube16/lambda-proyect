@@ -202,7 +202,7 @@ export function LoginView() {
           <div style={s.logoContainer}>
             <div style={s.logoPulse} />
             <div style={s.logoInner}>
-              <span style={s.logoIcon}>⚙️</span>
+              <img src="/assets/logo.svg" alt="Landa AI" style={s.logoImg} />
               <div style={s.logoCorner} />
             </div>
           </div>
@@ -570,9 +570,10 @@ const s: Record<string, React.CSSProperties> = {
     border: '1px solid rgba(120, 220, 232, 0.2)',
     backdropFilter: 'blur(8px)',
   },
-  logoIcon: {
-    fontSize: 36,
-    display: 'flex',
+  logoImg: {
+    width: 54,
+    height: 54,
+    display: 'block',
   },
   logoCorner: {
     position: 'absolute',
