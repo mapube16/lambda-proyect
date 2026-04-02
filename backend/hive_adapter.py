@@ -85,11 +85,11 @@ class HiveAdapter:
 
         self._runtime_agents[user_id] = runtime_agents
 
-        # LLM provider — OpenAI directly (gpt-5.4-2026-03-05)
-        llm = OpenRouterProvider(
+        # LLM provider — OpenAI directly (use OpenAI SDK, not OpenRouter)
+        from hive_llm import OpenAIProvider
+        llm = OpenAIProvider(
             api_key=openai_key,
-            model="gpt-5.4-2026-03-05",
-            base_url="https://api.openai.com/v1",
+            model="gpt-4o-mini",
             max_output_tokens=2000,
         )
 
