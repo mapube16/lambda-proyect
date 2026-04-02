@@ -744,7 +744,11 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                         background: 'rgba(120,220,232,0.08)', border: '1px solid rgba(120,220,232,0.3)', color: C.cyan,
                         padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
                       }} onClick={() => {
-                        window.location.href = `${API}/auth/gmail/connect`;
+                        if (!token) {
+                          alert('No authentication token found. Please refresh the page.');
+                          return;
+                        }
+                        window.location.href = `${API}/auth/gmail/connect?token=${encodeURIComponent(token)}`;
                       }}>
                         📧 Gmail
                       </button>
@@ -752,7 +756,11 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                         background: 'rgba(169,220,118,0.08)', border: '1px solid rgba(169,220,118,0.3)', color: '#a9dc76',
                         padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
                       }} onClick={() => {
-                        window.location.href = `${API}/auth/outlook/connect`;
+                        if (!token) {
+                          alert('No authentication token found. Please refresh the page.');
+                          return;
+                        }
+                        window.location.href = `${API}/auth/outlook/connect?token=${encodeURIComponent(token)}`;
                       }}>
                         💼 Outlook
                       </button>

@@ -166,7 +166,23 @@
       "Bash(where ngrok:*)",
       "Bash(curl -s http://localhost:8001/api/leads)",
       "Bash(head -5 grep -n \"Lambda Staff\\\\|logoText\\\\|#1a1a2e\\\\|#2a2a4a\\\\|#131326\" \"C:/Users/maxim/Desktop/hive-pixel-office/frontend/src/components/StaffDashboard.tsx\")",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "WebFetch(domain:docs.vapi.ai)",
+      "WebFetch(domain:www.sic.gov.co)",
+      "WebFetch(domain:mahimairaja.medium.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(node:*)",
+      "Bash(cat:*)",
+      "Bash(cp \"C:/Users/maxim/Downloads/stitch_login_registro \\(5\\)/stitch_login_registro/dashboard_de_cobranza_ai/code.html\" \"/c/Users/maxim/Desktop/hive-pixel-office/.planning/phases/17-voice-cobranza-agent/design-dashboard.html\")",
+      "Bash(cp \"C:/Users/maxim/Downloads/stitch_login_registro \\(5\\)/stitch_login_registro/expediente_de_deudor/code.html\" \"/c/Users/maxim/Desktop/hive-pixel-office/.planning/phases/17-voice-cobranza-agent/design-expediente.html\")",
+      "Bash(cp \"C:/Users/maxim/Downloads/stitch_login_registro \\(5\\)/stitch_login_registro/onboarding_con_la_reina_drone/code.html\" \"/c/Users/maxim/Desktop/hive-pixel-office/.planning/phases/17-voice-cobranza-agent/design-onboarding.html\")",
+      "Bash(cp \"C:/Users/maxim/Downloads/stitch_login_registro \\(5\\)/stitch_login_registro/configuraci_n_de_estrategia_ai/code.html\" \"/c/Users/maxim/Desktop/hive-pixel-office/.planning/phases/17-voice-cobranza-agent/design-configuracion.html\")",
+      "Bash(git -C /c/Users/maxim/Desktop/hive-pixel-office add .planning/phases/17-voice-cobranza-agent/design-*.html)",
+      "Bash(git -C /c/Users/maxim/Desktop/hive-pixel-office commit -m \"docs\\(17\\): add designer HTML references for CobranzaTab\")",
+      "Bash(git -C /c/Users/maxim/Desktop/hive-pixel-office add .planning/phases/17-voice-cobranza-agent/17-VERIFICATION.md)",
+      "Bash(git -C /c/Users/maxim/Desktop/hive-pixel-office commit -m \"docs\\(17\\): add VERIFICATION.md — 4/4 automated checks passed, 5 human items\")",
+      "Bash(/c/Users/maxim/Desktop/hive-pixel-office/backend/venv/Scripts/pip install:*)",
+      "Bash(python3 -c \"import sys,json; routes=[r[''''summary''''] if ''''summary'''' in r else p for p,m in json.load\\(sys.stdin\\)[''''paths''''].items\\(\\) for r in m.values\\(\\)]; [print\\(r\\) for r in routes if ''''cobr'''' in r.lower\\(\\) or ''''vapi'''' in r.lower\\(\\) or ''''cobranza'''' in r.lower\\(\\)]\")"
     ]
   }
 }

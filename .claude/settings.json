@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd.exe /c \"netstat -ano | findstr :8000 | findstr LISTENING\")",
+      "Bash(cmd.exe /c \"netstat -ano | findstr :5173 | findstr LISTENING\")",
+      "Bash(venv/Scripts/python.exe -c \":*)",
+      "Bash(/c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -c \":*)",
+      "Bash(taskkill //F //IM uvicorn.exe)",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(/c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/pip.exe install:*)",
+      "Bash(/c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/pip.exe list:*)",
+      "Bash(/c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -c \"import vapi_python; print\\(dir\\(vapi_python\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d[''''tunnels''''][0][''''public_url'''']\\)\")",
+      "Bash(tasklist //FI \"PID eq 12004\")",
+      "Bash(tasklist //FI \"PID eq 27744\")",
+      "Bash(taskkill //F //PID 12004 //PID 27744 //PID 30192)",
+      "Bash(taskkill //F //IM python3.11.exe)",
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office -name .env* -type f)",
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office -type f \\\\\\(-name *.py -o -name *.ts -o -name *.tsx -o -name *.js -o -name .env* -o -name *.json -o -name *.txt \\\\\\))",
+      "Bash(grep -r \"send_lead_outreach\\\\|send_welcome_email\\\\|send_staff_summary\\\\|mailersend\\\\|MAILERSEND\" /c/Users/maxim/Desktop/hive-pixel-office/backend --include=*.py)",
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office -name *landa* -type f)",
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office/frontend -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js \\\\\\))"
+    ]
+  }
+}
