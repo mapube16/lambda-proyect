@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useDebounce } from 'use-debounce';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOfficeStore } from '../store/officeStore';
-import { LeadDossierModal } from './LeadDossierModal';
-import { CobranzaTab } from './CobranzaTab';
 import { apiFetch } from '../lib/apiFetch';
+
+const LeadDossierModal = lazy(() => import('./LeadDossierModal').then(m => ({ default: m.LeadDossierModal })));
+const CobranzaTab = lazy(() => import('./CobranzaTab').then(m => ({ default: m.CobranzaTab })));
 
 const API = '';
 
@@ -82,22 +85,24 @@ function relativeDate(iso: string | null): string {
 }
 
 // ─── Badge ─────────────────────────────────────────────────────────────────────
-function Badge({ score, status }: { score: number | null; status: HitlStatus }) {
-  const cfg =
+const Badge = React.memo(function Badge({ score, status }: { score: number | null; status: HitlStatus }) {
+  const cfg = useMemo(() => 
     status === 'approved'  ? { text: 'Aprobado',         bg: C.greenBg,  color: C.green  } :
     status === 'rejected'  ? { text: 'Descartado',        bg: C.pinkBg,   color: C.pink   } :
     (score ?? 0) >= 85     ? { text: 'Alta intención',    bg: C.greenBg,  color: C.green  } :
     (score ?? 0) >= 70     ? { text: 'Interés creciente', bg: C.purpleBg, color: C.purple } :
-                             { text: 'En revisión',       bg: C.cyanBg,   color: C.cyan   };
+                             { text: 'En revisión',       bg: C.cyanBg,   color: C.cyan   },
+    [score, status]
+  );
   return (
     <span style={{ ...lbl(cfg.color, 9), background: cfg.bg, padding: '3px 9px', borderRadius: 4 }}>
       {cfg.text}
     </span>
   );
-}
+});
 
 // ─── Toast ─────────────────────────────────────────────────────────────────────
-function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: string) => void }) {
+const ToastCard = React.memo(function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: string) => void }) {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
     const id = requestAnimationFrame(() => setVisible(true));
@@ -147,9 +152,9 @@ function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: str
       >✕</button>
     </div>
   );
-}
+});
 
-function ToastStack({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: string) => void }) {
+const ToastStack = React.memo(function ToastStack({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: string) => void }) {
   if (toasts.length === 0) return null;
   return (
     <div style={{
@@ -159,10 +164,10 @@ function ToastStack({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id
       {toasts.map(t => <ToastCard key={t.id} toast={t} onDismiss={onDismiss} />)}
     </div>
   );
-}
+});
 
 // ─── Lead card ─────────────────────────────────────────────────────────────────
-function LeadCard({ lead, onApplyStatus, onOpenDossier }: {
+const LeadCard = React.memo(function LeadCard({ lead, onApplyStatus, onOpenDossier }: {
   lead: ApiLead;
   onApplyStatus: (id: string, status: HitlStatus) => void;
   onOpenDossier: () => void;
@@ -293,10 +298,15 @@ function LeadCard({ lead, onApplyStatus, onOpenDossier }: {
       </div>
     </div>
   );
-}
+}, (prev, next) => {
+  // Custom comparison - solo re-render si lead._id o hitl_status cambian
+  return prev.lead._id === next.lead._id && 
+         prev.lead.hitl_status === next.lead.hitl_status &&
+         prev.lead.score === next.lead.score;
+});
 
 // ─── Nav item ──────────────────────────────────────────────────────────────────
-function NavItem({ emoji, text, active, count, onClick }: {
+const NavItem = React.memo(function NavItem({ emoji, text, active, count, onClick }: {
   emoji: string; text: string; active: boolean; count?: number; onClick: () => void;
 }) {
   const [hov, setHov] = useState(false);
@@ -327,7 +337,7 @@ function NavItem({ emoji, text, active, count, onClick }: {
       )}
     </button>
   );
-}
+});
 
 function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
   return (
@@ -351,6 +361,7 @@ function StatCard({ label, value, color }: { label: string; value: string; color
   );
 }
 
+const MemoStatCard = React.memo(StatCard);
 
 // ─── Main ──────────────────────────────────────────────────────────────────────
 type Tab = 'pending' | 'approved' | 'rejected';
@@ -364,33 +375,87 @@ const TAB_META: Record<Tab, { title: string; sub: string; emoji: string }> = {
 export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   const { authToken, userEmail, clearAuth } = useOfficeStore();
   const token = authToken || sessionStorage.getItem('hive_token') || '';
+  const queryClient = useQueryClient();
 
+  // ── State ──────────────────────────────────────────────────────────────────────
   const [section, setSection]  = useState<'leads' | 'cobranza' | 'email' | 'canales'>('leads');
-  const [leads, setLeads]      = useState<ApiLead[]>([]);
-  const [loading, setLoading]  = useState(true);
   const [tab, setTab]          = useState<Tab>('pending');
-  const [tick, setTick]        = useState(0);
   const [selectedLead, setSelectedLead] = useState<ApiLead | null>(null);
   const [toasts, setToasts]    = useState<ToastItem[]>([]);
   const [query, setQuery]      = useState('');
-  const [cobranzaEnabled, setCobranzaEnabled] = useState(false);
-  const [emailConnected, setEmailConnected] = useState(false);
-  const [emailAddress, setEmailAddress] = useState('');
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [testEmailLoading, setTestEmailLoading] = useState(false);
-
-  // tracks pending reject timeouts — keyed by lead id
+  const [debouncedQuery] = useDebounce(query, 300);
   const pendingRejects = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  // ── Check cobranza access ────────────────────────────────────────────────────
-  useEffect(() => {
-    apiFetch(`${API}/api/cobranza/status`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.enabled) setCobranzaEnabled(true); })
-      .catch(() => {});
-  }, [token]);
+  // ── React Query: Fetch leads with caching ──────────────────────────────────────
+  const { data: leads = [], isLoading, refetch: refetchLeads } = useQuery({
+    queryKey: ['leads', token],
+    queryFn: async () => {
+      const r = await apiFetch(`${API}/api/leads`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? await r.json() : [];
+    },
+    staleTime: 30000, // cachear por 30 segundos
+    enabled: !!token,
+  });
 
-  // ── Handle OAuth callback and save email config ──────────────────────────────
+  // ── React Query: Cobranza status ───────────────────────────────────────────────
+  const { data: cobranzaData } = useQuery({
+    queryKey: ['cobranza-status', token],
+    queryFn: async () => {
+      const r = await apiFetch(`${API}/api/cobranza/status`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? await r.json() : null;
+    },
+    enabled: !!token,
+  });
+
+  const cobranzaEnabled = cobranzaData?.enabled ?? false;
+
+  // ── React Query: Email status ──────────────────────────────────────────────────
+  const { data: emailData } = useQuery({
+    queryKey: ['email-status', token],
+    queryFn: async () => {
+      const r = await apiFetch(`${API}/api/me/email-status`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? await r.json() : null;
+    },
+    enabled: !!token,
+  });
+
+  const emailConnected = emailData?.connected ?? false;
+  const emailAddress = emailData?.email ?? '';
+
+  // ── Mutation: Approve lead ─────────────────────────────────────────────────────
+  const approveMutation = useMutation({
+    mutationFn: (id: string) => 
+      apiFetch(`${API}/api/leads/${id}/approve`, { 
+        method: 'PATCH', 
+        headers: { Authorization: `Bearer ${token}` }
+      }),
+    onSuccess: (_, id) => {
+      // Soft update de cache
+      queryClient.setQueryData(['leads', token], (prev: ApiLead[]) =>
+        (prev || []).map(l => l._id === id ? { ...l, hitl_status: 'approved' as HitlStatus } : l)
+      );
+    },
+  });
+
+  // ── Mutation: Reject lead ──────────────────────────────────────────────────────
+  const rejectMutation = useMutation({
+    mutationFn: (id: string) =>
+      apiFetch(`${API}/api/leads/${id}/reject`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ motivo: 'manual_reject' }),
+      }),
+    onSuccess: (_, id) => {
+      // Soft update de cache
+      queryClient.setQueryData(['leads', token], (prev: ApiLead[]) =>
+        (prev || []).map(l => l._id === id ? { ...l, hitl_status: 'rejected' as HitlStatus } : l)
+      );
+    },
+  });
+
+  // ── Handle OAuth callback ──────────────────────────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauthEmail = params.get('oauth_email');
@@ -398,7 +463,6 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
     const oauthProvider = params.get('oauth_provider');
     const oauthSuccess = params.get('oauth_success');
 
-    // Si viene del callback OAuth, guardar los datos en la BD
     if (oauthSuccess === 'true' && oauthEmail && oauthTokens && oauthProvider && token) {
       apiFetch(`${API}/api/me/email-connect`, {
         method: 'POST',
@@ -415,60 +479,27 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         .then(r => r.ok ? r.json() : null)
         .then(d => {
           if (d) {
-            setEmailConnected(true);
-            setEmailAddress(oauthEmail);
-            setToasts([...toasts, {
+            queryClient.invalidateQueries({ queryKey: ['email-status'] });
+            addToast({
               id: Date.now().toString(),
               message: `✅ ${oauthProvider.charAt(0).toUpperCase() + oauthProvider.slice(1)} conectado!\nAhora enviarás desde: ${oauthEmail}`,
               type: 'approve'
-            }]);
-            // Limpiar URL
+            });
             window.history.replaceState({}, document.title, window.location.pathname);
           }
         })
         .catch(err => {
           console.error('[OAuth] Error saving config:', err);
-          setToasts([...toasts, {
+          addToast({
             id: Date.now().toString(),
             message: `❌ Error guardando configuración. Intenta de nuevo.`,
             type: 'reject'
-          }]);
+          });
         });
     }
-  }, [token, toasts]);
-
-  // ── Check email status ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    apiFetch(`${API}/api/me/email-status`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (d?.connected) {
-          setEmailConnected(true);
-          setEmailAddress(d.email || '');
-        } else {
-          setEmailConnected(false);
-          setEmailAddress('');
-        }
-      })
-      .catch(() => {});
   }, [token]);
 
-  // ── Data fetching ────────────────────────────────────────────────────────────
-  const fetchLeads = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      const r = await apiFetch(`${API}/api/leads`, { headers: { Authorization: `Bearer ${token}` } });
-      const d = await r.json();
-      setLeads(Array.isArray(d) ? d : []);
-    } catch { if (!silent) setLeads([]); }
-    finally   { if (!silent) setLoading(false); }
-  }, [token]);
-
-  useEffect(() => { fetchLeads(tick > 0); }, [fetchLeads, tick]);
-
-  const refresh = () => setTick(t => t + 1);
-
-  // ── Toast helpers ────────────────────────────────────────────────────────────
+  // ── Toast helpers ──────────────────────────────────────────────────────────────
   const dismissToast = (id: string) =>
     setToasts(prev => prev.filter(t => t.id !== id));
 
@@ -477,67 +508,65 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
     setTimeout(() => dismissToast(toast.id), duration);
   };
 
-  // ── Undo reject ─────────────────────────────────────────────────────────────
+  // ── Undo reject ───────────────────────────────────────────────────────────────
   const undoReject = (id: string) => {
     const tid = pendingRejects.current.get(id);
     if (tid !== undefined) { clearTimeout(tid); pendingRejects.current.delete(id); }
-    setLeads(prev => prev.map(l => l._id === id ? { ...l, hitl_status: 'pending' } : l));
+    queryClient.setQueryData(['leads', token], (prev: ApiLead[]) =>
+      (prev || []).map(l => l._id === id ? { ...l, hitl_status: 'pending' as HitlStatus } : l)
+    );
     setSelectedLead(prev => prev?._id === id ? { ...prev, hitl_status: 'pending' } : prev);
   };
 
-  // ── Central action handler (owns all PATCHes) ────────────────────────────────
+  // ── Central action handler (uses React Query mutations) ──────────────────────
   const applyStatus = (id: string, status: HitlStatus) => {
     // 1. Optimistic local update
-    setLeads(prev => prev.map(l => l._id === id ? { ...l, hitl_status: status } : l));
+    queryClient.setQueryData(['leads', token], (prev: ApiLead[]) =>
+      (prev || []).map(l => l._id === id ? { ...l, hitl_status: status } : l)
+    );
     setSelectedLead(prev => prev?._id === id ? { ...prev, hitl_status: status } : prev);
 
     if (status === 'approved') {
-      // Fire immediately
-      apiFetch(`${API}/api/leads/${id}/approve`, {
-        method: 'PATCH', headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => {});
-      setTick(t => t + 1);
+      approveMutation.mutate(id);
       addToast({ id: `ok-${id}`, message: '✓ Lead aprobado', type: 'approve' });
-
     } else if (status === 'rejected') {
-      // Delay 5s so user can undo
       const tid = setTimeout(() => {
         pendingRejects.current.delete(id);
-        apiFetch(`${API}/api/leads/${id}/reject`, {
-          method: 'PATCH',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ motivo: 'manual_reject' }),
-        }).catch(() => {});
-        setTick(t => t + 1);
+        rejectMutation.mutate(id);
       }, 5000);
       pendingRejects.current.set(id, tid);
       addToast(
         { id: `rej-${id}`, message: 'Lead descartado', type: 'reject', undoFn: () => undoReject(id) },
-        5500, // auto-dismiss slightly after PATCH fires
+        5500,
       );
     }
   };
 
-  // ── Derived state ────────────────────────────────────────────────────────────
-  const pending  = leads.filter(l => l.hitl_status === 'pending');
-  const approved = leads.filter(l => l.hitl_status === 'approved');
-  const rejected = leads.filter(l => l.hitl_status === 'rejected');
+  // ── Derived state (memoized to avoid re-calculations) ────────────────────────
+  const { pending, approved, rejected, tabLeads, visible, convRate, avgScore } = useMemo(() => {
+    const pending  = leads.filter((l: ApiLead) => l.hitl_status === 'pending');
+    const approved = leads.filter((l: ApiLead) => l.hitl_status === 'approved');
+    const rejected = leads.filter((l: ApiLead) => l.hitl_status === 'rejected');
 
-  const tabLeads = tab === 'pending' ? pending : tab === 'approved' ? approved : rejected;
-  const visible  = query
-    ? tabLeads.filter(l => {
-        const q = query.toLowerCase();
-        return (l.company_name || '').toLowerCase().includes(q)
-            || l.url.toLowerCase().includes(q)
-            || (l.city || '').toLowerCase().includes(q);
-      })
-    : tabLeads;
+    const tabLeads = tab === 'pending' ? pending : tab === 'approved' ? approved : rejected;
+    
+    const visible = debouncedQuery
+      ? tabLeads.filter((l: ApiLead) => {
+          const q = debouncedQuery.toLowerCase();
+          return (l.company_name || '').toLowerCase().includes(q)
+              || l.url.toLowerCase().includes(q)
+              || (l.city || '').toLowerCase().includes(q);
+        })
+      : tabLeads;
 
-  const convRate = leads.length > 0 ? Math.round((approved.length / leads.length) * 100) : 0;
-  const avgScore = (() => {
-    const sc = leads.filter(l => l.score !== null);
-    return sc.length > 0 ? Math.round(sc.reduce((s, l) => s + (l.score ?? 0), 0) / sc.length) : null;
-  })();
+    const convRate = leads.length > 0 ? Math.round((approved.length / leads.length) * 100) : 0;
+    const avgScore = (() => {
+      const sc = leads.filter((l: ApiLead) => l.score !== null);
+      return sc.length > 0 ? Math.round(sc.reduce((s: number, l: ApiLead) => s + (l.score ?? 0), 0) / sc.length) : null;
+    })();
+
+    return { pending, approved, rejected, tabLeads, visible, convRate, avgScore };
+  }, [leads, tab, debouncedQuery]); // IMPORTANTE: usa debouncedQuery, no query
 
   const meta = TAB_META[tab];
 
@@ -654,7 +683,11 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         </header>
 
         {/* Cobranza section */}
-        {section === 'cobranza' && <CobranzaTab />}
+        {section === 'cobranza' && (
+          <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center', color: C.muted }}>Cargando cobranza...</div>}>
+            <CobranzaTab />
+          </Suspense>
+        )}
 
         {/* Email metrics section */}
         {section === 'email' && (
@@ -665,10 +698,10 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 16 }}>
-                <StatCard label="Enviados" value="87" color={C.cyan} />
-                <StatCard label="Abiertos" value="42" color="#a9dc76" />
-                <StatCard label="% Apertura" value="48%" color="#ffd866" />
-                <StatCard label="Clicks" value="23" color="#ff6188" />
+                <MemoStatCard label="Enviados" value="87" color={C.cyan} />
+                <MemoStatCard label="Abiertos" value="42" color="#a9dc76" />
+                <MemoStatCard label="% Apertura" value="48%" color="#ffd866" />
+                <MemoStatCard label="Clicks" value="23" color="#ff6188" />
               </div>
             </div>
 
@@ -714,7 +747,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                             .then(r => r.ok ? r.json() : null)
                             .then(d => {
                               setTestEmailLoading(false);
-                              if (d) setToasts([...toasts, { id: Date.now().toString(), message: `📧 Correo de prueba enviado a ${d.sent_to}`, type: 'approve' }]);
+                              if (d) addToast({ id: Date.now().toString(), message: `📧 Correo de prueba enviado a ${d.sent_to}`, type: 'approve' });
                             })
                             .catch(() => setTestEmailLoading(false));
                         }} disabled={testEmailLoading}>
@@ -731,7 +764,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                           padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
                         }} onClick={() => {
                           apiFetch(`${API}/api/me/email-disconnect`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
-                            .then(() => { setEmailConnected(false); setEmailAddress(''); })
+                            .then(() => { queryClient.invalidateQueries({ queryKey: ['email-status'] }); })
                             .catch();
                         }}>
                           ✕ Desconectar
@@ -871,7 +904,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                 { label: 'Pendientes', value: pending.length, color: C.purple, active: tab === 'pending' },
                 { label: 'Aprobados', value: approved.length, color: C.green, active: tab === 'approved' },
                 { label: 'Descartados', value: rejected.length, color: C.pink, active: tab === 'rejected' },
-              ].map((stage, i) => (
+              ].map((stage: any, i: number) => (
                 <div key={stage.label} style={{ display: 'flex', alignItems: 'center', flex: i === 0 ? '1.4' : '1' }}>
                   <div
                     onClick={i === 1 ? () => setTab('pending') : i === 2 ? () => setTab('approved') : i === 3 ? () => setTab('rejected') : undefined}
@@ -919,7 +952,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                     </span>
                   )}
                 </h2>
-                <button onClick={refresh} title="Actualizar" aria-label="Actualizar lista" style={{
+                <button onClick={() => refetchLeads()} title="Actualizar" aria-label="Actualizar lista" style={{
                   width: 30, height: 30, border: 'none', borderRadius: 5,
                   background: C.s1, color: C.muted, cursor: 'pointer', fontSize: 14,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -930,7 +963,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                 >↺</button>
               </div>
 
-              {loading ? (
+              {isLoading ? (
                 /* Skeleton loaders */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {[1,2,3].map(i => (
@@ -982,7 +1015,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {visible.map(l => (
+                  {visible.map((l: ApiLead) => (
                     <LeadCard key={l._id} lead={l} onApplyStatus={applyStatus} onOpenDossier={() => setSelectedLead(l)} />
                   ))}
                 </div>
@@ -1017,10 +1050,10 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                 <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 0 }}>
                   {[
                     { k: 'Score promedio', v: avgScore ?? '—' },
-                    { k: 'Alta intención',  v: leads.filter(l => (l.score ?? 0) >= 85).length },
-                    { k: 'Con contacto',    v: leads.filter(l => !!l.email || !!(l.expediente_json as Record<string,unknown>|null)?.decisor).length },
+                    { k: 'Alta intención',  v: leads.filter((l: ApiLead) => (l.score ?? 0) >= 85).length },
+                    { k: 'Con contacto',    v: leads.filter((l: ApiLead) => !!l.email || !!(l.expediente_json as Record<string,unknown>|null)?.decisor).length },
                     { k: 'Tasa aprobación', v: leads.length > 0 ? `${convRate}%` : '—' },
-                  ].map((row, i) => (
+                  ].map((row: any, i: number) => (
                     <div key={row.k} style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       padding: '9px 0',
@@ -1050,13 +1083,15 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
       {/* ── Dossier modal ───────────────────────────────────────────────────── */}
       {selectedLead && (
-        <LeadDossierModal
-          lead={selectedLead}
-          token={token}
-          onClose={() => setSelectedLead(null)}
-          onAction={refresh}
-          onApplyStatus={applyStatus}
-        />
+        <Suspense fallback={null}>
+          <LeadDossierModal
+            lead={selectedLead}
+            token={token}
+            onClose={() => setSelectedLead(null)}
+            onAction={() => refetchLeads()}
+            onApplyStatus={applyStatus}
+          />
+        </Suspense>
       )}
 
       {/* ── Toast stack ─────────────────────────────────────────────────────── */}
