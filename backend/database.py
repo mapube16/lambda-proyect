@@ -1302,6 +1302,49 @@ async def delete_smtp_config(user_id: str) -> bool:
         return False
 
 
+async def save_email_template(user_id: str, template: dict) -> bool:
+    """Guarda el template personalizado del correo del usuario."""
+    db = get_db()
+    try:
+        result = await db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set": {
+                    "email_template": template,
+                    "email_template_updated_at": datetime.now(timezone.utc),
+                }
+            }
+        )
+        return result.matched_count > 0
+    except Exception as e:
+        logging.error(f"[database] save_email_template failed: {e}")
+        return False
+
+
+async def get_email_template(user_id: str) -> Optional[dict]:
+    """Obtiene el template personalizado del correo del usuario."""
+    db = get_db()
+    try:
+        doc = await db.users.find_one({"_id": ObjectId(user_id)})
+        if not doc:
+            return None
+        return doc.get("email_template") or _get_default_template()
+    except Exception as e:
+        logging.error(f"[database] get_email_template failed: {e}")
+        return None
+
+
+def _get_default_template() -> dict:
+    """Template por defecto para nuevos usuarios."""
+    return {
+        "subject_prefix": "",
+        "body_template": "Hola {nombre},\n\n{mensaje}\n\nSaludos,\n{firma}",
+        "footer": "Esta es una comunicación automática de Landa.",
+        "brand_color": "#78dce8",
+        "logo_url": "",
+    }
+
+
 async def get_smtp_status(user_id: str) -> dict:
     """
     Obtiene el estado de configuración SMTP del usuario.

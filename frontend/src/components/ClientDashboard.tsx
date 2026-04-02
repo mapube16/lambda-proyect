@@ -376,6 +376,8 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   const [cobranzaEnabled, setCobranzaEnabled] = useState(false);
   const [emailConnected, setEmailConnected] = useState(false);
   const [emailAddress, setEmailAddress] = useState('');
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+  const [testEmailLoading, setTestEmailLoading] = useState(false);
 
   // tracks pending reject timeouts — keyed by lead id
   const pendingRejects = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -663,19 +665,42 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                   </div>
                   {emailConnected ? (
                     <>
-                      <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 10 }}>
+                      <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 12 }}>
                         {emailAddress}
                       </div>
-                      <button style={{
-                        background: 'transparent', border: '1px solid rgba(169,220,118,0.2)', color: '#a9dc76',
-                        padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
-                      }} onClick={() => {
-                        apiFetch(`${API}/api/me/email-disconnect`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
-                          .then(() => { setEmailConnected(false); setEmailAddress(''); })
-                          .catch();
-                      }}>
-                        Desconectar
-                      </button>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button style={{
+                          background: 'rgba(120,220,232,0.08)', border: '1px solid rgba(120,220,232,0.3)', color: C.cyan,
+                          padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                        }} onClick={() => {
+                          setTestEmailLoading(true);
+                          apiFetch(`${API}/api/me/email-test`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+                            .then(r => r.ok ? r.json() : null)
+                            .then(d => {
+                              setTestEmailLoading(false);
+                              if (d) setToasts([...toasts, { id: Date.now().toString(), message: `📧 Correo de prueba enviado a ${d.sent_to}`, type: 'approve' }]);
+                            })
+                            .catch(() => setTestEmailLoading(false));
+                        }} disabled={testEmailLoading}>
+                          {testEmailLoading ? '⏳ Enviando...' : '🧪 Prueba'}
+                        </button>
+                        <button style={{
+                          background: 'rgba(255,216,102,0.08)', border: '1px solid rgba(255,216,102,0.3)', color: '#ffd866',
+                          padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                        }} onClick={() => setShowTemplateEditor(!showTemplateEditor)}>
+                          ✏️ Template
+                        </button>
+                        <button style={{
+                          background: 'transparent', border: '1px solid rgba(169,220,118,0.2)', color: '#a9dc76',
+                          padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                        }} onClick={() => {
+                          apiFetch(`${API}/api/me/email-disconnect`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+                            .then(() => { setEmailConnected(false); setEmailAddress(''); })
+                            .catch();
+                        }}>
+                          ✕ Desconectar
+                        </button>
+                      </div>
                     </>
                   ) : (
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -724,9 +749,49 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
               </div>
             </div>
 
-            <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN }}>
+            <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 24 }}>
               Cada canal te permite contactar a tus leads desde tu propia cuenta. El proceso de aprobación de WhatsApp puede tomar 2-5 días.
             </div>
+
+            {/* Template Editor */}
+            {showTemplateEditor && emailConnected && (
+              <div style={{
+                background: C.s1, border: `1px solid ${C.s3}`, borderRadius: 10, padding: 16, marginTop: 16
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: C.SG, marginBottom: 16 }}>
+                  ✏️ Personalizar Template
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: C.muted, fontFamily: C.SG, textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                      Pie de página
+                    </label>
+                    <textarea style={{
+                      width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${C.s3}`, background: C.s0,
+                      color: C.text, fontFamily: C.IN, fontSize: 12, minHeight: 60
+                    }} placeholder="Este es un mensaje automático..." />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 11, color: C.muted, fontFamily: C.SG, textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                      Color de marca (hex)
+                    </label>
+                    <input type="text" placeholder="#78dce8" style={{
+                      width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${C.s3}`, background: C.s0,
+                      color: C.text, fontFamily: C.IN, fontSize: 12
+                    }} />
+                  </div>
+
+                  <button style={{
+                    background: 'rgba(120,220,232,0.12)', border: '1px solid rgba(120,220,232,0.3)', color: C.cyan,
+                    padding: '8px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG, fontWeight: 600
+                  }}>
+                    💾 Guardar Template
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
