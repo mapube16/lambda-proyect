@@ -87,6 +87,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logging.getLogger().setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- Modelo para request de agregar teléfono ---
 class AddPhoneRequest(BaseModel):
@@ -534,24 +535,44 @@ async def register_request(req: RegistrationRequest):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/auth/gmail/connect")
-async def gmail_connect_start(state: str = Query(None)):
+async def gmail_connect_start(token: str = Query(...)):
     """Inicia el flujo de autorización de Google. Redirige a Google OAuth."""
     from email_oauth import get_gmail_auth_url, generate_oauth_state
+    import base64
+    import json
 
-    state = state or generate_oauth_state()
-    auth_url = get_gmail_auth_url(state)
+    # El JWT debe venir del cliente (desde el header Authorization)
+    # Si no hay token en query, es error
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication token required")
+
+    # Generar state random
+    random_state = generate_oauth_state()
+
+    # Codificar el JWT dentro del state: estado_aleatorio:jwt_base64
+    try:
+        state_data = {
+            "state": random_state,
+            "token": token
+        }
+        state_json = json.dumps(state_data)
+        state_encoded = base64.b64encode(state_json.encode()).decode()
+    except Exception as e:
+        logger.error(f"[gmail_connect] Failed to encode state: {e}")
+        raise HTTPException(status_code=400, detail="Failed to encode state")
+
+    auth_url = get_gmail_auth_url(state_encoded)
     return RedirectResponse(url=auth_url)
 
 
 @app.get("/auth/gmail/callback")
 async def gmail_callback(code: str = Query(...), state: str = Query(...)):
-    """Callback de Google OAuth. Intercambia code por tokens."""
+    """Callback de Google OAuth. Intercambia code por tokens e inmediatamente los guarda."""
     from email_oauth import exchange_gmail_code, encrypt_tokens
     from database import save_email_oauth_tokens
-    from jose import jwt
-    from jose.exceptions import JWTError
+    import base64
+    import json
 
-    # En producción, validaría el state. Para dev simplificamos.
     if not code:
         raise HTTPException(status_code=400, detail="Authorization code not provided")
 
@@ -559,39 +580,88 @@ async def gmail_callback(code: str = Query(...), state: str = Query(...)):
     if not tokens:
         raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
 
-    # Intentar obtener user_id del token JWT de la cookie
-    token = None
-    auth_header = None
-
-    # El token debería venir en la sesión del usuario
-    # Por ahora, redirigimos al dashboard con éxito
     email = tokens.get("email", "unknown@gmail.com")
     tokens_encrypted = encrypt_tokens({
         "access_token": tokens["access_token"],
         "refresh_token": tokens["refresh_token"],
     })
 
-    # Guardar en sessionStorage para que el frontend lo use
+    # Extraer el JWT del state parameter
+    user_id = None
+    jwt_token = None
+    try:
+        # El state está base64 encoded: {"state": "...", "token": "JWT..."}
+        state_json = base64.b64decode(state).decode()
+        state_data = json.loads(state_json)
+        jwt_token = state_data.get("token")
+
+        if jwt_token:
+            # Validar y decodificar el JWT para obtener user_id
+            try:
+                payload = jwt.decode(jwt_token, SECRET_KEY, algorithms=[ALGORITHM])
+                user_id = str(payload.get("sub"))  # 'sub' contiene el user_id
+                logger.info(f"[gmail_callback] Decoded JWT, user_id={user_id}")
+            except JWTError as e:
+                logger.error(f"[gmail_callback] JWT validation failed: {e}")
+    except Exception as e:
+        logger.error(f"[gmail_callback] Failed to decode state: {e}")
+
+    # Guardar los tokens si tenemos user_id válido
+    if user_id:
+        try:
+            await save_email_oauth_tokens(
+                user_id=user_id,
+                provider="gmail",
+                tokens_encrypted=tokens_encrypted,
+                email_sender=email
+            )
+            logger.info(f"[gmail_callback] Saved OAuth tokens for user {user_id} with email {email}")
+        except Exception as e:
+            logger.error(f"[gmail_callback] Failed to save tokens: {e}")
+            return RedirectResponse(
+                url=f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}?oauth_success=false&error=save_failed"
+            )
+
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    # Parámetros para que el frontend sepa qué hacer
-    return RedirectResponse(url=f"{frontend_url}/dashboard?oauth_email={email}&oauth_tokens={tokens_encrypted}&oauth_success=true&oauth_provider=gmail")
+    # Redirigir al dashboard con indicador de éxito
+    redirect_url = f"{frontend_url}/dashboard?oauth_success={'true' if user_id else 'false'}&oauth_email={email}&oauth_provider=gmail"
+    return RedirectResponse(url=redirect_url)
 
 
 @app.get("/auth/outlook/connect")
-async def outlook_connect_start(state: str = Query(None)):
+async def outlook_connect_start(token: str = Query(...)):
     """Inicia el flujo de autorización de Outlook. Redirige a Microsoft OAuth."""
     from email_oauth import get_outlook_auth_url, generate_oauth_state
+    import base64
+    import json
 
-    state = state or generate_oauth_state()
-    auth_url = get_outlook_auth_url(state)
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication token required")
+
+    random_state = generate_oauth_state()
+
+    try:
+        state_data = {
+            "state": random_state,
+            "token": token
+        }
+        state_json = json.dumps(state_data)
+        state_encoded = base64.b64encode(state_json.encode()).decode()
+    except Exception as e:
+        logger.error(f"[outlook_connect] Failed to encode state: {e}")
+        raise HTTPException(status_code=400, detail="Failed to encode state")
+
+    auth_url = get_outlook_auth_url(state_encoded)
     return RedirectResponse(url=auth_url)
 
 
 @app.get("/auth/outlook/callback")
 async def outlook_callback(code: str = Query(...), state: str = Query(...)):
-    """Callback de Outlook OAuth. Intercambia code por tokens."""
+    """Callback de Outlook OAuth. Intercambia code por tokens e inmediatamente los guarda."""
     from email_oauth import exchange_outlook_code, encrypt_tokens
     from database import save_email_oauth_tokens
+    import base64
+    import json
 
     if not code:
         raise HTTPException(status_code=400, detail="Authorization code not provided")
@@ -606,8 +676,46 @@ async def outlook_callback(code: str = Query(...), state: str = Query(...)):
         "refresh_token": tokens["refresh_token"],
     })
 
+    # Extraer el JWT del state parameter
+    user_id = None
+    jwt_token = None
+    try:
+        # El state está base64 encoded: {"state": "...", "token": "JWT..."}
+        state_json = base64.b64decode(state).decode()
+        state_data = json.loads(state_json)
+        jwt_token = state_data.get("token")
+
+        if jwt_token:
+            # Validar y decodificar el JWT para obtener user_id
+            try:
+                payload = jwt.decode(jwt_token, SECRET_KEY, algorithms=[ALGORITHM])
+                user_id = str(payload.get("sub"))  # 'sub' contiene el user_id
+                logger.info(f"[outlook_callback] Decoded JWT, user_id={user_id}")
+            except JWTError as e:
+                logger.error(f"[outlook_callback] JWT validation failed: {e}")
+    except Exception as e:
+        logger.error(f"[outlook_callback] Failed to decode state: {e}")
+
+    # Guardar los tokens si tenemos user_id válido
+    if user_id:
+        try:
+            await save_email_oauth_tokens(
+                user_id=user_id,
+                provider="outlook",
+                tokens_encrypted=tokens_encrypted,
+                email_sender=email
+            )
+            logger.info(f"[outlook_callback] Saved OAuth tokens for user {user_id} with email {email}")
+        except Exception as e:
+            logger.error(f"[outlook_callback] Failed to save tokens: {e}")
+            return RedirectResponse(
+                url=f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}?oauth_success=false&error=save_failed"
+            )
+
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    return RedirectResponse(url=f"{frontend_url}?oauth_email={email}&oauth_tokens={tokens_encrypted}")
+    # Redirigir al dashboard con indicador de éxito
+    redirect_url = f"{frontend_url}/dashboard?oauth_success={'true' if user_id else 'false'}&oauth_email={email}&oauth_provider=outlook"
+    return RedirectResponse(url=redirect_url)
 
 
 @app.get("/api/me/email-status")

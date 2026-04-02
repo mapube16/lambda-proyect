@@ -59,12 +59,26 @@ async def initiate_call(debtor: dict, config: dict) -> str:
             monto_fmt = f"{monto:.0f}"
 
         # STRICT GATE: first_message only validates identity, NO mention of debt/obligation/amount
+        # Use natural, conversational Colombian Spanish (Camila persona)
         # This forces the deudor to confirm "yes, it's me" before agent reveals purpose
-        first_message = (
-            f"Hola, ¿estoy hablando con {nombre}?"
-            if nombre
-            else "Hola, ¿cómo estás? ¿Tengo el número correcto?"
-        )
+        import random
+
+        if nombre:
+            # With debtor name: natural openings
+            greetings = [
+                f"Aló, buenas tardes... ¿será que hablo con {nombre}?",
+                f"Buenas tardes... ¿estoy hablando con {nombre}?",
+                f"Hola, ¿con el señor {nombre.split()[-1]}?",
+            ]
+            first_message = random.choice(greetings)
+        else:
+            # Without name: ask who we're talking to
+            greetings = [
+                "Aló, buenas tardes... ¿con quién tengo el gusto?",
+                "Buenas tardes... ¿puedo hablar con el titular de la línea?",
+                "Hola, ¿quién es?",
+            ]
+            first_message = random.choice(greetings)
 
         call = await client.calls.create(
             assistant_id=assistant_id,
@@ -77,7 +91,6 @@ async def initiate_call(debtor: dict, config: dict) -> str:
                     "debtor_name": nombre,
                     "monto": monto_fmt,
                     "vencimiento": vencimiento_str,
-                    # Next step (after validation): "Perfecto, le llamo de gestión de cuenta. Es rapidito, ¿me da un momento?"
                 },
             },
         )
