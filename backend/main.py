@@ -989,11 +989,13 @@ async def send_test_email(current_user: dict = Depends(get_current_user)):
         tokens = decrypt_tokens(encrypted_tokens)
         access_token = tokens.get("access_token")
 
+        # Enviar el test email a la dirección de Gmail del usuario (sender_email)
+        # para validar que funciona
         success = await send_email_oauth(
             provider=provider,
             access_token=access_token,
-            to_email=user_email,
-            to_name=user_email,
+            to_email=sender_email,
+            to_name=sender_email.split("@")[0],  # Parte antes del @
             subject=subject,
             html_body=body,
             sender_email=sender_email,
@@ -1005,7 +1007,7 @@ async def send_test_email(current_user: dict = Depends(get_current_user)):
 
         return {
             "message": "Test email sent successfully!",
-            "sent_to": user_email,
+            "sent_to": sender_email,
             "from": sender_email,
         }
     except Exception as e:
