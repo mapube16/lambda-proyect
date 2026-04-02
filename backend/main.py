@@ -548,6 +548,8 @@ async def gmail_callback(code: str = Query(...), state: str = Query(...)):
     """Callback de Google OAuth. Intercambia code por tokens."""
     from email_oauth import exchange_gmail_code, encrypt_tokens
     from database import save_email_oauth_tokens
+    from jose import jwt
+    from jose.exceptions import JWTError
 
     # En producción, validaría el state. Para dev simplificamos.
     if not code:
@@ -557,8 +559,12 @@ async def gmail_callback(code: str = Query(...), state: str = Query(...)):
     if not tokens:
         raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
 
-    # El usuario_id viene del token JWT en la sesión
-    # Para simplificar en este callback, redirigimos al onboarding con email
+    # Intentar obtener user_id del token JWT de la cookie
+    token = None
+    auth_header = None
+
+    # El token debería venir en la sesión del usuario
+    # Por ahora, redirigimos al dashboard con éxito
     email = tokens.get("email", "unknown@gmail.com")
     tokens_encrypted = encrypt_tokens({
         "access_token": tokens["access_token"],
@@ -566,9 +572,9 @@ async def gmail_callback(code: str = Query(...), state: str = Query(...)):
     })
 
     # Guardar en sessionStorage para que el frontend lo use
-    # O redirigir con un parámetro
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    return RedirectResponse(url=f"{frontend_url}?oauth_email={email}&oauth_tokens={tokens_encrypted}")
+    # Parámetros para que el frontend sepa qué hacer
+    return RedirectResponse(url=f"{frontend_url}/dashboard?oauth_email={email}&oauth_tokens={tokens_encrypted}&oauth_success=true&oauth_provider=gmail")
 
 
 @app.get("/auth/outlook/connect")
