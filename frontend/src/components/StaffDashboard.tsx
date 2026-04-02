@@ -550,12 +550,6 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
   const [knowledgeDebugLoading, setKnowledgeDebugLoading] = useState(false);
   const [knowledgeDebug, setKnowledgeDebug] = useState<OnboardKnowledgeDebug | null>(null);
   const [error, setError] = useState('');
-  // SMTP configuration step
-  const [smtpEmail, setSmtpEmail] = useState('');
-  const [smtpPassword, setSmtpPassword] = useState('');
-  const [smtpHost, setSmtpHost] = useState('smtp.gmail.com');
-  const [smtpPort, setSmtpPort] = useState('587');
-  const [smtpSaving, setSmtpSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const auth = () => ({ Authorization: `Bearer ${useOfficeStore.getState().authToken}` });
