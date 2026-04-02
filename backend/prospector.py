@@ -741,6 +741,14 @@ async def discover_companies(
     serper_key = os.getenv("SERPER_API_KEY", "")
     bright_data_key = os.getenv("BRIGHT_DATA_API_KEY", "")
 
+    # DEBUG: Log source_priority and keys
+    logger.info(
+        "[discover_companies] source_priority=%r serper_key=%s bright_data_key=%s",
+        source_priority,
+        "SET" if serper_key else "MISSING",
+        "SET" if bright_data_key else "MISSING"
+    )
+
     # Source selection based on client budget/tier
     sources_to_use = []
     bright_data_type = "web_scraper"  # "web_scraper" or "serp"
