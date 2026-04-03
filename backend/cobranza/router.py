@@ -341,18 +341,34 @@ async def onboarding_approve(
     """
     POST /api/cobranza/onboarding/approve
     Persist approved (possibly user-edited) estrategia to cobranza_config collection.
-    Requires cobranza_enabled flag set by staff.
+    Automatically enables cobranza dashboard when strategy is approved.
     Returns campaign_id = user_id.
     """
-    await _require_cobranza_enabled(current_user)
     user_id = str(current_user["user_id"])
     db = get_db()
+    now = datetime.now(timezone.utc)
 
+    # Save cobranza strategy
     await db.cobranza_config.update_one(
         {"user_id": user_id},
-        {"$set": {"estrategia": body.estrategia, "updated_at": datetime.now(timezone.utc)}},
+        {"$set": {"estrategia": body.estrategia, "updated_at": now}},
         upsert=True,
     )
+
+    # Auto-enable cobranza dashboard when strategy is approved
+    await db.company_voice.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "cobranza_enabled": True,
+                "cobranza_enabled_at": now,
+                "updated_at": now,
+            },
+            "$setOnInsert": {"user_id": user_id, "created_at": now},
+        },
+        upsert=True,
+    )
+
     return {"campaign_id": user_id, "ok": True}
 
 

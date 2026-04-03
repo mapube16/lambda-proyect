@@ -450,13 +450,15 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   });
 
   // ── React Query: Cobranza status ───────────────────────────────────────────────
-  const { data: cobranzaData } = useQuery({
+  const { data: cobranzaData, refetch: refetchCobranzaStatus } = useQuery({
     queryKey: ['cobranza-status', token],
     queryFn: async () => {
       const r = await apiFetch(`${API}/api/cobranza/status`, { headers: { Authorization: `Bearer ${token}` } });
       return r.ok ? await r.json() : null;
     },
     enabled: !!token,
+    refetchInterval: 5000, // Auto-refresh every 5 seconds while tab is visible
+    refetchIntervalPaused: false,
   });
 
   const cobranzaEnabled = cobranzaData?.enabled ?? false;
@@ -469,6 +471,8 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
       return r.ok ? await r.json() : null;
     },
     enabled: !!token,
+    refetchInterval: 5000, // Auto-refresh every 5 seconds
+    refetchIntervalPaused: false,
   });
 
   const emailConnected = emailData?.connected ?? false;
