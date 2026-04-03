@@ -143,7 +143,7 @@ export function OfficeCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [layout, setLayout] = useState<LayoutData | null>(null);
   const [assets, setAssets] = useState<Assets | null>(null);
-  const { characters, agents } = useOfficeStore();
+  const { characters, agents, selectedCharId, hoveredCharId, selectChar, hoverChar } = useOfficeStore();
 
   useEffect(() => {
     fetch('/assets/default-layout-1.json')
@@ -211,6 +211,66 @@ export function OfficeCanvas() {
     ctx.restore();
   }, [layout, assets, bounds, characters, agents, canvasW, canvasH, ox, oy]);
 
+  const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !bounds) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Convert canvas coords back to world coords
+    const worldX = clickX / SCALE + ox;
+    const worldY = clickY / SCALE + oy;
+
+    // Find characters within hit radius (32 pixels)
+    const hitRadius = 32;
+    let closestChar: Character | undefined;
+    let closestDist = hitRadius;
+
+    Array.from(characters.values()).forEach((char) => {
+      const dx = char.x - worldX;
+      const dy = char.y - worldY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestChar = char;
+      }
+    });
+
+    selectChar(closestChar?.agentId || null);
+  }, [characters, bounds, ox, oy, selectChar]);
+
+  const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !bounds) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const moveX = e.clientX - rect.left;
+    const moveY = e.clientY - rect.top;
+
+    // Convert canvas coords back to world coords
+    const worldX = moveX / SCALE + ox;
+    const worldY = moveY / SCALE + oy;
+
+    // Find characters within hover radius (40 pixels)
+    const hoverRadius = 40;
+    let hoveredChar: Character | undefined;
+    let closestDist = hoverRadius;
+
+    Array.from(characters.values()).forEach((char) => {
+      const dx = char.x - worldX;
+      const dy = char.y - worldY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < closestDist) {
+        closestDist = dist;
+        hoveredChar = char;
+      }
+    });
+
+    hoverChar(hoveredChar?.agentId || null);
+  }, [characters, bounds, ox, oy, hoverChar]);
+
   useEffect(() => {
     let id: number;
     const loop = () => { render(); id = requestAnimationFrame(loop); };
@@ -232,18 +292,76 @@ export function OfficeCanvas() {
     );
   }
 
+  const selectedAgent = selectedCharId ? agents.get(selectedCharId) : null;
+  const hoveredAgent = hoveredCharId ? agents.get(hoveredCharId) : null;
+
   return (
-    <canvas
-      ref={canvasRef}
-      width={canvasW}
-      height={canvasH}
-      style={{
-        background: '#0a0a14',
-        borderRadius: '8px',
-        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-        display: 'block',
-      }}
-    />
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <canvas
+        ref={canvasRef}
+        width={canvasW}
+        height={canvasH}
+        onClick={handleCanvasClick}
+        onMouseMove={handleCanvasMouseMove}
+        onMouseLeave={() => hoverChar(null)}
+        style={{
+          background: '#0a0a14',
+          borderRadius: '8px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          display: 'block',
+          cursor: hoveredCharId ? 'pointer' : 'default',
+        }}
+      />
+
+      {/* Character info tooltip */}
+      {(selectedAgent || hoveredAgent) && (
+        <div style={{
+          position: 'absolute',
+          top: 16,
+          right: 16,
+          background: 'rgba(18,18,29,0.95)',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(93,217,245,0.3)',
+          borderRadius: 12,
+          padding: '16px 18px',
+          minWidth: 200,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          fontFamily: "'Inter', system-ui, sans-serif",
+          color: '#f0eff8',
+          zIndex: 100,
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#5dd9f5', marginBottom: 8 }}>
+            {selectedAgent?.name || hoveredAgent?.name}
+          </div>
+          <div style={{ fontSize: 12, color: '#9b9aaa', marginBottom: 6 }}>
+            <span style={{ display: 'inline-block', marginRight: 8 }}>Rol:</span>
+            <span style={{ color: '#d8d6e6', textTransform: 'capitalize' }}>
+              {selectedAgent?.role || hoveredAgent?.role}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: '#9b9aaa', marginBottom: 6 }}>
+            <span style={{ display: 'inline-block', marginRight: 8 }}>Estado:</span>
+            <span style={{
+              color: (selectedAgent?.state === 'thinking' || hoveredAgent?.state === 'thinking') ? '#ffd866' :
+                     (selectedAgent?.state === 'tool_use' || hoveredAgent?.state === 'tool_use') ? '#78dce8' :
+                     (selectedAgent?.state === 'waiting' || hoveredAgent?.state === 'waiting') ? '#a9dc76' :
+                     '#9b9aaa',
+              textTransform: 'capitalize'
+            }}>
+              {selectedAgent?.state || hoveredAgent?.state}
+            </span>
+          </div>
+          {(selectedAgent?.current_tool || hoveredAgent?.current_tool) && (
+            <div style={{ fontSize: 12, color: '#9b9aaa' }}>
+              <span style={{ display: 'inline-block', marginRight: 8 }}>Tarea:</span>
+              <span style={{ color: '#d8d6e6', textTransform: 'capitalize' }}>
+                {selectedAgent?.current_tool || hoveredAgent?.current_tool}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

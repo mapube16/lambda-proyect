@@ -111,6 +111,8 @@ interface OfficeStore {
   userEmail: string | null;
   userRole: 'staff' | 'client' | null;
   authToken: string | null;
+  selectedCharId: string | null;
+  hoveredCharId: string | null;
 
   setAgents: (agents: Agent[]) => void;
   updateAgent: (agentId: string, updates: Partial<Agent>) => void;
@@ -140,6 +142,8 @@ interface OfficeStore {
 
   setAuth: (email: string, role: 'staff' | 'client') => void;
   clearAuth: () => void;
+  selectChar: (charId: string | null) => void;
+  hoverChar: (charId: string | null) => void;
 }
 
 function createCharacterFromAgent(agent: Agent, seatIndex: number): Character {
@@ -199,6 +203,8 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   authToken: null, // Token is stored in httpOnly cookie, not accessible to JS
   checkpointLeads: [],
   handoverLead: null,
+  selectedCharId: null,
+  hoveredCharId: null,
 
   setAgents: (agents) => {
     // Full reset: clear all seat assignments
@@ -359,4 +365,7 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
       set({ agents: newAgents, seats: newSeats });
     }
   },
+
+  selectChar: (charId) => set({ selectedCharId: charId }),
+  hoverChar: (charId) => set({ hoveredCharId: charId }),
 }));
