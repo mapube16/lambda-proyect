@@ -132,7 +132,7 @@ export function LoginView() {
         throw new Error(d.detail || 'Credenciales incorrectas');
       }
       const data = await res.json();
-      setAuth(data.access_token, data.email, data.role);
+      setAuth(data.email, data.role);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Error de conexión');
     } finally {
@@ -178,7 +178,7 @@ export function LoginView() {
       }
       
       const data = await res.json();
-      setAuth(data.access_token, data.email, data.role);
+      setAuth(data.email, data.role);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Error en autenticación con Google');
     } finally {
