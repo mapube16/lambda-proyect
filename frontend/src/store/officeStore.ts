@@ -131,7 +131,7 @@ interface OfficeStore {
   clearCheckpointLead: (leadId: string) => void;
   setHandoverLead: (lead: LandaHandoverLead | null) => void;
 
-  setAuth: (token: string, email: string, role: 'staff' | 'client') => void;
+  setAuth: (email: string, role: 'staff' | 'client') => void;
   clearAuth: () => void;
 }
 
@@ -326,7 +326,7 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
     set((s) => ({ checkpointLeads: s.checkpointLeads.filter(l => l.leadId !== leadId) })),
   setHandoverLead: (lead) => set({ handoverLead: lead }),
 
-  setAuth: (token, email, role) => {
+  setAuth: (email, role) => {
     // SECURITY: Tokens are now stored in httpOnly cookies (set by backend)
     // This function updates Zustand state only for UI purposes
     // The actual JWT token is NOT accessible to JavaScript
