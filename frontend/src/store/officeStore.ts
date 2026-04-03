@@ -184,10 +184,10 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   activeCampaign: null,
   currentRunId: null,
   agentLogs: null,
-  isAuthenticated: !!sessionStorage.getItem('hive_token'),
-  userEmail: sessionStorage.getItem('hive_email'),
-  userRole: (sessionStorage.getItem('hive_role') as 'staff' | 'client' | null) ?? null,
-  authToken: sessionStorage.getItem('hive_token'),
+  isAuthenticated: false, // Cookies are handled automatically by browser (httpOnly)
+  userEmail: null,
+  userRole: null,
+  authToken: null, // Token is stored in httpOnly cookie, not accessible to JS
   checkpointLeads: [],
   handoverLead: null,
 
@@ -327,16 +327,14 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
   setHandoverLead: (lead) => set({ handoverLead: lead }),
 
   setAuth: (token, email, role) => {
-    sessionStorage.setItem('hive_token', token);
-    sessionStorage.setItem('hive_email', email);
-    sessionStorage.setItem('hive_role', role);
-    set({ isAuthenticated: true, authToken: token, userEmail: email, userRole: role });
+    // SECURITY: Tokens are now stored in httpOnly cookies (set by backend)
+    // This function updates Zustand state only for UI purposes
+    // The actual JWT token is NOT accessible to JavaScript
+    set({ isAuthenticated: true, userEmail: email, userRole: role });
   },
   clearAuth: () => {
-    sessionStorage.removeItem('hive_token');
-    sessionStorage.removeItem('hive_email');
-    sessionStorage.removeItem('hive_role');
-    sessionStorage.removeItem('hive_password');
+    // SECURITY: httpOnly cookie will be cleared by backend on logout
+    // Here we just clear Zustand state
     set({ isAuthenticated: false, authToken: null, userEmail: null, userRole: null });
   },
 

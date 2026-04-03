@@ -20,7 +20,8 @@
       "Bash(find /c/Users/maxim/Desktop/hive-pixel-office -type f \\\\\\(-name *.py -o -name *.ts -o -name *.tsx -o -name *.js -o -name .env* -o -name *.json -o -name *.txt \\\\\\))",
       "Bash(grep -r \"send_lead_outreach\\\\|send_welcome_email\\\\|send_staff_summary\\\\|mailersend\\\\|MAILERSEND\" /c/Users/maxim/Desktop/hive-pixel-office/backend --include=*.py)",
       "Bash(find /c/Users/maxim/Desktop/hive-pixel-office -name *landa* -type f)",
-      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office/frontend -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js \\\\\\))"
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office/frontend -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js \\\\\\))",
+      "Bash(xargs grep:*)"
     ]
   }
 }
