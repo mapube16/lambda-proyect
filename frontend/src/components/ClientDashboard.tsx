@@ -13,7 +13,11 @@ const API = '';
 if (typeof document !== 'undefined' && !document.getElementById('cd-styles')) {
   const s = document.createElement('style');
   s.id = 'cd-styles';
-  s.textContent = `@keyframes pulse { 0%,100%{opacity:1;box-shadow:0 0 6px #78dce8} 50%{opacity:0.4;box-shadow:0 0 2px #78dce8} }`;
+  s.textContent = `
+    @keyframes pulse { 0%,100%{opacity:1;box-shadow:0 0 6px #78dce8} 50%{opacity:0.4;box-shadow:0 0 2px #78dce8} }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes shimmer { 0% { background-position: -1000px 0; } 100% { background-position: 1000px 0; } }
+  `;
   document.head.appendChild(s);
 }
 
@@ -38,29 +42,37 @@ interface ToastItem {
   undoFn?: () => void;
 }
 
-// ─── Tokens ────────────────────────────────────────────────────────────────────
+// ─── Tokens (Antigravity Design) ────────────────────────────────────────────────
 const C = {
-  bg:        '#0d0d18',
-  s0:        '#12121d',
-  s1:        '#1b1a26',
-  s2:        '#22212e',
-  s3:        '#2c2b3a',
+  bg:        'linear-gradient(135deg, #0a0a14 0%, #0d0d18 50%, #0a0a14 100%)',
+  bgSolid:   '#0a0a14',
+  s0:        'rgba(18,18,29,0.85)',
+  s0Blur:    'blur(20px)',
+  s1:        'rgba(27,26,38,0.7)',
+  s1Blur:    'blur(12px)',
+  s2:        'rgba(34,33,46,0.6)',
+  s3:        'rgba(44,43,58,0.5)',
   s4:        '#343440',
-  text:      '#e3e0f1',
-  muted:     '#8a8a9a',
-  faint:     'rgba(227,224,241,0.3)',
-  cyan:      '#78dce8',
-  cyanBg:    'rgba(120,220,232,0.08)',
-  cyanBdr:   'rgba(120,220,232,0.2)',
-  purple:    '#ab9df2',
-  purpleBg:  'rgba(171,157,242,0.08)',
-  green:     '#a9dc76',
-  greenBg:   'rgba(169,220,118,0.08)',
-  pink:      '#ff6188',
-  pinkBg:    'rgba(255,97,136,0.08)',
-  grad:      'linear-gradient(135deg,#7c3aed 0%,#06b6d4 100%)',
+  text:      '#f0eff8',
+  textMid:   '#d8d6e6',
+  muted:     '#9b9aaa',
+  faint:     'rgba(227,224,241,0.25)',
+  cyan:      '#5dd9f5',
+  cyanGlow:  'rgba(93,217,245,0.12)',
+  cyanBg:    'rgba(93,217,245,0.08)',
+  cyanBdr:   'rgba(93,217,245,0.2)',
+  purple:    '#b4a1ff',
+  purpleBg:  'rgba(180,161,255,0.08)',
+  green:     '#7ee8a3',
+  greenBg:   'rgba(126,232,163,0.08)',
+  pink:      '#ff7a9f',
+  pinkBg:    'rgba(255,122,159,0.08)',
+  grad:      'linear-gradient(135deg, #6366f1 0%, #06b6d4 100%)',
   SG:        "'Space Grotesk', system-ui, sans-serif",
   IN:        "'Inter', system-ui, sans-serif",
+  shadow1:   '0 4px 20px rgba(0,0,0,0.3)',
+  shadow2:   '0 8px 32px rgba(0,0,0,0.4)',
+  shadowGlow: 'inset 0 0 0 1px rgba(93,217,245,0.1)',
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -84,18 +96,28 @@ function relativeDate(iso: string | null): string {
   return `hace ${Math.floor(hrs / 24)}d`;
 }
 
+// ─── SVG Icons ─────────────────────────────────────────────────────────────────
+const SearchIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>;
+const CheckIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const MailIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>;
+const LogOutIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+const RefreshIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36M20.49 15a9 9 0 0 1-14.85 3.36"/></svg>;
+const XIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
+const HomeIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>;
+// const DotIcon = ({ animated }: { animated?: boolean }) => <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor" style={{ animation: animated ? 'pulse 2s infinite' : undefined }}><circle cx="8" cy="8" r="3"/></svg>;
+
 // ─── Badge ─────────────────────────────────────────────────────────────────────
 const Badge = React.memo(function Badge({ score, status }: { score: number | null; status: HitlStatus }) {
-  const cfg = useMemo(() => 
+  const cfg = useMemo(() =>
     status === 'approved'  ? { text: 'Aprobado',         bg: C.greenBg,  color: C.green  } :
     status === 'rejected'  ? { text: 'Descartado',        bg: C.pinkBg,   color: C.pink   } :
     (score ?? 0) >= 85     ? { text: 'Alta intención',    bg: C.greenBg,  color: C.green  } :
     (score ?? 0) >= 70     ? { text: 'Interés creciente', bg: C.purpleBg, color: C.purple } :
-                             { text: 'En revisión',       bg: C.cyanBg,   color: C.cyan   },
+                             { text: 'En revisión',       bg: C.cyanGlow, color: C.cyan   },
     [score, status]
   );
   return (
-    <span style={{ ...lbl(cfg.color, 9), background: cfg.bg, padding: '3px 9px', borderRadius: 4 }}>
+    <span style={{ ...lbl(cfg.color, 9), background: cfg.bg, padding: '4px 10px', borderRadius: 6, border: `1px solid ${cfg.color}25`, backdropFilter: 'blur(4px)' }}>
       {cfg.text}
     </span>
   );
@@ -110,32 +132,37 @@ const ToastCard = React.memo(function ToastCard({ toast, onDismiss }: { toast: T
   }, []);
 
   const isReject = toast.type === 'reject';
+  const accentColor = isReject ? C.pink : C.green;
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      padding: '12px 16px', minWidth: 268,
-      background: C.s3,
-      border: `1px solid ${isReject ? 'rgba(62,73,74,0.5)' : 'rgba(169,220,118,0.25)'}`,
-      borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'center', gap: 12,
+      padding: '14px 18px', minWidth: 300,
+      background: C.s1,
+      backdropFilter: C.s1Blur,
+      border: `1px solid ${accentColor}20`,
+      borderRadius: 10, boxShadow: C.shadow2,
       pointerEvents: 'all',
       opacity: visible ? 1 : 0,
-      transform: visible ? 'translateX(0)' : 'translateX(12px)',
-      transition: 'opacity 0.2s, transform 0.2s',
+      transform: visible ? 'translateX(0)' : 'translateX(16px)',
+      transition: 'opacity 0.3s ease-out, transform 0.3s ease-out',
     }}>
-      <span style={{ fontSize: 13, color: isReject ? C.muted : C.green, flexShrink: 0 }}>
-        {isReject ? '✕' : '✓'}
-      </span>
-      <span style={{ fontFamily: C.SG, fontSize: 12, color: C.text, flex: 1 }}>
+      <div style={{ color: accentColor, fontSize: 14, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16 }}>
+        {isReject ? <XIcon /> : <CheckIcon />}
+      </div>
+      <span style={{ fontFamily: C.IN, fontSize: 13, color: C.text, flex: 1, lineHeight: 1.5 }}>
         {toast.message}
       </span>
       {toast.undoFn && (
         <button
           onClick={() => { toast.undoFn!(); onDismiss(toast.id); }}
           style={{
-            padding: '4px 10px', border: '1px solid rgba(120,220,232,0.35)',
-            borderRadius: 4, background: 'transparent', color: C.cyan,
+            padding: '6px 12px', border: `1px solid ${C.cyan}30`,
+            borderRadius: 6, background: 'rgba(93,217,245,0.05)', color: C.cyan,
             ...lbl(C.cyan, 10), cursor: 'pointer', flexShrink: 0,
+            transition: 'all 0.2s ease-out',
           }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(93,217,245,0.12)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(93,217,245,0.05)'; }}
         >
           Deshacer
         </button>
@@ -145,11 +172,15 @@ const ToastCard = React.memo(function ToastCard({ toast, onDismiss }: { toast: T
         aria-label="Cerrar notificación"
         style={{
           width: 20, height: 20, border: 'none', background: 'transparent',
-          color: C.muted, cursor: 'pointer', fontSize: 14,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 3,
-          flexShrink: 0,
+          color: C.muted, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4,
+          flexShrink: 0, transition: 'color 0.2s',
         }}
-      >✕</button>
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = C.text; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = C.muted; }}
+      >
+        <XIcon />
+      </button>
     </div>
   );
 });
@@ -202,21 +233,27 @@ const LeadCard = React.memo(function LeadCard({ lead, onApplyStatus, onOpenDossi
       onMouseLeave={() => setHover(false)}
       style={{
         ...card({ padding: '18px 22px' }),
-        borderLeft: `2px solid ${hover ? accent : 'transparent'}`,
+        borderLeft: `3px solid ${hover ? accent : 'transparent'}`,
         background: hover ? C.s2 : C.s1,
-        transition: 'background 0.15s, border-color 0.15s',
+        backdropFilter: C.s1Blur,
+        border: `1px solid ${hover ? accent + '30' : C.cyanBdr}`,
+        transition: 'all 0.25s ease-out',
         cursor: 'pointer', outline: 'none',
+        transform: hover ? 'translateY(-2px)' : 'translateY(0)',
+        boxShadow: hover ? C.shadow2 : C.shadow1,
       }}
     >
       {/* Top row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', minWidth: 0, flex: 1 }}>
           <div style={{
-            width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
-            background: `linear-gradient(135deg,${C.s3},${C.s4})`,
-            border: `1px solid ${accent}30`,
+            width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+            background: `linear-gradient(135deg, ${accent}20, ${accent}05)`,
+            border: `1.5px solid ${accent}50`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: C.SG, fontWeight: 700, fontSize: 15, color: accent,
+            fontFamily: C.SG, fontWeight: 700, fontSize: 16, color: accent,
+            boxShadow: `inset 0 1px 2px ${accent}20`,
+            transition: 'all 0.2s ease-out',
           }}>
             {initial}
           </div>
@@ -276,22 +313,28 @@ const LeadCard = React.memo(function LeadCard({ lead, onApplyStatus, onOpenDossi
         </div>
 
         {lead.hitl_status === 'pending' && (
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={e => act('r', e)} style={{
-              padding: '5px 12px', cursor: 'pointer',
-              border: `1px solid ${C.pink}40`, borderRadius: 4, background: 'transparent',
-              ...lbl(C.pink, 10), transition: 'background 0.15s',
-            }}>
+              padding: '6px 14px', cursor: 'pointer',
+              border: `1.5px solid ${C.pink}40`, borderRadius: 6, background: `${C.pink}08`,
+              ...lbl(C.pink, 10), transition: 'all 0.2s ease-out', fontWeight: 600,
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = `${C.pink}15`; (e.currentTarget as HTMLElement).style.borderColor = `${C.pink}70`; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = `${C.pink}08`; (e.currentTarget as HTMLElement).style.borderColor = `${C.pink}40`; }}
+            >
               Descartar
             </button>
             <button onClick={e => act('a', e)} style={{
-              padding: '5px 16px', cursor: 'pointer',
-              border: 'none', borderRadius: 4, background: C.grad,
-              ...lbl('#fff', 10),
-              boxShadow: hover ? '0 0 12px rgba(6,182,212,0.3)' : 'none',
-              transition: 'box-shadow 0.15s',
-            }}>
-              Aprobar →
+              padding: '6px 16px', cursor: 'pointer',
+              border: 'none', borderRadius: 6, background: C.grad,
+              ...lbl('#fff', 10), fontWeight: 600,
+              boxShadow: hover ? `0 8px 20px ${C.cyan}30` : `0 4px 12px ${C.cyan}20`,
+              transition: 'all 0.2s ease-out',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)'; (e.currentTarget as HTMLElement).style.boxShadow = `0 12px 24px ${C.cyan}40`; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'translateY(0)'; (e.currentTarget as HTMLElement).style.boxShadow = hover ? `0 8px 20px ${C.cyan}30` : `0 4px 12px ${C.cyan}20`; }}
+            >
+              Aprobar
             </button>
           </div>
         )}
@@ -317,13 +360,16 @@ const NavItem = React.memo(function NavItem({ emoji, text, active, count, onClic
       onMouseLeave={() => setHov(false)}
       style={{
         display: 'flex', alignItems: 'center', gap: 12, width: '100%',
-        padding: '11px 20px', border: 'none', cursor: 'pointer', textAlign: 'left',
-        background: active ? C.cyanBg : hov ? 'rgba(255,255,255,0.03)' : 'transparent',
+        padding: '12px 20px', border: 'none', cursor: 'pointer', textAlign: 'left',
+        background: active ? C.cyanGlow : hov ? `${C.cyan}08` : 'transparent',
         borderRight: `2px solid ${active ? C.cyan : 'transparent'}`,
-        transition: 'all 0.15s',
+        transition: 'all 0.2s ease-out',
+        borderRadius: '8px 0 0 8px',
       }}
     >
-      <span style={{ fontSize: 15, width: 20, textAlign: 'center' }}>{emoji}</span>
+      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, color: active ? C.cyan : hov ? C.text : C.muted, transition: 'color 0.2s' }}>
+        {emoji === '🔍' ? <SearchIcon /> : emoji === '✅' ? <CheckIcon /> : emoji === '✕' ? <XIcon /> : emoji === '🏢' ? <HomeIcon /> : emoji}
+      </span>
       <span style={{ ...lbl(active ? C.cyan : hov ? C.text : C.muted, 11), flex: 1 }}>{text}</span>
       {count !== undefined && count > 0 && (
         <span style={{
@@ -367,7 +413,7 @@ const MemoStatCard = React.memo(StatCard);
 type Tab = 'pending' | 'approved' | 'rejected';
 
 const TAB_META: Record<Tab, { title: string; sub: string; emoji: string }> = {
-  pending:  { title: 'Leads Pendientes',   sub: 'Prospectos identificados por los agentes en espera de revisión.', emoji: '🔍' },
+  pending:  { title: 'Leads Pendientes',   sub: 'Prospectos identificados por los agentes en espera de revisión.', emoji: '🔍' }, // Kept for backward compatibility, not displayed
   approved: { title: 'Leads Aprobados',    sub: 'Prospectos con intención verificada, listos para outreach.', emoji: '✅' },
   rejected: { title: 'Leads Descartados',  sub: 'Prospectos que no cumplen con los criterios del pipeline.', emoji: '✕' },
 };
@@ -574,7 +620,9 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         width: 236, flexShrink: 0,
         display: 'flex', flexDirection: 'column',
         background: C.s0,
-        boxShadow: '6px 0 24px rgba(0,0,0,0.3)',
+        backdropFilter: C.s0Blur,
+        borderRight: `1px solid ${C.cyanBdr}`,
+        boxShadow: C.shadow1,
       }}>
         {/* Logo */}
         <div style={{ padding: '16px 20px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -597,18 +645,20 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                 onClick={() => setSection(s as 'leads' | 'cobranza' | 'email' | 'canales')}
                 style={{
                   flex: s === 'leads' || s === 'cobranza' ? 1 : 'auto',
-                  padding: '6px 8px', border: 'none', cursor: 'pointer',
-                  background: section === s ? (s === 'cobranza' ? 'rgba(252,152,103,0.12)' : s === 'canales' ? 'rgba(169,220,118,0.12)' : C.cyanBg) : 'transparent',
-                  borderBottom: `2px solid ${section === s ? (s === 'cobranza' ? '#fc9867' : s === 'canales' ? '#a9dc76' : C.cyan) : 'transparent'}`,
+                  padding: '7px 10px', border: 'none', cursor: 'pointer',
+                  background: section === s ? (s === 'cobranza' ? 'rgba(252,152,103,0.1)' : s === 'canales' ? 'rgba(126,232,163,0.1)' : C.cyanGlow) : 'transparent',
+                  borderBottom: `2px solid ${section === s ? (s === 'cobranza' ? '#fc9867' : s === 'canales' ? '#7ee8a3' : C.cyan) : 'transparent'}`,
                   fontFamily: C.SG, fontWeight: 600, fontSize: 10, letterSpacing: '0.1em',
                   textTransform: 'uppercase',
-                  color: section === s ? (s === 'cobranza' ? '#fc9867' : s === 'canales' ? '#a9dc76' : C.cyan) : C.muted,
-                  transition: 'all 0.15s',
+                  color: section === s ? (s === 'cobranza' ? '#fc9867' : s === 'canales' ? '#7ee8a3' : C.cyan) : C.muted,
+                  transition: 'all 0.2s ease-out',
                   minWidth: s === 'leads' || s === 'cobranza' ? undefined : '60px',
                   whiteSpace: 'nowrap',
+                  backdropFilter: 'blur(6px)',
+                  borderRadius: '6px 6px 0 0',
                 }}
               >
-                {s === 'leads' ? '🔍 Leads' : s === 'cobranza' ? '📞 Cobro' : s === 'email' ? '📧 Email' : '📱 Canales'}
+                {s === 'leads' ? 'Leads' : s === 'cobranza' ? 'Cobro' : s === 'email' ? 'Email' : 'Canales'}
               </button>
             ))}
           </div>
@@ -630,14 +680,19 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         </nav>
 
         {/* Footer */}
-        <div style={{ padding: '8px 0 14px' }}>
-          <div style={{ height: 1, background: `linear-gradient(to right, transparent, ${C.cyanBdr}, transparent)`, margin: '0 0 6px' }} />
+        <div style={{ padding: '12px 0 16px' }}>
+          <div style={{ height: 1, background: `linear-gradient(to right, transparent, ${C.cyanBdr}, transparent)`, margin: '0 0 8px' }} />
           <button onClick={clearAuth} style={{
             display: 'flex', alignItems: 'center', gap: 10, width: '100%',
             padding: '10px 20px', border: 'none', background: 'transparent',
             cursor: 'pointer', ...lbl(C.muted, 10),
-          }}>
-            ⎋ Cerrar sesión
+            transition: 'all 0.2s ease-out',
+            borderRadius: 6,
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.s3; (e.currentTarget as HTMLElement).style.color = C.cyan; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = C.muted; }}
+          >
+            <LogOutIcon /> Cerrar sesión
           </button>
         </div>
       </aside>
@@ -647,13 +702,19 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
         {/* Top bar */}
         <header style={{
-          height: 54, flexShrink: 0, display: 'flex', alignItems: 'center',
+          height: 60, flexShrink: 0, display: 'flex', alignItems: 'center',
           justifyContent: 'space-between', padding: '0 28px',
-          background: C.s0, position: 'relative',
+          background: C.s0,
+          backdropFilter: C.s0Blur,
+          borderBottom: `1px solid ${C.cyanBdr}`,
+          position: 'relative',
         }}>
           {/* Search — actually filters leads */}
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, background: C.s1, borderRadius: 20, padding: '6px 16px', cursor: 'text' }}>
-            <span style={{ color: C.cyan, fontSize: 13 }}>⌕</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.s1, backdropFilter: 'blur(8px)', borderRadius: 10, padding: '8px 18px', cursor: 'text', border: `1px solid ${C.cyanBdr}`, transition: 'all 0.2s ease-out', color: C.cyan }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.s2; (e.currentTarget as HTMLElement).style.borderColor = C.cyan + '40'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = C.s1; (e.currentTarget as HTMLElement).style.borderColor = C.cyanBdr; }}
+          >
+            <SearchIcon />
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
@@ -661,21 +722,25 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
               aria-label="Buscar leads"
               style={{
                 background: 'transparent', border: 'none', outline: 'none',
-                color: C.text, fontSize: 12, fontFamily: C.IN, width: 140,
+                color: C.text, fontSize: 13, fontFamily: C.IN, width: 180,
               }}
             />
             {query && (
               <button onClick={() => setQuery('')} style={{
                 background: 'transparent', border: 'none', color: C.muted,
-                cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: 0,
-              }}>✕</button>
+                cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'color 0.2s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = C.cyan; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = C.muted; }}
+              >
+                <XIcon />
+              </button>
             )}
           </label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontFamily: C.SG, fontSize: 11, color: C.muted }}>{userEmail}</span>
+            <span style={{ fontFamily: C.IN, fontSize: 12, color: C.muted }}>{userEmail}</span>
           </div>
-          {/* gradient separator */}
-          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(to right, transparent, rgba(120,220,232,0.12), transparent)', pointerEvents: 'none' }} />
         </header>
 
         {/* Cobranza section */}
@@ -689,8 +754,8 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         {section === 'email' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
             <div style={{ marginBottom: 32 }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: C.cyan, fontFamily: C.SG, marginBottom: 16 }}>
-                📊 Estadísticas de Email
+              <div style={{ fontSize: 24, fontWeight: 700, color: C.cyan, fontFamily: C.SG, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24 }}><MailIcon /></span> Estadísticas de Email
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 16 }}>
@@ -711,18 +776,18 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         {section === 'canales' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
             <div style={{ marginBottom: 32 }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: '#a9dc76', fontFamily: C.SG, marginBottom: 16 }}>
-                🚀 Canales de Comunicación
+              <div style={{ fontSize: 24, fontWeight: 700, color: C.green, fontFamily: C.SG, marginBottom: 20 }}>
+                Canales de Comunicación
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {/* Email channel */}
                 <div style={{
-                  background: C.s1, border: `1px solid ${C.s3}`, borderRadius: 10, padding: 16
+                  background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}`, borderRadius: 12, padding: 20
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: C.SG }}>
-                      📧 Email
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: C.text, fontFamily: C.SG, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, color: C.cyan }}><MailIcon /></span> Email
                     </div>
                     <div style={{ fontSize: 11, color: emailConnected ? '#a9dc76' : '#ffd866', background: emailConnected ? 'rgba(169,220,118,0.1)' : 'rgba(255,216,102,0.1)', padding: '2px 8px', borderRadius: 4 }}>
                       {emailConnected ? 'Conectado' : 'No configurado'}
@@ -906,11 +971,11 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
           </div>
 
           {/* Pipeline funnel */}
-          <div style={{ ...card({ padding: '18px 24px', marginBottom: 26, position: 'relative', overflow: 'hidden' }) }}>
+          <div style={{ ...card({ padding: '24px 28px', marginBottom: 26, position: 'relative', overflow: 'hidden', background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}`, boxShadow: C.shadow1 }) }}>
             {/* subtle radial glow in corner */}
-            <div style={{ position: 'absolute', top: 0, left: 0, width: 200, height: 120, background: 'radial-gradient(ellipse at 0% 0%, rgba(120,220,232,0.06) 0%, transparent 70%)', pointerEvents: 'none' }} />
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
-              <span style={lbl(C.muted)}>Pipeline de Leads</span>
+            <div style={{ position: 'absolute', top: 0, left: 0, width: 300, height: 150, background: 'radial-gradient(ellipse at 0% 0%, rgba(93,217,245,0.08) 0%, transparent 70%)', pointerEvents: 'none' }} />
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+              <span style={lbl(C.cyan, 10)}>Pipeline de Leads</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
               {[
@@ -923,12 +988,13 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                   <div
                     onClick={i === 1 ? () => setTab('pending') : i === 2 ? () => setTab('approved') : i === 3 ? () => setTab('rejected') : undefined}
                     style={{
-                      flex: 1, padding: '12px 16px', borderRadius: 8, position: 'relative',
-                      background: stage.active ? `${stage.color}10` : 'transparent',
-                      border: stage.active ? `1px solid ${stage.color}30` : '1px solid transparent',
+                      flex: 1, padding: '16px 18px', borderRadius: 10, position: 'relative',
+                      background: stage.active ? `${stage.color}12` : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${stage.active ? stage.color + '40' : stage.color + '15'}`,
                       cursor: i > 0 ? 'pointer' : 'default',
-                      transition: 'all 0.15s',
-                      boxShadow: stage.active ? `0 0 16px ${stage.color}15` : 'none',
+                      transition: 'all 0.25s ease-out',
+                      boxShadow: stage.active ? `0 0 20px ${stage.color}20, inset 0 1px 0 ${stage.color}20` : 'none',
+                      backdropFilter: 'blur(4px)',
                     }}
                   >
                     <div style={{ fontFamily: C.SG, fontWeight: 900, fontSize: 30, color: stage.active ? stage.color : C.text, lineHeight: 1 }}>
@@ -958,8 +1024,8 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
             {/* Lead stream */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <h2 style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 16, letterSpacing: '-0.02em' }}>
-                  {meta.emoji} {tabLeads.length} {tab === 'pending' ? 'pendientes' : tab === 'approved' ? 'aprobados' : 'descartados'}
+                <h2 style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 16, letterSpacing: '-0.02em', color: C.text }}>
+                  {tabLeads.length} {tab === 'pending' ? 'pendientes' : tab === 'approved' ? 'aprobados' : 'descartados'}
                   {query && (
                     <span style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, fontWeight: 400, marginLeft: 8 }}>
                       · {visible.length} resultado{visible.length !== 1 ? 's' : ''} para "{query}"
@@ -967,14 +1033,17 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                   )}
                 </h2>
                 <button onClick={() => refetchLeads()} title="Actualizar" aria-label="Actualizar lista" style={{
-                  width: 30, height: 30, border: 'none', borderRadius: 5,
-                  background: C.s1, color: C.muted, cursor: 'pointer', fontSize: 14,
+                  width: 36, height: 36, borderRadius: 8,
+                  background: C.s2, color: C.cyan, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  transition: 'background 0.15s',
+                  transition: 'all 0.2s ease-out',
+                  border: `1px solid ${C.cyanBdr}`,
                 }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.s3; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = C.s1; }}
-                >↺</button>
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = `${C.cyan}15`; (e.currentTarget as HTMLElement).style.transform = 'scale(1.05)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = C.s2; (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; }}
+                >
+                  <RefreshIcon />
+                </button>
               </div>
 
               {isLoading ? (
@@ -995,9 +1064,8 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                   ))}
                 </div>
               ) : visible.length === 0 ? (
-                <div style={{ ...card({ padding: '52px 28px', textAlign: 'center', position: 'relative', overflow: 'hidden' }) }}>
-                  <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 0%, rgba(171,157,242,0.04) 0%, transparent 60%)', pointerEvents: 'none' }} />
-                  <div style={{ fontSize: 36, marginBottom: 12 }}>{meta.emoji}</div>
+                <div style={{ ...card({ padding: '52px 28px', textAlign: 'center', position: 'relative', overflow: 'hidden', background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}` }) }}>
+                  <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 0%, rgba(93,217,245,0.04) 0%, transparent 60%)', pointerEvents: 'none' }} />
                   <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 6 }}>
                     {query ? `Sin resultados para "${query}"` :
                      tab === 'pending' ? 'Sin leads pendientes' :
@@ -1040,18 +1108,18 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
               {/* Conversion card — accent changes with tab */}
-              <div style={card({ padding: '18px', position: 'relative', overflow: 'hidden' })}>
-                <div style={{ position: 'absolute', inset: 0, background: `radial-gradient(ellipse at 100% 0%, ${tab === 'approved' ? 'rgba(169,220,118,0.06)' : tab === 'rejected' ? 'rgba(255,97,136,0.05)' : 'rgba(120,220,232,0.05)'} 0%, transparent 65%)`, pointerEvents: 'none' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <span style={lbl(tab === 'approved' ? C.green : tab === 'rejected' ? C.pink : C.cyan)}>
+              <div style={card({ padding: '20px', position: 'relative', overflow: 'hidden', background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}`, boxShadow: C.shadow1 })}>
+                <div style={{ position: 'absolute', inset: 0, background: `radial-gradient(ellipse at 100% 0%, ${tab === 'approved' ? 'rgba(126,232,163,0.08)' : tab === 'rejected' ? 'rgba(255,122,159,0.08)' : 'rgba(93,217,245,0.08)'} 0%, transparent 65%)`, pointerEvents: 'none' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                  <span style={lbl(tab === 'approved' ? C.green : tab === 'rejected' ? C.pink : C.cyan, 9)}>
                     {tab === 'pending' ? 'Pendientes' : tab === 'approved' ? 'Aprobados' : 'Descartados'}
                   </span>
-                  <span style={{ ...lbl(C.cyan, 8), background: C.cyanBg, padding: '2px 8px', borderRadius: 10 }}>En vivo</span>
+                  <span style={{ ...lbl(C.cyan, 8), background: C.cyanGlow, padding: '3px 9px', borderRadius: 12, border: `1px solid ${C.cyan}30` }}>En vivo</span>
                 </div>
-                <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 34, color: tab === 'approved' ? C.green : tab === 'rejected' ? C.pink : C.purple }}>
+                <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 38, color: tab === 'approved' ? C.green : tab === 'rejected' ? C.pink : C.purple, lineHeight: 1 }}>
                   {tab === 'pending' ? pending.length : tab === 'approved' ? approved.length : rejected.length}
                 </div>
-                <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted, marginTop: 5 }}>
+                <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, marginTop: 8 }}>
                   {tab === 'approved' && `${convRate}% conversión total`}
                   {tab === 'pending' && `de ${leads.length} leads totales`}
                   {tab === 'rejected' && (leads.length > 0 ? `${Math.round((rejected.length / leads.length) * 100)}% tasa de descarte` : 'sin leads aún')}
@@ -1059,7 +1127,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
               </div>
 
               {/* Contextual analysis */}
-              <div style={card({ padding: '18px' })}>
+              <div style={card({ padding: '20px', background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}`, boxShadow: C.shadow1 })}>
                 <span style={lbl(C.purple, 9)}>Análisis del Pipeline</span>
                 <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 0 }}>
                   {[
@@ -1082,10 +1150,10 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
               {/* Quick action hint for pending tab */}
               {tab === 'pending' && pending.length > 0 && (
-                <div style={{ ...card({ padding: '16px 18px' }), background: 'rgba(171,157,242,0.06)', border: '1px solid rgba(171,157,242,0.15)' }}>
-                  <div style={lbl(C.purple, 9)}>Acción rápida</div>
-                  <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, marginTop: 8, lineHeight: 1.6 }}>
-                    Haz clic en cualquier lead para ver el expediente completo y tomar una decisión.
+                <div style={{ ...card({ padding: '16px 18px' }), background: C.purpleBg, backdropFilter: 'blur(6px)', border: `1px solid ${C.purple}30`, boxShadow: `0 0 16px ${C.purple}10` }}>
+                  <div style={lbl(C.purple, 9)}>💡 Tip rápido</div>
+                  <div style={{ fontFamily: C.IN, fontSize: 12, color: C.textMid, marginTop: 8, lineHeight: 1.6 }}>
+                    Abre cualquier lead para ver el expediente completo y tomar una decisión inmediata.
                   </div>
                 </div>
               )}
