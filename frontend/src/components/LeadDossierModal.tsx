@@ -88,7 +88,6 @@ interface DossierProps {
     hitl_status: 'pending' | 'approved' | 'rejected';
     expediente_json: Record<string, unknown> | null;
   };
-  token: string;
   onClose: () => void;
   onAction: () => void; // kept for compatibility, no longer awaited
   onApplyStatus?: (id: string, status: 'approved' | 'rejected') => void;

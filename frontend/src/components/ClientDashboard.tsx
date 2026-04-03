@@ -423,8 +423,7 @@ const TAB_META: Record<Tab, { title: string; sub: string; emoji: string }> = {
 };
 
 export function ClientDashboard({ onBack }: { onBack?: () => void }) {
-  const { authToken, userEmail, clearAuth } = useOfficeStore();
-  const token = authToken || sessionStorage.getItem('hive_token') || '';
+  const { isAuthenticated, userEmail, clearAuth } = useOfficeStore();
   const queryClient = useQueryClient();
 
   // ── State ──────────────────────────────────────────────────────────────────────
@@ -440,23 +439,23 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
   // ── React Query: Fetch leads with caching ──────────────────────────────────────
   const { data: leads = [], isLoading, refetch: refetchLeads } = useQuery({
-    queryKey: ['leads', token],
+    queryKey: ['leads'],
     queryFn: async () => {
-      const r = await apiFetch(`${API}/api/leads`, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await apiFetch(`${API}/api/leads`);
       return r.ok ? await r.json() : [];
     },
     staleTime: 30000, // cachear por 30 segundos
-    enabled: !!token,
+    enabled: isAuthenticated,
   });
 
   // ── React Query: Cobranza status ───────────────────────────────────────────────
   const { data: cobranzaData } = useQuery({
-    queryKey: ['cobranza-status', token],
+    queryKey: ['cobranza-status'],
     queryFn: async () => {
-      const r = await apiFetch(`${API}/api/cobranza/status`, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await apiFetch(`${API}/api/cobranza/status`);
       return r.ok ? await r.json() : null;
     },
-    enabled: !!token,
+    enabled: isAuthenticated,
     refetchInterval: 5000, // Auto-refresh every 5 seconds
   });
 
@@ -464,12 +463,12 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
   // ── React Query: Email status ──────────────────────────────────────────────────
   const { data: emailData } = useQuery({
-    queryKey: ['email-status', token],
+    queryKey: ['email-status'],
     queryFn: async () => {
-      const r = await apiFetch(`${API}/api/me/email-status`, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await apiFetch(`${API}/api/me/email-status`);
       return r.ok ? await r.json() : null;
     },
-    enabled: !!token,
+    enabled: isAuthenticated,
     refetchInterval: 5000, // Auto-refresh every 5 seconds
   });
 
@@ -478,14 +477,10 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
   // ── Mutation: Approve lead ─────────────────────────────────────────────────────
   const approveMutation = useMutation({
-    mutationFn: (id: string) => 
-      apiFetch(`${API}/api/leads/${id}/approve`, { 
-        method: 'PATCH', 
-        headers: { Authorization: `Bearer ${token}` }
-      }),
+    mutationFn: (id: string) =>
+      apiFetch(`${API}/api/leads/${id}/approve`, { method: 'PATCH' }),
     onSuccess: (_, id) => {
-      // Soft update de cache
-      queryClient.setQueryData(['leads', token], (prev: ApiLead[]) =>
+      queryClient.setQueryData(['leads'], (prev: ApiLead[]) =>
         (prev || []).map(l => l._id === id ? { ...l, hitl_status: 'approved' as HitlStatus } : l)
       );
     },
@@ -496,12 +491,11 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
     mutationFn: (id: string) =>
       apiFetch(`${API}/api/leads/${id}/reject`, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ motivo: 'manual_reject' }),
       }),
     onSuccess: (_, id) => {
-      // Soft update de cache
-      queryClient.setQueryData(['leads', token], (prev: ApiLead[]) =>
+      queryClient.setQueryData(['leads'], (prev: ApiLead[]) =>
         (prev || []).map(l => l._id === id ? { ...l, hitl_status: 'rejected' as HitlStatus } : l)
       );
     },
@@ -519,10 +513,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
       // ✅ SECURE: Confirm session with backend via POST (not GET)
       apiFetch(`${API}/api/auth/oauth-confirm`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId })
       })
         .then(r => r.ok ? r.json() : null)
@@ -545,7 +536,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
           });
         });
     }
-  }, [token]);
+  }, []);
 
   // ── Toast helpers ──────────────────────────────────────────────────────────────
   const dismissToast = (id: string) =>
@@ -560,7 +551,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   const undoReject = (id: string) => {
     const tid = pendingRejects.current.get(id);
     if (tid !== undefined) { clearTimeout(tid); pendingRejects.current.delete(id); }
-    queryClient.setQueryData(['leads', token], (prev: ApiLead[]) =>
+    queryClient.setQueryData(['leads'], (prev: ApiLead[]) =>
       (prev || []).map(l => l._id === id ? { ...l, hitl_status: 'pending' as HitlStatus } : l)
     );
     setSelectedLead(prev => prev?._id === id ? { ...prev, hitl_status: 'pending' } : prev);
@@ -569,7 +560,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   // ── Central action handler (uses React Query mutations) ──────────────────────
   const applyStatus = (id: string, status: HitlStatus) => {
     // 1. Optimistic local update
-    queryClient.setQueryData(['leads', token], (prev: ApiLead[]) =>
+    queryClient.setQueryData(['leads'], (prev: ApiLead[]) =>
       (prev || []).map(l => l._id === id ? { ...l, hitl_status: status } : l)
     );
     setSelectedLead(prev => prev?._id === id ? { ...prev, hitl_status: status } : prev);
@@ -822,7 +813,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                         }}
                         onClick={() => {
                           setTestEmailLoading(true);
-                          apiFetch(`${API}/api/me/email-test`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+                          apiFetch(`${API}/api/me/email-test`, { method: 'POST' })
                             .then(r => r.ok ? r.json() : null)
                             .then(d => {
                               setTestEmailLoading(false);
@@ -864,7 +855,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                           (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
                         }}
                         onClick={() => {
-                          apiFetch(`${API}/api/me/email-disconnect`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+                          apiFetch(`${API}/api/me/email-disconnect`, { method: 'DELETE' })
                             .then(() => { queryClient.invalidateQueries({ queryKey: ['email-status'] }); })
                             .catch();
                         }}>
@@ -889,14 +880,14 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                         (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
                       }}
                       onClick={() => {
-                        if (!token) {
-                          alert('No authentication token found. Please refresh the page.');
+                        if (!isAuthenticated) {
+                          alert('No autenticado. Recarga la página.');
                           return;
                         }
                         // ✅ SECURE: Get redirect URL from backend
                         apiFetch(`${API}/api/email/connect`, {
                           method: 'POST',
-                          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                          headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ provider: 'gmail' })
                         })
                           .then(r => r.ok ? r.json() : null)
@@ -921,14 +912,14 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                         (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
                       }}
                       onClick={() => {
-                        if (!token) {
-                          alert('No authentication token found. Please refresh the page.');
+                        if (!isAuthenticated) {
+                          alert('No autenticado. Recarga la página.');
                           return;
                         }
                         // ✅ SECURE: Get redirect URL from backend
                         apiFetch(`${API}/api/email/connect`, {
                           method: 'POST',
-                          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                          headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ provider: 'outlook' })
                         })
                           .then(r => r.ok ? r.json() : null)
@@ -1277,7 +1268,6 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
         <Suspense fallback={null}>
           <LeadDossierModal
             lead={selectedLead}
-            token={token}
             onClose={() => setSelectedLead(null)}
             onAction={() => refetchLeads()}
             onApplyStatus={applyStatus}

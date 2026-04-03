@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useOfficeStore } from '../store/officeStore';
 import { apiFetch } from '../lib/apiFetch';
 
 // ─── Inject keyframes once ─────────────────────────────────────────────────────
@@ -160,12 +159,10 @@ function CobranzaToast({ toast, onDismiss }: { toast: CobrToast; onDismiss: (id:
 // ─── Detail Modal ──────────────────────────────────────────────────────────────
 function DebtorModal({
   debtor,
-  token,
   onClose,
   onAction,
 }: {
   debtor: Debtor;
-  token: string;
   onClose: () => void;
   onAction: (id: string, updatedDebtor: Partial<Debtor>) => void;
 }) {
@@ -196,7 +193,7 @@ function DebtorModal({
       if (!Object.keys(patch).length) { setEditMode(false); return; }
       const r = await apiFetch(`/api/cobranza/debtors/${debtor._id}`, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
       if (r.ok) {
@@ -222,7 +219,7 @@ function DebtorModal({
     try {
       const r = await apiFetch(`/api/cobranza/debtors/${debtor._id}/${path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: body ? JSON.stringify(body) : undefined,
       });
       if (!r.ok) {
@@ -269,8 +266,7 @@ function DebtorModal({
     try {
       const r = await apiFetch(`/api/cobranza/debtors/${debtor._id}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+              });
       if (r.ok) {
         onAction(debtor._id, { _id: '__deleted__' } as Partial<Debtor> & { _id: string });
         onClose();
@@ -286,7 +282,7 @@ function DebtorModal({
     try {
       const r = await apiFetch(`/api/cobranza/debtors/${debtor._id}`, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notas }),
       });
       if (r.ok) {
@@ -722,11 +718,9 @@ function DebtorModal({
 
 // ─── Create Debtor Modal ───────────────────────────────────────────────────────
 function DebtorCreateModal({
-  token,
   onClose,
   onCreated,
 }: {
-  token: string;
   onClose: () => void;
   onCreated: (debtor: Debtor) => void;
 }) {
@@ -749,7 +743,7 @@ function DebtorCreateModal({
     try {
       const r = await apiFetch('/api/cobranza/debtors', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           nombre: fields.nombre.trim(),
           telefono: fields.telefono.trim(),
@@ -878,7 +872,7 @@ interface Estrategia {
 }
 
 // ─── Onboarding view ─────────────────────────────────────────────────────────
-function CobranzaOnboarding({ token, onDone }: { token: string; onDone: () => void }) {
+function CobranzaOnboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<OnboardingStep>('describe');
   const [descripcion, setDescripcion] = useState('');
   const [estrategia, setEstrategia] = useState<Estrategia | null>(null);
@@ -895,7 +889,7 @@ function CobranzaOnboarding({ token, onDone }: { token: string; onDone: () => vo
     try {
       const r = await apiFetch('/api/cobranza/onboarding/start', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ descripcion }),
       });
       const data = await r.json();
@@ -913,7 +907,7 @@ function CobranzaOnboarding({ token, onDone }: { token: string; onDone: () => vo
     try {
       const r = await apiFetch('/api/cobranza/onboarding/approve', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ estrategia }),
       });
       if (!r.ok) { const d = await r.json(); setError(d.detail || 'Error al guardar'); return; }
@@ -933,8 +927,7 @@ function CobranzaOnboarding({ token, onDone }: { token: string; onDone: () => vo
       form.append('file', file);
       const r = await apiFetch('/api/cobranza/debtors/csv', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: form,
+                body: form,
       });
       const data = await r.json().catch(() => ({})) as { created?: number };
       if (r.ok) setCsvResult({ created: data.created ?? 0 });
@@ -1142,9 +1135,6 @@ function CobranzaOnboarding({ token, onDone }: { token: string; onDone: () => vo
 
 // ─── Main CobranzaTab ─────────────────────────────────────────────────────────
 export function CobranzaTab() {
-  const { authToken } = useOfficeStore();
-  const token = authToken || sessionStorage.getItem('hive_token') || '';
-
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1165,40 +1155,36 @@ export function CobranzaTab() {
 
   // ── Check if onboarding is done ───────────────────────────────────────────
   useEffect(() => {
-    apiFetch('/api/cobranza/status', { headers: { Authorization: `Bearer ${token}` } })
+    apiFetch('/api/cobranza/status')
       .then(r => r.json())
       .then(d => setConfigured(!!d.configured))
       .catch(() => setConfigured(false));
-  }, [token]);
+  }, []);
 
   // ── Fetch debtors ──────────────────────────────────────────────────────────
   const fetchDebtors = useCallback(async () => {
     setLoading(true);
     try {
       const params = estadoFilter ? `?estado=${estadoFilter}` : '';
-      const r = await apiFetch(`/api/cobranza/debtors${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const r = await apiFetch(`/api/cobranza/debtors${params}`);
       if (!r.ok) { setDebtors([]); return; }
       const data = await r.json();
       setDebtors(Array.isArray(data) ? data : []);
     } catch { setDebtors([]); }
     finally { setLoading(false); }
-  }, [token, estadoFilter]);
+  }, [estadoFilter]);
 
   useEffect(() => { fetchDebtors(); }, [fetchDebtors]);
 
   // ── Real-time WS updates ───────────────────────────────────────────────────
   const fetchDebtorById = useCallback(async (debtor_id: string) => {
     try {
-      const r = await apiFetch(`/api/cobranza/debtors/${debtor_id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const r = await apiFetch(`/api/cobranza/debtors/${debtor_id}`);
       if (!r.ok) return null;
       const data = await r.json() as { debtor: Debtor };
       return data.debtor ?? null;
     } catch { return null; }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     const handleDebtorUpdate = async (e: Event) => {
@@ -1237,8 +1223,7 @@ export function CobranzaTab() {
     try {
       const r = await apiFetch(`/api/cobranza/debtors/${debtorId}/${path}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+              });
       if (r.ok) {
         setDebtors(prev => prev.map(d => d._id === debtorId ? { ...d, ...update } : d));
       } else {
@@ -1288,8 +1273,7 @@ export function CobranzaTab() {
       form.append('file', file);
       const r = await apiFetch(`/api/cobranza/debtors/csv?mode=${mode}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: form,
+                body: form,
       });
       const data = await r.json().catch(() => ({})) as { created?: number; updated?: number; errors?: string[] };
       if (r.ok) {
@@ -1323,7 +1307,7 @@ export function CobranzaTab() {
     </div>
   );
   if (!configured) return (
-    <CobranzaOnboarding token={token} onDone={() => { setConfigured(true); fetchDebtors(); }} />
+    <CobranzaOnboarding onDone={() => { setConfigured(true); fetchDebtors(); }} />
   );
 
   return (
@@ -1505,7 +1489,7 @@ export function CobranzaTab() {
       {selectedDebtor && (
         <DebtorModal
           debtor={selectedDebtor}
-          token={token}
+
           onClose={() => setSelectedDebtor(null)}
           onAction={handleModalAction}
         />
@@ -1514,7 +1498,7 @@ export function CobranzaTab() {
       {/* Create debtor modal */}
       {showCreateModal && (
         <DebtorCreateModal
-          token={token}
+
           onClose={() => setShowCreateModal(false)}
           onCreated={(debtor) => {
             setDebtors(prev => [debtor, ...prev]);
