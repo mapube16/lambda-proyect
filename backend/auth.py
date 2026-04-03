@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
 SECRET_KEY: str = os.getenv("SECRET_KEY")
@@ -44,14 +44,19 @@ def create_access_token(
 
 
 async def get_current_user(
-    token: Optional[str] = Depends(oauth2_scheme)
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
 ) -> dict:
-    """Returns {"user_id": str, "role": str} on success."""
+    """Returns {"user_id": str, "role": str} on success.
+    Reads JWT from Authorization header first, then falls back to httpOnly cookie."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    # Try Authorization header first, then httpOnly cookie
+    if token is None:
+        token = request.cookies.get("access_token")
     if token is None:
         raise credentials_exception
     try:
