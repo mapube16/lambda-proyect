@@ -80,7 +80,13 @@ async def cobranza_status(current_user: dict = Depends(get_current_user)):
     enabled = bool((doc or {}).get("cobranza_enabled", False))
     config_doc = await db.cobranza_config.find_one({"user_id": user_id})
     configured = bool((config_doc or {}).get("estrategia"))
-    return {"enabled": enabled, "configured": configured}
+    
+    # DEBUG: Log what we found
+    import logging
+    logger = logging.getLogger("cobranza")
+    logger.info(f"[cobranza_status] user_id={user_id}, doc found: {doc is not None}, enabled: {enabled}, config found: {config_doc is not None}, configured: {configured}")
+    
+    return {"enabled": enabled, "configured": configured, "_debug_user_id": user_id, "_debug_doc_exists": doc is not None}
 
 
 # ── CSV Upload ────────────────────────────────────────────────────────────────
