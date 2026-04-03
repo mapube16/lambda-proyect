@@ -1,6 +1,6 @@
 // Agent state types matching backend
 export type AgentState = 'idle' | 'thinking' | 'tool_use' | 'waiting' | 'error';
-export type AgentRole = 'coder' | 'researcher' | 'writer' | 'reviewer' | 'planner';
+export type AgentRole = 'coder' | 'researcher' | 'writer' | 'reviewer' | 'planner' | 'voice' | 'secop';
 
 export interface Agent {
   id: string;

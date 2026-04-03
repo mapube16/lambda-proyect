@@ -18,6 +18,7 @@ interface AgentPanelProps {
 
 const ROLE_ICONS: Record<AgentRole, string> = {
   coder: '👨‍💻', researcher: '🔬', writer: '✍️', reviewer: '🔍', planner: '📋',
+  voice: '📞', secop: '🏛️',
 };
 const STATE_LABELS: Record<string, { label: string; color: string }> = {
   idle:     { label: 'Idle',       color: '#888' },
