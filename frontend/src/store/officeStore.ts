@@ -31,6 +31,13 @@ const WORK_SEATS: Array<{ col: number; row: number; dir: Direction }> = [
 // Seat assignments: agentId → seat (persists across renders)
 const seatAssignments = new Map<string, { col: number; row: number; dir: Direction }>();
 
+// Break spots defined in useGameLoop (COFFEE_SPOTS, LOUNGE_SPOTS)
+// They're not used directly here but kept for reference
+// const COFFEE_SPOTS: Array<{ col: number; row: number; dir: Direction }> = [
+//   { col: 21, row: 13, dir: 0 }, // in front of coffee
+//   { col: 22, row: 13, dir: 0 }, // next to coffee
+// ];
+
 function isSeatTaken(agentId: string, seat: { col: number; row: number }): boolean {
   return Array.from(seatAssignments.entries())
     .some(([id, s]) => id !== agentId && s.col === seat.col && s.row === seat.row);
@@ -158,6 +165,8 @@ function createCharacterFromAgent(agent: Agent, seatIndex: number): Character {
     bubbleType: getBubbleType(agent.state),
     wanderTimer: 0,
     wanderDelay: 3 + Math.random() * 5,
+    breakTimer: 15 + Math.random() * 30, // First break in 15-45 seconds
+    breakDuration: 0,
   };
 }
 

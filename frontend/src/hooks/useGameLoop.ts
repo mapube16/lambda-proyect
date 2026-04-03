@@ -7,6 +7,24 @@ const WALK_SPEED = 32; // pixels per second
 const WALK_FRAME_DURATION = 0.15; // seconds per frame
 const TYPE_FRAME_DURATION = 0.3;  // seconds per frame
 
+// Break system constants
+const BREAK_CHANCE = 0.35; // 35% go to lounge, 65% to coffee
+const COFFEE_DURATION = () => 5 + Math.random() * 8; // 5-13 seconds
+const LOUNGE_DURATION = () => 8 + Math.random() * 12; // 8-20 seconds
+
+// Break spots: coffee machine area
+const COFFEE_SPOTS = [
+  { col: 21, row: 13 },
+  { col: 22, row: 13 },
+];
+
+// Lounge spots: sofa area
+const LOUNGE_SPOTS = [
+  { col: 25, row: 15 },
+  { col: 27, row: 15 },
+  { col: 26, row: 16 },
+];
+
 // Open floor positions for idle wandering (verified against layout tiles)
 // Left room: cols 1-9, rows 11-20  |  Right room: cols 11-18, rows 11-20
 const WANDER_SPOTS = [
@@ -125,19 +143,67 @@ function updateCharacterState(char: Character, dt: number): Partial<Character> {
         // Agent became active mid-idle — game loop will let store handle walk start
         updates.frameTimer = 0;
       } else {
-        // Count down wander timer, then walk to a random open spot
-        const newWanderTimer = char.wanderTimer + dt;
-        if (newWanderTimer >= char.wanderDelay) {
-          const spot = WANDER_SPOTS[Math.floor(Math.random() * WANDER_SPOTS.length)];
-          updates.path = [spot];
+        // Break timer logic: inactive agents take breaks
+        const newBreakTimer = char.breakTimer - dt;
+        if (newBreakTimer <= 0) {
+          // Time for a break!
+          const goLounge = Math.random() < BREAK_CHANCE;
+          const spots = goLounge ? LOUNGE_SPOTS : COFFEE_SPOTS;
+          const spot = spots[Math.floor(Math.random() * spots.length)];
+          updates.path = [{ col: spot.col, row: spot.row, dir: 0 }];
           updates.state = 'walk';
+          updates.nextState = goLounge ? 'lounge' : 'coffee';
+          updates.breakDuration = goLounge ? LOUNGE_DURATION() : COFFEE_DURATION();
           updates.frame = 0;
           updates.frameTimer = 0;
-          updates.wanderTimer = 0;
-          updates.wanderDelay = 4 + Math.random() * 6;
         } else {
-          updates.wanderTimer = newWanderTimer;
+          // Wander logic: when not taking break
+          const newWanderTimer = char.wanderTimer + dt;
+          if (newWanderTimer >= char.wanderDelay) {
+            const spot = WANDER_SPOTS[Math.floor(Math.random() * WANDER_SPOTS.length)];
+            updates.path = [spot];
+            updates.state = 'walk';
+            updates.frame = 0;
+            updates.frameTimer = 0;
+            updates.wanderTimer = 0;
+            updates.wanderDelay = 4 + Math.random() * 6;
+          } else {
+            updates.wanderTimer = newWanderTimer;
+          }
+          updates.breakTimer = newBreakTimer;
         }
+      }
+      break;
+    }
+
+    case 'coffee': {
+      // At coffee machine
+      const newBreakDuration = char.breakDuration - dt;
+      if (newBreakDuration <= 0) {
+        // Break finished, go back to idle
+        updates.state = 'idle';
+        updates.breakTimer = 20 + Math.random() * 40; // Next break in 20-60s
+        updates.frame = 0;
+        updates.frameTimer = 0;
+      } else {
+        updates.breakDuration = newBreakDuration;
+        updates.frame = 0;
+      }
+      break;
+    }
+
+    case 'lounge': {
+      // At sofa/lounge
+      const newBreakDuration = char.breakDuration - dt;
+      if (newBreakDuration <= 0) {
+        // Break finished, go back to idle
+        updates.state = 'idle';
+        updates.breakTimer = 25 + Math.random() * 45; // Next break in 25-70s
+        updates.frame = 0;
+        updates.frameTimer = 0;
+      } else {
+        updates.breakDuration = newBreakDuration;
+        updates.frame = 0;
       }
       break;
     }

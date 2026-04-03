@@ -16,7 +16,7 @@ export interface Agent {
 }
 
 // Character types for rendering
-export type CharacterState = 'idle' | 'walk' | 'type';
+export type CharacterState = 'idle' | 'walk' | 'type' | 'coffee' | 'lounge';
 export type Direction = 0 | 1 | 2 | 3; // DOWN, LEFT, RIGHT, UP
 
 export interface Character {
@@ -35,9 +35,12 @@ export interface Character {
   moveProgress: number;
   currentTool: string | null;
   isActive: boolean;
-  bubbleType: 'thinking' | 'tool' | 'waiting' | null;
+  bubbleType: 'thinking' | 'tool' | 'waiting' | 'coffee' | 'lounge' | null;
   wanderTimer: number;
   wanderDelay: number;
+  breakTimer: number;
+  breakDuration: number;
+  nextState?: CharacterState;
 }
 
 // Sprite types
