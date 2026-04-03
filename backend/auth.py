@@ -9,9 +9,15 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-SECRET_KEY: str = os.getenv("SECRET_KEY", "CHANGE_ME_IN_PRODUCTION")
+SECRET_KEY: str = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError(
+        "❌ FATAL: SECRET_KEY environment variable not set. "
+        "Generate a strong key with: python -c \"import secrets; print(secrets.token_urlsafe(32))\" "
+        "and add to .env as SECRET_KEY=<your_key>"
+    )
 ALGORITHM: str = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24h
+ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))  # Reduced from 24h to 15min
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)

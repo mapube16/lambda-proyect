@@ -7,6 +7,9 @@ Two endpoints:
 
 CRITICAL: Both endpoints ALWAYS return HTTP 200 regardless of errors.
 Vapi requires 200 to proceed; non-200 responses abort the call.
+
+SECURITY: All webhook payloads are validated using HMAC-SHA256 signatures
+from the X-Vapi-Signature header to prevent unauthorized requests.
 """
 import logging
 from datetime import datetime, timezone
@@ -16,6 +19,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from database import get_db
+from webhook_security import verify_vapi_webhook_signature, extract_signature_from_headers
 
 logger = logging.getLogger("cobranza.webhooks")
 
@@ -111,9 +115,26 @@ async def handle_tool_call(request: Request):
     Routes by message.type:
       - tool-calls / toolWithToolCallList  → dispatch tools
       - end-of-call-report                 → update debtor state (same as /call-ended)
+
+    SECURITY: Validates HMAC-SHA256 signature from X-Vapi-Signature header.
+    Invalid signatures are logged and rejected (but still return 200 per Vapi spec).
     Always returns HTTP 200.
     """
     try:
+        # Read raw body for signature validation
+        raw_body = await request.body()
+
+        # Extract and validate signature from headers
+        signature = extract_signature_from_headers(dict(request.headers))
+        if not signature or not verify_vapi_webhook_signature(raw_body, signature):
+            logger.warning(
+                "[webhook] Invalid signature on %s from %s — rejecting request",
+                request.url.path,
+                request.client.host if request.client else "unknown"
+            )
+            # Return 200 per Vapi spec, but don't process the request
+            return JSONResponse({"results": []}, status_code=200)
+
         body = await request.json()
         message = body.get("message", {})
         msg_type = message.get("type", "")
@@ -243,6 +264,29 @@ async def _process_call_ended(body: dict) -> JSONResponse:
 
 @vapi_router.post("/api/vapi/call-ended")
 async def handle_call_ended(request: Request):
-    """Kept for backwards compatibility. Delegates to _process_call_ended."""
-    body = await request.json()
-    return await _process_call_ended(body)
+    """
+    Kept for backwards compatibility. Delegates to _process_call_ended.
+
+    SECURITY: Also validates HMAC-SHA256 signature from X-Vapi-Signature header.
+    Invalid signatures are rejected (but still return 200 per Vapi spec).
+    """
+    try:
+        # Read raw body for signature validation
+        raw_body = await request.body()
+
+        # Extract and validate signature from headers
+        signature = extract_signature_from_headers(dict(request.headers))
+        if not signature or not verify_vapi_webhook_signature(raw_body, signature):
+            logger.warning(
+                "[webhook] Invalid signature on /api/vapi/call-ended from %s — rejecting request",
+                request.client.host if request.client else "unknown"
+            )
+            # Return 200 per Vapi spec, but don't process the request
+            return JSONResponse({"ok": True})
+
+        body = await request.json()
+        return await _process_call_ended(body)
+
+    except Exception as exc:
+        logger.error("[webhook] handle_call_ended error: %s", exc)
+        return JSONResponse({"ok": True})

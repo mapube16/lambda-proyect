@@ -70,14 +70,22 @@ async def lifespan(app: FastAPI):
     """Initialize DB, orchestrator, and HiveAdapter on startup"""
     global orchestrator, hive_adapter
     await init_db()
-    from auth import hash_password as _hash
-    await seed_users([
-        {"email": "staff@lambda.com",          "hashed_password": _hash("lambda2026"),  "role": "staff"},
-        {"email": "dpg.seguros@gmail.com",     "hashed_password": _hash("seguros2026"), "role": "client"},
-        {"email": "demo.cobranza@empresa.com", "hashed_password": _hash("demo2026"),    "role": "client"},
-        {"email": "samuel@landa",              "hashed_password": _hash("landa2026"),   "role": "staff"},
-        {"email": "maxi@landa",                "hashed_password": _hash("landa2026"),   "role": "staff"},
-    ])
+
+    # SECURITY: Only seed users in development mode (NEVER in production)
+    # Set ENABLE_SEED_USERS=true in .env to seed users for development/testing
+    if os.getenv("ENABLE_SEED_USERS", "false").lower() == "true":
+        from auth import hash_password as _hash
+        logger.warning(
+            "⚠️  DEVELOPMENT MODE: Seeding default users. "
+            "This should NEVER happen in production."
+        )
+        await seed_users([
+            {"email": "staff@lambda.com",          "hashed_password": _hash("lambda2026"),  "role": "staff"},
+            {"email": "dpg.seguros@gmail.com",     "hashed_password": _hash("seguros2026"), "role": "client"},
+            {"email": "demo.cobranza@empresa.com", "hashed_password": _hash("demo2026"),    "role": "client"},
+            {"email": "samuel@landa",              "hashed_password": _hash("landa2026"),   "role": "staff"},
+            {"email": "maxi@landa",                "hashed_password": _hash("landa2026"),   "role": "staff"},
+        ])
 
 # --- Configuración de logging global para FastAPI/Uvicorn ---
 import logging
@@ -345,14 +353,26 @@ app = FastAPI(
 )
 
 
-# CORS for frontend
+# CORS for frontend — restrict to allowed origins for security
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",      # Local development (Vite)
+    "http://localhost:3000",       # Alternative local dev
+    os.getenv("FRONTEND_URL", "http://localhost:5173"),  # From env var
+]
+# Remove duplicates
+ALLOWED_ORIGINS = list(set(ALLOWED_ORIGINS))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,  # Security: don't send credentials with CORS requests
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+# Add security headers to all responses
+from security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ============ REST API Endpoints ============
 
@@ -431,8 +451,13 @@ async def register(user: UserCreate):
 
 
 @app.post("/auth/login")
-async def login(user: UserCreate):
+async def login(user: UserCreate, request: Request):
     """Authenticate user, return signed JWT. Returns 401 on bad credentials."""
+    from rate_limiting import check_login_rate_limit
+
+    # Rate limiting: max 5 failed attempts per 15 minutes per email+IP
+    check_login_rate_limit(user.email, request)
+
     db_user = await get_user_by_email(user.email)
     if not db_user or not verify_password(user.password, db_user["hashed_password"]):
         raise HTTPException(
@@ -441,13 +466,29 @@ async def login(user: UserCreate):
             headers={"WWW-Authenticate": "Bearer"},
         )
     token = create_access_token(data={"sub": str(db_user["id"]), "role": db_user.get("role", "client")})
-    return {
-        "access_token": token,
-        "token_type": "bearer",
+
+    # SECURITY: Set token as httpOnly cookie (not in body) to prevent XSS token theft
+    # Also return user info in response body (no sensitive data)
+    response_data = {
         "user_id": str(db_user["id"]),
         "role": db_user.get("role", "client"),
         "email": db_user["email"],
+        "authenticated": True,
     }
+
+    from fastapi.responses import JSONResponse
+    response = JSONResponse(content=response_data, status_code=200)
+    # Set token as httpOnly, Secure (HTTPS), SameSite cookie
+    response.set_cookie(
+        key="hive_token",
+        value=token,
+        httponly=True,
+        secure=True,  # Only send over HTTPS in production
+        samesite="strict",
+        max_age=15 * 60,  # 15 minutes (match JWT expiration)
+        path="/",
+    )
+    return response
 
 
 @app.post("/auth/google-login")
@@ -503,16 +544,22 @@ async def google_login(data: dict):
         }
     
     except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Error al validar token de Google: {str(e)}")
+        logger.error(f"[google_login] Authentication error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
 
 
 @app.post("/auth/register-request", status_code=202)
-async def register_request(req: RegistrationRequest):
+async def register_request(req: RegistrationRequest, request: Request):
     """
     Submit a registration request for staff review.
     Staff will contact the user to approve/deny access.
     Returns 202 Accepted (not 201 Created, as the account isn't created yet).
     """
+    from rate_limiting import check_registration_rate_limit
+
+    # Rate limiting: max 3 registration requests per hour per IP
+    check_registration_rate_limit(request)
+
     result = await create_registration_request(
         email=req.email,
         full_name=req.full_name,
@@ -535,16 +582,21 @@ async def register_request(req: RegistrationRequest):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/auth/gmail/connect")
-async def gmail_connect_start(token: str = Query(...)):
+async def gmail_connect_start(current_user: dict = Depends(get_current_user)):
     """Inicia el flujo de autorización de Google. Redirige a Google OAuth."""
     from email_oauth import get_gmail_auth_url, generate_oauth_state
     import base64
     import json
 
-    # El JWT debe venir del cliente (desde el header Authorization)
-    # Si no hay token en query, es error
-    if not token:
-        raise HTTPException(status_code=401, detail="Authentication token required")
+    # El JWT viene del header Authorization (via Depends)
+    token = None
+    try:
+        # Reconstruir JWT desde el usuario autenticado
+        user_data = {"sub": current_user["user_id"], "role": current_user.get("role", "client")}
+        token = create_access_token(data=user_data)
+    except Exception as e:
+        logger.error(f"[gmail_connect] Failed to create token: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
     # Generar state random
     random_state = generate_oauth_state()
@@ -623,20 +675,27 @@ async def gmail_callback(code: str = Query(...), state: str = Query(...)):
             )
 
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    # Redirigir a home con indicador de éxito
-    redirect_url = f"{frontend_url}/?oauth_success={'true' if user_id else 'false'}&oauth_email={email}&oauth_provider=gmail"
+    # Redirigir a home con indicador de éxito (no incluir email en URL por seguridad)
+    redirect_url = f"{frontend_url}/?oauth_success={'true' if user_id else 'false'}&oauth_provider=gmail"
     return RedirectResponse(url=redirect_url)
 
 
 @app.get("/auth/outlook/connect")
-async def outlook_connect_start(token: str = Query(...)):
+async def outlook_connect_start(current_user: dict = Depends(get_current_user)):
     """Inicia el flujo de autorización de Outlook. Redirige a Microsoft OAuth."""
     from email_oauth import get_outlook_auth_url, generate_oauth_state
     import base64
     import json
 
-    if not token:
-        raise HTTPException(status_code=401, detail="Authentication token required")
+    # El JWT viene del header Authorization (via Depends)
+    token = None
+    try:
+        # Reconstruir JWT desde el usuario autenticado
+        user_data = {"sub": current_user["user_id"], "role": current_user.get("role", "client")}
+        token = create_access_token(data=user_data)
+    except Exception as e:
+        logger.error(f"[outlook_connect] Failed to create token: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
     random_state = generate_oauth_state()
 
@@ -713,8 +772,8 @@ async def outlook_callback(code: str = Query(...), state: str = Query(...)):
             )
 
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    # Redirigir a home con indicador de éxito
-    redirect_url = f"{frontend_url}/?oauth_success={'true' if user_id else 'false'}&oauth_email={email}&oauth_provider=outlook"
+    # Redirigir a home con indicador de éxito (no incluir email en URL por seguridad)
+    redirect_url = f"{frontend_url}/?oauth_success={'true' if user_id else 'false'}&oauth_provider=outlook"
     return RedirectResponse(url=redirect_url)
 
 
@@ -1012,7 +1071,7 @@ async def send_test_email(current_user: dict = Depends(get_current_user)):
         }
     except Exception as e:
         logger.error(f"[test_email] Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error sending test email: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to send test email. Please try again later.")
 
 
 @app.get("/admin/registration-requests")
@@ -1131,7 +1190,8 @@ async def run_task(agent_id: str, request: TaskRequest, current_user: dict = Dep
         result = await orchestrator.run_agent(agent_id, request.task)
         return AgentResponse(agent_id=agent_id, message=result)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"[run_task] Error for agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process task. Please try again later.")
 
 
 # ============ WebSocket Endpoint ============
@@ -1681,9 +1741,11 @@ async def send_lead_email(
             user_id=user_id,
         )
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        logger.error(f"[send_lead_email] RuntimeError: {e}")
+        raise HTTPException(status_code=503, detail="Email service temporarily unavailable")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error de envío: {e}")
+        logger.error(f"[send_lead_email] Error: {e}")
+        raise HTTPException(status_code=502, detail="Failed to send email. Please try again later.")
 
     await db.leads.update_one({"_id": lead_id}, {"$set": {"email_sent": True}})
     return {"ok": True, "to": to_email, "subject": subject, "status": status}
@@ -2578,7 +2640,8 @@ async def propose_client_config(
     try:
         proposal = await generate_proposal(client_id, api_key)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        logger.error(f"[generate_proposal] Validation error: {e}")
+        raise HTTPException(status_code=422, detail="Invalid request data")
 
     return proposal
 
@@ -2917,7 +2980,8 @@ async def lead_decision(
     try:
         updated = await update_lead_estado(lead_id, user_id, new_estado)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.error(f"[update_lead_estado] Validation error: {e}")
+        raise HTTPException(status_code=400, detail="Invalid request data")
 
     # Fire-and-forget outreach
     if request.decision == "aprobar":
@@ -3031,7 +3095,8 @@ async def handover_tomar(lead_id: str, current_user: dict = Depends(get_current_
     try:
         updated = await update_lead_estado(lead_id, user_id, "handover")
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.error(f"[handover] Validation error: {e}")
+        raise HTTPException(status_code=400, detail="Invalid request data")
 
     # Schedule 48h no-report notification (RESEARCH pitfall 2)
     await schedule_retry(lead_id, canal="notificacion_48h", days=2)
