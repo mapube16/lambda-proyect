@@ -104,6 +104,10 @@ const LogOutIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="n
 const RefreshIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36M20.49 15a9 9 0 0 1-14.85 3.36"/></svg>;
 const XIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
 const HomeIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>;
+const PencilIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>;
+const SaveIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>;
+const BeakerIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 3h15v7c0 1-1 2-2 2H6.5c-1 0-2-1-2-2V3z"/><path d="M7 14h10"/><path d="M6 21h12M8 21c0-1 1-2 2-2h4c1 0 2 1 2 2"/></svg>;
+const ChatIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>;
 // const DotIcon = ({ animated }: { animated?: boolean }) => <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor" style={{ animation: animated ? 'pulse 2s infinite' : undefined }}><circle cx="8" cy="8" r="3"/></svg>;
 
 // ─── Badge ─────────────────────────────────────────────────────────────────────
@@ -783,61 +787,106 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {/* Email channel */}
                 <div style={{
-                  background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}`, borderRadius: 12, padding: 20
+                  background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}`, borderRadius: 12, padding: 20,
+                  transition: 'all 0.3s ease-out', boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                     <div style={{ fontSize: 16, fontWeight: 600, color: C.text, fontFamily: C.SG, display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, color: C.cyan }}><MailIcon /></span> Email
+                      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, color: C.cyan, background: 'rgba(93,217,245,0.1)', borderRadius: 6 }}><MailIcon /></span> Email
                     </div>
-                    <div style={{ fontSize: 11, color: emailConnected ? '#a9dc76' : '#ffd866', background: emailConnected ? 'rgba(169,220,118,0.1)' : 'rgba(255,216,102,0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 11, color: emailConnected ? C.green : '#ffd866', background: emailConnected ? C.greenBg : 'rgba(255,216,102,0.1)', padding: '4px 10px', borderRadius: 6, fontWeight: 600, border: `1px solid ${emailConnected ? C.green + '20' : '#ffd866' + '20'}` }}>
                       {emailConnected ? 'Conectado' : 'No configurado'}
                     </div>
                   </div>
                   {emailConnected ? (
                     <>
-                      <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 14 }}>
                         {emailAddress}
                       </div>
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <button style={{
-                          background: 'rgba(120,220,232,0.08)', border: '1px solid rgba(120,220,232,0.3)', color: C.cyan,
-                          padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
-                        }} onClick={() => {
+                          background: C.cyanBg, border: `1px solid ${C.cyanBdr}`, color: C.cyan,
+                          padding: '8px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: C.SG,
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          transition: 'all 0.25s ease-out',
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLElement).style.background = C.cyanGlow;
+                          (e.currentTarget as HTMLElement).style.transform = 'scale(1.05)';
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLElement).style.background = C.cyanBg;
+                          (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
+                        }}
+                        onClick={() => {
                           setTestEmailLoading(true);
                           apiFetch(`${API}/api/me/email-test`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
                             .then(r => r.ok ? r.json() : null)
                             .then(d => {
                               setTestEmailLoading(false);
-                              if (d) addToast({ id: Date.now().toString(), message: `📧 Correo de prueba enviado a ${d.sent_to}`, type: 'approve' });
+                              if (d) addToast({ id: Date.now().toString(), message: `Correo de prueba enviado a ${d.sent_to}`, type: 'approve' });
                             })
                             .catch(() => setTestEmailLoading(false));
                         }} disabled={testEmailLoading}>
-                          {testEmailLoading ? '⏳ Enviando...' : '🧪 Prueba'}
+                          <BeakerIcon /> {testEmailLoading ? 'Enviando...' : 'Prueba'}
                         </button>
                         <button style={{
-                          background: 'rgba(255,216,102,0.08)', border: '1px solid rgba(255,216,102,0.3)', color: '#ffd866',
-                          padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
-                        }} onClick={() => setShowTemplateEditor(!showTemplateEditor)}>
-                          ✏️ Template
+                          background: 'rgba(255,216,102,0.08)', border: `1px solid rgba(255,216,102,0.3)`, color: '#ffd866',
+                          padding: '8px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: C.SG,
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          transition: 'all 0.25s ease-out',
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLElement).style.background = 'rgba(255,216,102,0.12)';
+                          (e.currentTarget as HTMLElement).style.transform = 'scale(1.05)';
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLElement).style.background = 'rgba(255,216,102,0.08)';
+                          (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
+                        }}
+                        onClick={() => setShowTemplateEditor(!showTemplateEditor)}>
+                          <PencilIcon /> Template
                         </button>
                         <button style={{
-                          background: 'transparent', border: '1px solid rgba(169,220,118,0.2)', color: '#a9dc76',
-                          padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
-                        }} onClick={() => {
+                          background: 'rgba(169,220,118,0.08)', border: `1px solid rgba(169,220,118,0.2)`, color: '#a9dc76',
+                          padding: '8px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: C.SG,
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          transition: 'all 0.25s ease-out',
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLElement).style.background = 'rgba(169,220,118,0.12)';
+                          (e.currentTarget as HTMLElement).style.transform = 'scale(1.05)';
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLElement).style.background = 'rgba(169,220,118,0.08)';
+                          (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
+                        }}
+                        onClick={() => {
                           apiFetch(`${API}/api/me/email-disconnect`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
                             .then(() => { queryClient.invalidateQueries({ queryKey: ['email-status'] }); })
                             .catch();
                         }}>
-                          ✕ Desconectar
+                          <XIcon /> Desconectar
                         </button>
                       </div>
                     </>
                   ) : (
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <button style={{
-                        background: 'rgba(120,220,232,0.08)', border: '1px solid rgba(120,220,232,0.3)', color: C.cyan,
-                        padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
-                      }} onClick={() => {
+                        background: C.cyanBg, border: `1px solid ${C.cyanBdr}`, color: C.cyan,
+                        padding: '8px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: C.SG,
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        transition: 'all 0.25s ease-out',
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.background = C.cyanGlow;
+                        (e.currentTarget as HTMLElement).style.transform = 'scale(1.05)';
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.background = C.cyanBg;
+                        (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
+                      }}
+                      onClick={() => {
                         if (!token) {
                           alert('No authentication token found. Please refresh the page.');
                           return;
@@ -853,12 +902,23 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                             if (d?.redirect_url) window.location.href = d.redirect_url;
                           });
                       }}>
-                        📧 Gmail
+                        <MailIcon /> Gmail
                       </button>
                       <button style={{
-                        background: 'rgba(169,220,118,0.08)', border: '1px solid rgba(169,220,118,0.3)', color: '#a9dc76',
-                        padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
-                      }} onClick={() => {
+                        background: 'rgba(169,220,118,0.08)', border: `1px solid rgba(169,220,118,0.3)`, color: '#a9dc76',
+                        padding: '8px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: C.SG,
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        transition: 'all 0.25s ease-out',
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.background = 'rgba(169,220,118,0.12)';
+                        (e.currentTarget as HTMLElement).style.transform = 'scale(1.05)';
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.background = 'rgba(169,220,118,0.08)';
+                        (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
+                      }}
+                      onClick={() => {
                         if (!token) {
                           alert('No authentication token found. Please refresh the page.');
                           return;
@@ -874,7 +934,7 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
                             if (d?.redirect_url) window.location.href = d.redirect_url;
                           });
                       }}>
-                        💼 Outlook
+                        <MailIcon /> Outlook
                       </button>
                     </div>
                   )}
@@ -882,22 +942,32 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
                 {/* WhatsApp channel */}
                 <div style={{
-                  background: C.s1, border: `1px solid ${C.s3}`, borderRadius: 10, padding: 16
+                  background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}`, borderRadius: 12, padding: 20,
+                  transition: 'all 0.3s ease-out', boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: C.SG }}>
-                      💬 WhatsApp
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: C.text, fontFamily: C.SG, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, color: '#ffd866', background: 'rgba(255,216,102,0.1)', borderRadius: 6 }}><ChatIcon /></span> WhatsApp
                     </div>
-                    <div style={{ fontSize: 11, color: '#ffd866', background: 'rgba(255,216,102,0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 11, color: '#ffd866', background: 'rgba(255,216,102,0.1)', padding: '4px 10px', borderRadius: 6, fontWeight: 600, border: `1px solid rgba(255,216,102,0.2)` }}>
                       Pendiente
                     </div>
                   </div>
-                  <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, color: C.muted, fontFamily: C.IN, marginBottom: 16 }}>
                     Configurar WhatsApp Business para enviar mensajes desde tu número.
                   </div>
                   <button style={{
-                    background: 'rgba(255,216,102,0.1)', border: '1px solid rgba(255,216,102,0.2)', color: '#ffd866',
-                    padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG
+                    background: 'rgba(255,216,102,0.08)', border: `1px solid rgba(255,216,102,0.3)`, color: '#ffd866',
+                    padding: '8px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: C.SG,
+                    transition: 'all 0.25s ease-out',
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = 'rgba(255,216,102,0.12)';
+                    (e.currentTarget as HTMLElement).style.transform = 'scale(1.05)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = 'rgba(255,216,102,0.08)';
+                    (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
                   }}>
                     Configurar
                   </button>
@@ -912,38 +982,75 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
             {/* Template Editor */}
             {showTemplateEditor && emailConnected && (
               <div style={{
-                background: C.s1, border: `1px solid ${C.s3}`, borderRadius: 10, padding: 16, marginTop: 16
+                background: C.s1, backdropFilter: C.s1Blur, border: `1px solid ${C.cyanBdr}`, borderRadius: 12, padding: 20, marginTop: 20,
+                transition: 'all 0.3s ease-out', boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                animation: 'fadeUp 0.3s ease-out'
               }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: C.SG, marginBottom: 16 }}>
-                  ✏️ Personalizar Template
+                <div style={{ fontSize: 16, fontWeight: 600, color: C.text, fontFamily: C.SG, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, color: '#ffd866', background: 'rgba(255,216,102,0.1)', borderRadius: 6 }}><PencilIcon /></span> Personalizar Template
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div>
-                    <label style={{ fontSize: 11, color: C.muted, fontFamily: C.SG, textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                    <label style={{ fontSize: 11, color: C.cyan, fontFamily: C.SG, textTransform: 'uppercase', display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: '0.08em' }}>
                       Pie de página
                     </label>
                     <textarea style={{
-                      width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${C.s3}`, background: C.s0,
-                      color: C.text, fontFamily: C.IN, fontSize: 12, minHeight: 60
-                    }} placeholder="Este es un mensaje automático..." />
+                      width: '100%', padding: 10, borderRadius: 8, border: `1px solid ${C.cyanBdr}`, background: C.s0,
+                      color: C.text, fontFamily: C.IN, fontSize: 12, minHeight: 80,
+                      transition: 'all 0.25s ease-out',
+                      outline: 'none',
+                    }}
+                    placeholder="Este es un mensaje automático..."
+                    onFocus={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = C.cyan;
+                      (e.currentTarget as HTMLElement).style.boxShadow = `0 0 12px ${C.cyan}20`;
+                    }}
+                    onBlur={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = C.cyanBdr;
+                      (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+                    }}
+                    />
                   </div>
 
                   <div>
-                    <label style={{ fontSize: 11, color: C.muted, fontFamily: C.SG, textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                    <label style={{ fontSize: 11, color: C.cyan, fontFamily: C.SG, textTransform: 'uppercase', display: 'block', marginBottom: 8, fontWeight: 600, letterSpacing: '0.08em' }}>
                       Color de marca (hex)
                     </label>
                     <input type="text" placeholder="#78dce8" style={{
-                      width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${C.s3}`, background: C.s0,
-                      color: C.text, fontFamily: C.IN, fontSize: 12
-                    }} />
+                      width: '100%', padding: 10, borderRadius: 8, border: `1px solid ${C.cyanBdr}`, background: C.s0,
+                      color: C.text, fontFamily: C.IN, fontSize: 12,
+                      transition: 'all 0.25s ease-out',
+                      outline: 'none',
+                    }}
+                    onFocus={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = C.cyan;
+                      (e.currentTarget as HTMLElement).style.boxShadow = `0 0 12px ${C.cyan}20`;
+                    }}
+                    onBlur={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = C.cyanBdr;
+                      (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+                    }}
+                    />
                   </div>
 
                   <button style={{
-                    background: 'rgba(120,220,232,0.12)', border: '1px solid rgba(120,220,232,0.3)', color: C.cyan,
-                    padding: '8px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: C.SG, fontWeight: 600
+                    background: C.cyanBg, border: `1px solid ${C.cyanBdr}`, color: C.cyan,
+                    padding: '10px 14px', borderRadius: 8, fontSize: 11, cursor: 'pointer', fontFamily: C.SG, fontWeight: 600,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    transition: 'all 0.25s ease-out',
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = C.cyanGlow;
+                    (e.currentTarget as HTMLElement).style.boxShadow = `0 0 16px ${C.cyan}40, inset 0 1px 0 ${C.cyan}20`;
+                    (e.currentTarget as HTMLElement).style.transform = 'scale(1.02)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = C.cyanBg;
+                    (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+                    (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
                   }}>
-                    💾 Guardar Template
+                    <SaveIcon /> Guardar Template
                   </button>
                 </div>
               </div>
