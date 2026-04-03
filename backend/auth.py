@@ -56,7 +56,7 @@ async def get_current_user(
     )
     # Try Authorization header first, then httpOnly cookie
     if token is None:
-        token = request.cookies.get("access_token")
+        token = request.cookies.get("hive_token")
     if token is None:
         raise credentials_exception
     try:
