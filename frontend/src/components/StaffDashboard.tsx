@@ -13,12 +13,11 @@ export function StaffDashboard() {
   const [loadingClients, setLoadingClients] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const auth = () => ({ Authorization: `Bearer ${useOfficeStore.getState().authToken}` });
 
   const loadClients = useCallback(async () => {
     setLoadingClients(true);
     try {
-      const res = await apiFetch(`${API_URL}/api/staff/clients`, { headers: auth() });
+      const res = await apiFetch(`${API_URL}/api/staff/clients`, { credentials: 'include' });
       if (res.ok) setClients(await res.json());
     } finally {
       setLoadingClients(false);
@@ -31,7 +30,8 @@ export function StaffDashboard() {
     try {
       const res = await apiFetch(`${API_URL}/api/leads/${leadId}/send-email`, {
         method: 'POST',
-        headers: { ...auth(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ subject_index: 0 }),
       });
       if (!res.ok) {
@@ -53,9 +53,9 @@ export function StaffDashboard() {
     setLoadingDetail(true);
     try {
       const [detailRes, leadsRes, learningRes] = await Promise.all([
-        apiFetch(`${API_URL}/api/staff/clients/${client.id}`, { headers: auth() }),
-        apiFetch(`${API_URL}/api/staff/clients/${client.id}/leads`, { headers: auth() }),
-        apiFetch(`${API_URL}/api/staff/clients/${client.id}/learning`, { headers: auth() }),
+        apiFetch(`${API_URL}/api/staff/clients/${client.id}`, { credentials: 'include' }),
+        apiFetch(`${API_URL}/api/staff/clients/${client.id}/leads`, { credentials: 'include' }),
+        apiFetch(`${API_URL}/api/staff/clients/${client.id}/learning`, { credentials: 'include' }),
       ]);
       if (detailRes.ok) setClientDetail(await detailRes.json());
       if (leadsRes.ok) setClientLeads(await leadsRes.json());
@@ -558,7 +558,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     try {
       await apiFetch(`${API_URL}/api/staff/clients/${userId}/knowledge`, {
         method: 'DELETE',
-        headers: auth(),
+        credentials: 'include',
       });
     } catch {
       // Non-blocking: onboarding can continue even if reset fails
@@ -577,7 +577,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
       try {
         await apiFetch(`${API_URL}/api/staff/onboard/discard/${tempUserId}`, {
           method: 'POST',
-          headers: auth(),
+          credentials: 'include',
         });
       } catch {
         // Best effort; close anyway.
@@ -591,7 +591,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     setKnowledgeDebugLoading(true);
     try {
       const res = await apiFetch(`${API_URL}/api/staff/onboard/debug-knowledge/${tempUserId}`, {
-        headers: auth(),
+        credentials: 'include',
       });
       if (!res.ok) {
         const d = await res.json();
@@ -700,7 +700,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     try {
       const res = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/upload`, {
         method: 'POST',
-        headers: auth(),
+        credentials: 'include',
         body: form,
       });
       if (!res.ok) {
@@ -788,13 +788,13 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
 
   const refreshSources = async () => {
     if (!tempUserId) return;
-    const res = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge`, { headers: auth() });
+    const res = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge`, { credentials: 'include' });
     if (res.ok) setSources(await res.json());
   };
 
   const deleteSource = async (filename: string) => {
     await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/${encodeURIComponent(filename)}`, {
-      method: 'DELETE', headers: auth(),
+      method: 'DELETE', credentials: 'include',
     });
     setSources(prev => prev.filter(s => s.filename !== filename));
   };
@@ -805,7 +805,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     setError('');
     try {
       const res = await apiFetch(`${API_URL}/api/staff/onboard/propose/${tempUserId}`, {
-        method: 'POST', headers: auth(),
+        method: 'POST', credentials: 'include',
       });
       if (!res.ok) {
         const d = await res.json();
