@@ -101,10 +101,20 @@ function OfficeView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [view, setView] = useState<'office' | 'dashboard'>('office');
+  const [dashboardInitialSection, setDashboardInitialSection] = useState<
+    'leads' | 'cobranza' | 'email' | 'canales' | undefined
+  >(undefined);
   const agentCount = agents.size;
   const activeAgents = Array.from(agents.values()).filter(a => a.state !== 'idle').length;
 
-  if (view === 'dashboard') return <ClientDashboard onBack={() => setView('office')} />;
+  if (view === 'dashboard') {
+    return (
+      <ClientDashboard
+        onBack={() => setView('office')}
+        initialSection={dashboardInitialSection}
+      />
+    );
+  }
 
   return (
     <div style={{
@@ -176,7 +186,14 @@ function OfficeView() {
           <RailBtn icon={<HomeIcon />} active title="Oficina" />
           <RailBtn icon={<BarChartIcon />} title="Pipeline" onClick={() => setView('dashboard')} />
           <RailBtn icon={<CheckIcon />} title="Aprobados" onClick={() => setView('dashboard')} />
-          <RailBtn icon={<UsersIcon />} title="Agentes" />
+          <RailBtn
+            icon={<UsersIcon />}
+            title="Cobros"
+            onClick={() => {
+              setDashboardInitialSection('cobranza');
+              setView('dashboard');
+            }}
+          />
         </div>
 
         {/* ── Canvas section ── */}

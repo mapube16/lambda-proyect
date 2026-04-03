@@ -108,7 +108,9 @@ const PencilIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="n
 const SaveIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>;
 const BeakerIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 3h15v7c0 1-1 2-2 2H6.5c-1 0-2-1-2-2V3z"/><path d="M7 14h10"/><path d="M6 21h12M8 21c0-1 1-2 2-2h4c1 0 2 1 2 2"/></svg>;
 const ChatIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>;
-// const DotIcon = ({ animated }: { animated?: boolean }) => <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor" style={{ animation: animated ? 'pulse 2s infinite' : undefined }}><circle cx="8" cy="8" r="3"/></svg>;
+const DollarIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>;
+const ShareIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>;
+const BarChartIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>;
 
 // ─── Badge ─────────────────────────────────────────────────────────────────────
 const Badge = React.memo(function Badge({ score, status }: { score: number | null; status: HitlStatus }) {
@@ -352,35 +354,80 @@ const LeadCard = React.memo(function LeadCard({ lead, onApplyStatus, onOpenDossi
          prev.lead.score === next.lead.score;
 });
 
+// ─── Sidebar section label ─────────────────────────────────────────────────────
+const SidebarLabel = React.memo(function SidebarLabel({ text }: { text: string }) {
+  return (
+    <div style={{
+      padding: '16px 20px 6px',
+      ...lbl(C.muted, 9),
+      letterSpacing: '0.14em',
+      opacity: 0.7,
+    }}>
+      {text}
+    </div>
+  );
+});
+
 // ─── Nav item ──────────────────────────────────────────────────────────────────
-const NavItem = React.memo(function NavItem({ emoji, text, active, count, onClick }: {
-  emoji: string; text: string; active: boolean; count?: number; onClick: () => void;
+const NavItem = React.memo(function NavItem({ icon, text, active, count, accent, onClick }: {
+  icon: React.ReactNode; text: string; active: boolean; count?: number; accent?: string; onClick: () => void;
 }) {
   const [hov, setHov] = useState(false);
+  const color = accent || C.cyan;
   return (
     <button
       onClick={onClick}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
-        display: 'flex', alignItems: 'center', gap: 12, width: '100%',
-        padding: '12px 20px', border: 'none', cursor: 'pointer', textAlign: 'left',
-        background: active ? C.cyanGlow : hov ? `${C.cyan}08` : 'transparent',
-        borderRight: `2px solid ${active ? C.cyan : 'transparent'}`,
-        transition: 'all 0.2s ease-out',
-        borderRadius: '8px 0 0 8px',
+        display: 'flex', alignItems: 'center', gap: 12, width: 'calc(100% - 16px)',
+        margin: '1px 8px',
+        padding: '10px 12px', border: 'none', cursor: 'pointer', textAlign: 'left',
+        background: active
+          ? `linear-gradient(135deg, ${color}14, ${color}08)`
+          : hov ? `${color}06` : 'transparent',
+        borderLeft: `2px solid ${active ? color : 'transparent'}`,
+        borderRight: 'none', borderTop: 'none', borderBottom: 'none',
+        transition: 'all 0.25s ease-out',
+        borderRadius: 8,
+        position: 'relative',
+        overflow: 'hidden',
       }}
     >
-      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, color: active ? C.cyan : hov ? C.text : C.muted, transition: 'color 0.2s' }}>
-        {emoji === '🔍' ? <SearchIcon /> : emoji === '✅' ? <CheckIcon /> : emoji === '✕' ? <XIcon /> : emoji === '🏢' ? <HomeIcon /> : emoji}
+      {/* Subtle glow on active */}
+      {active && <div style={{
+        position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)',
+        width: 40, height: 40, borderRadius: '50%',
+        background: `radial-gradient(circle, ${color}15, transparent 70%)`,
+        pointerEvents: 'none',
+      }} />}
+      <span style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        width: 32, height: 32, borderRadius: 8,
+        background: active ? `${color}18` : hov ? `${color}0a` : 'transparent',
+        color: active ? color : hov ? C.text : C.muted,
+        transition: 'all 0.25s ease-out',
+        flexShrink: 0,
+        position: 'relative',
+      }}>
+        {icon}
       </span>
-      <span style={{ ...lbl(active ? C.cyan : hov ? C.text : C.muted, 11), flex: 1 }}>{text}</span>
+      <span style={{
+        fontFamily: C.SG, fontSize: 12, fontWeight: active ? 600 : 500,
+        letterSpacing: '-0.01em',
+        color: active ? color : hov ? C.text : C.textMid,
+        transition: 'color 0.2s',
+        flex: 1,
+      }}>{text}</span>
       {count !== undefined && count > 0 && (
         <span style={{
-          background: active ? C.cyan : C.s3,
-          color: active ? '#000' : C.muted,
-          borderRadius: 10, padding: '1px 7px',
+          background: active ? `${color}20` : 'rgba(255,255,255,0.06)',
+          color: active ? color : C.muted,
+          borderRadius: 6, padding: '2px 8px',
           fontSize: 10, fontFamily: C.SG, fontWeight: 700,
+          lineHeight: 1.4,
+          border: active ? `1px solid ${color}30` : '1px solid transparent',
+          transition: 'all 0.25s ease-out',
         }}>
           {count}
         </span>
@@ -422,12 +469,20 @@ const TAB_META: Record<Tab, { title: string; sub: string; emoji: string }> = {
   rejected: { title: 'Leads Descartados',  sub: 'Prospectos que no cumplen con los criterios del pipeline.', emoji: '✕' },
 };
 
-export function ClientDashboard({ onBack }: { onBack?: () => void }) {
+type DashboardSection = 'leads' | 'cobranza' | 'email' | 'canales';
+
+export function ClientDashboard({
+  onBack,
+  initialSection,
+}: {
+  onBack?: () => void;
+  initialSection?: DashboardSection;
+}) {
   const { isAuthenticated, userEmail, clearAuth } = useOfficeStore();
   const queryClient = useQueryClient();
 
   // ── State ──────────────────────────────────────────────────────────────────────
-  const [section, setSection]  = useState<'leads' | 'cobranza' | 'email' | 'canales'>('leads');
+  const [section, setSection] = useState<DashboardSection>('leads');
   const [tab, setTab]          = useState<Tab>('pending');
   const [selectedLead, setSelectedLead] = useState<ApiLead | null>(null);
   const [toasts, setToasts]    = useState<ToastItem[]>([]);
@@ -460,6 +515,27 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
   });
 
   const cobranzaEnabled = cobranzaData?.enabled ?? false;
+
+  // Apply initial section once; if cobranza isn't enabled, fall back to leads.
+  const appliedInitialSection = useRef(false);
+  useEffect(() => {
+    if (appliedInitialSection.current) return;
+    if (!initialSection) {
+      appliedInitialSection.current = true;
+      return;
+    }
+
+    if (initialSection === 'cobranza') {
+      // Wait until cobranza status resolves (null or object) before deciding.
+      if (cobranzaData === undefined) return;
+      setSection(cobranzaEnabled ? 'cobranza' : 'leads');
+      appliedInitialSection.current = true;
+      return;
+    }
+
+    setSection(initialSection);
+    appliedInitialSection.current = true;
+  }, [initialSection, cobranzaData, cobranzaEnabled]);
 
   // ── React Query: Email status ──────────────────────────────────────────────────
   const { data: emailData } = useQuery({
@@ -614,82 +690,144 @@ export function ClientDashboard({ onBack }: { onBack?: () => void }) {
 
       {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
       <aside style={{
-        width: 236, flexShrink: 0,
+        width: 252, flexShrink: 0,
         display: 'flex', flexDirection: 'column',
         background: C.s0,
         backdropFilter: C.s0Blur,
         borderRight: `1px solid ${C.cyanBdr}`,
-        boxShadow: C.shadow1,
+        boxShadow: `${C.shadow1}, inset -1px 0 0 rgba(93,217,245,0.04)`,
+        position: 'relative',
+        overflow: 'hidden',
       }}>
+        {/* Background subtle gradient */}
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: 200,
+          background: 'radial-gradient(ellipse at 20% 0%, rgba(93,217,245,0.04) 0%, transparent 70%)',
+          pointerEvents: 'none',
+        }} />
+
         {/* Logo */}
-        <div style={{ padding: '16px 20px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src="/assets/logo.svg" alt="Landa AI" style={{ width: 40, height: 40 }} />
+        <div style={{
+          padding: '20px 20px 16px',
+          display: 'flex', alignItems: 'center', gap: 12,
+          position: 'relative',
+        }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 10,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'linear-gradient(135deg, rgba(93,217,245,0.12), rgba(180,161,255,0.12))',
+            border: '1px solid rgba(93,217,245,0.15)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05)',
+            flexShrink: 0,
+          }}>
+            <img src="/assets/logo.svg" alt="Landa AI" style={{ width: 24, height: 24 }} />
+          </div>
           <div>
-            <div style={{ fontFamily: C.SG, fontWeight: 900, fontSize: 21, color: C.purple, fontStyle: 'italic', letterSpacing: '-0.03em' }}>
-              LANDA
+            <div style={{
+              fontFamily: C.SG, fontWeight: 800, fontSize: 18,
+              background: 'linear-gradient(135deg, #b4a1ff, #5dd9f5)',
+              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+              letterSpacing: '-0.02em', lineHeight: 1.1,
+            }}>
+              Landa
             </div>
-            <div style={lbl(C.cyan, 9)}>SYSTEM_READY</div>
+            <div style={{
+              fontFamily: C.SG, fontSize: 9, fontWeight: 500,
+              color: C.green, letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              display: 'flex', alignItems: 'center', gap: 5, marginTop: 2,
+            }}>
+              <span style={{
+                width: 5, height: 5, borderRadius: '50%',
+                background: C.green, display: 'inline-block',
+                boxShadow: `0 0 6px ${C.green}`,
+                animation: 'pulse 2s infinite',
+              }} />
+              En linea
+            </div>
           </div>
         </div>
 
-        {/* Navigation — single source of truth for tab */}
-        <nav style={{ flex: 1, paddingTop: 4 }}>
-          {/* Section switcher */}
-          <div style={{ display: 'flex', margin: '0 12px 8px', gap: 4, flexWrap: 'wrap' }}>
-            {(['leads', ...(cobranzaEnabled ? ['cobranza'] : []), 'email', 'canales'] as const).map(s => (
-              <button
-                key={s}
-                onClick={() => setSection(s as 'leads' | 'cobranza' | 'email' | 'canales')}
-                style={{
-                  flex: s === 'leads' || s === 'cobranza' ? 1 : 'auto',
-                  padding: '7px 10px', border: 'none', cursor: 'pointer',
-                  background: section === s ? (s === 'cobranza' ? 'rgba(252,152,103,0.1)' : s === 'canales' ? 'rgba(126,232,163,0.1)' : C.cyanGlow) : 'transparent',
-                  borderBottom: `2px solid ${section === s ? (s === 'cobranza' ? '#fc9867' : s === 'canales' ? '#7ee8a3' : C.cyan) : 'transparent'}`,
-                  fontFamily: C.SG, fontWeight: 600, fontSize: 10, letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  color: section === s ? (s === 'cobranza' ? '#fc9867' : s === 'canales' ? '#7ee8a3' : C.cyan) : C.muted,
-                  transition: 'all 0.2s ease-out',
-                  minWidth: s === 'leads' || s === 'cobranza' ? undefined : '60px',
-                  whiteSpace: 'nowrap',
-                  backdropFilter: 'blur(6px)',
-                  borderRadius: '6px 6px 0 0',
-                }}
-              >
-                {s === 'leads' ? 'Leads' : s === 'cobranza' ? 'Cobro' : s === 'email' ? 'Email' : 'Canales'}
-              </button>
-            ))}
-          </div>
+        {/* Divider */}
+        <div style={{ height: 1, background: `linear-gradient(to right, transparent, ${C.cyanBdr}, transparent)`, margin: '0 16px 4px' }} />
 
-          {section === 'leads' && (
+        {/* Navigation */}
+        <nav style={{ flex: 1, paddingTop: 4, overflowY: 'auto', overflowX: 'hidden' }}>
+          {/* Main sections */}
+          <SidebarLabel text="Gestión" />
+          <NavItem icon={<BarChartIcon />} text="Pipeline"    active={section === 'leads' && tab === 'pending'}  count={pending.length}  onClick={() => { setSection('leads'); setTab('pending'); }}  />
+          <NavItem icon={<CheckIcon />}    text="Aprobados"   active={section === 'leads' && tab === 'approved'} count={approved.length} accent={C.green} onClick={() => { setSection('leads'); setTab('approved'); }} />
+          <NavItem icon={<XIcon />}        text="Descartados" active={section === 'leads' && tab === 'rejected'} count={rejected.length} accent={C.pink}  onClick={() => { setSection('leads'); setTab('rejected'); }} />
+
+          {cobranzaEnabled && (
             <>
-              <NavItem emoji="🔍" text="Pipeline"    active={tab === 'pending'}  count={pending.length}  onClick={() => setTab('pending')}  />
-              <NavItem emoji="✅" text="Aprobados"   active={tab === 'approved'} count={approved.length} onClick={() => setTab('approved')} />
-              <NavItem emoji="✕"  text="Descartados" active={tab === 'rejected'} count={rejected.length} onClick={() => setTab('rejected')} />
+              <SidebarLabel text="Cobros" />
+              <NavItem icon={<DollarIcon />} text="Cobranza" active={section === 'cobranza'} accent="#fc9867" onClick={() => setSection('cobranza')} />
             </>
           )}
 
+          <SidebarLabel text="Comunicación" />
+          <NavItem icon={<MailIcon />}  text="Email"   active={section === 'email'}   onClick={() => setSection('email')} />
+          <NavItem icon={<ShareIcon />} text="Canales"  active={section === 'canales'} accent={C.green} onClick={() => setSection('canales')} />
+
+          {/* Spacer */}
+          <div style={{ flex: 1, minHeight: 24 }} />
+
+          {/* Back to office */}
           {onBack && (
             <>
-              <div style={{ height: 1, background: `linear-gradient(to right, transparent, ${C.cyanBdr}, transparent)`, margin: '8px 0' }} />
-              <NavItem emoji="🏢" text="Ir a la Oficina" active={false} onClick={onBack} />
+              <div style={{ height: 1, background: `linear-gradient(to right, transparent, ${C.cyanBdr}, transparent)`, margin: '4px 16px' }} />
+              <NavItem icon={<HomeIcon />} text="Ir a la Oficina" active={false} onClick={onBack} />
             </>
           )}
         </nav>
 
         {/* Footer */}
-        <div style={{ padding: '12px 0 16px' }}>
-          <div style={{ height: 1, background: `linear-gradient(to right, transparent, ${C.cyanBdr}, transparent)`, margin: '0 0 8px' }} />
+        <div style={{ padding: '8px 0 12px', position: 'relative' }}>
+          <div style={{ height: 1, background: `linear-gradient(to right, transparent, ${C.cyanBdr}, transparent)`, margin: '0 16px 8px' }} />
+          {/* User info */}
+          {userEmail && (
+            <div style={{
+              padding: '4px 20px 8px',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 8,
+                background: 'linear-gradient(135deg, rgba(93,217,245,0.15), rgba(180,161,255,0.15))',
+                border: '1px solid rgba(93,217,245,0.1)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: C.SG, fontSize: 11, fontWeight: 700, color: C.cyan,
+                flexShrink: 0,
+              }}>
+                {userEmail[0]?.toUpperCase()}
+              </div>
+              <span style={{
+                fontFamily: C.IN, fontSize: 11, color: C.muted,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                flex: 1,
+              }}>{userEmail}</span>
+            </div>
+          )}
           <button onClick={clearAuth} style={{
-            display: 'flex', alignItems: 'center', gap: 10, width: '100%',
-            padding: '10px 20px', border: 'none', background: 'transparent',
-            cursor: 'pointer', ...lbl(C.muted, 10),
-            transition: 'all 0.2s ease-out',
-            borderRadius: 6,
+            display: 'flex', alignItems: 'center', gap: 10, width: 'calc(100% - 16px)',
+            margin: '0 8px',
+            padding: '10px 12px', border: 'none', background: 'transparent',
+            cursor: 'pointer',
+            fontFamily: C.SG, fontSize: 11, fontWeight: 500,
+            letterSpacing: '0.02em', color: C.muted,
+            transition: 'all 0.25s ease-out',
+            borderRadius: 8,
           }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.s3; (e.currentTarget as HTMLElement).style.color = C.cyan; }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,122,159,0.06)'; (e.currentTarget as HTMLElement).style.color = C.pink; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = C.muted; }}
           >
-            <LogOutIcon /> Cerrar sesión
+            <span style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 32, height: 32, borderRadius: 8,
+            }}>
+              <LogOutIcon />
+            </span>
+            Cerrar sesión
           </button>
         </div>
       </aside>
