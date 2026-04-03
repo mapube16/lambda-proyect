@@ -9,6 +9,7 @@ export function apiFetch(url: string, init: RequestInit = {}): Promise<Response>
   const existing = (init.headers ?? {}) as Record<string, string>;
   return fetch(url, {
     ...init,
+    credentials: 'include',
     headers: { ...NGROK_BYPASS, ...existing },
   });
 }
