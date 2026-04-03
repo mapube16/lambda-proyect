@@ -133,10 +133,10 @@ function getDirRow(dir: number): number {
 }
 
 // Get column in sprite sheet for a given state+frame
-function getFrameCol(state: 'idle' | 'walk' | 'type', frame: number): number {
+function getFrameCol(state: 'idle' | 'walk' | 'type' | 'coffee' | 'lounge', frame: number): number {
   if (state === 'type') return 4 + (frame % 2);
   if (state === 'walk') return frame % 4;
-  return 0; // idle
+  return 0; // idle, coffee, lounge all use frame 0
 }
 
 export function OfficeCanvas() {
@@ -307,7 +307,12 @@ function drawCharacter(
   }
 
   if (char.bubbleType) {
-    const bubbleText = agent?.tool_status || (agent?.current_tool?.replace(/_/g, ' ')) || null;
+    let bubbleText = null;
+    if (char.state === 'coffee' || char.state === 'lounge') {
+      bubbleText = null; // Use default labels
+    } else {
+      bubbleText = agent?.tool_status || (agent?.current_tool?.replace(/_/g, ' ')) || null;
+    }
     drawBubble(ctx, char.x, destY - 10, char.bubbleType, bubbleText);
   }
 }
@@ -342,11 +347,11 @@ function drawBubble(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
-  type: 'thinking' | 'tool' | 'waiting',
+  type: 'thinking' | 'tool' | 'waiting' | 'coffee' | 'lounge',
   text?: string | null
 ) {
-  const COLORS = { thinking: '#ffd866', tool: '#78dce8', waiting: '#a9dc76' };
-  const DEFAULTS = { thinking: 'Thinking...', tool: 'Working...', waiting: 'Done!' };
+  const COLORS = { thinking: '#ffd866', tool: '#78dce8', waiting: '#a9dc76', coffee: '#fc9867', lounge: '#ab9df2' };
+  const DEFAULTS = { thinking: 'Thinking...', tool: 'Working...', waiting: 'Done!', coffee: 'Cafe', lounge: 'Break!' };
   const label = (text && text.length > 0 ? text : DEFAULTS[type]).slice(0, 22);
 
   ctx.save();
