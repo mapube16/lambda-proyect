@@ -484,8 +484,8 @@ async def login(user: UserCreate, request: Request):
         value=token,
         httponly=True,
         secure=True,  # Only send over HTTPS in production
-        samesite="strict",
-        max_age=15 * 60,  # 15 minutes (match JWT expiration)
+        samesite="lax",  # "lax" allows cookie on same-site navigations
+        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60,
         path="/",
     )
     return response
