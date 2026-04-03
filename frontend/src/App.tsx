@@ -2,6 +2,12 @@ import { useState, useEffect } from 'react';
 import { useOfficeStore } from './store/officeStore';
 import type { Agent } from './types/index';
 
+// SVG Icons for sidebar
+const HomeIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>;
+const BarChartIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>;
+const CheckIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const UsersIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
+
 const _BACKEND = (import.meta as any).env?.VITE_BACKEND_URL || '';
 import { LoginView } from './components/LoginView';
 import { StaffDashboard } from './components/StaffDashboard';
@@ -12,16 +18,19 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { useGameLoop } from './hooks/useGameLoop';
 
 const C = {
-  bg:      '#0d0d18',
-  s0:      '#12121d',
-  s1:      '#1b1a26',
+  bg:      'linear-gradient(135deg, #0a0a14 0%, #0d0d18 50%, #0a0a14 100%)',
+  bgSolid: '#0a0a14',
+  s0:      'rgba(18,18,29,0.85)',
+  s0Blur:  'blur(20px)',
+  s1:      'rgba(27,26,38,0.7)',
   s3:      '#2c2b3a',
   s4:      '#343440',
-  text:    '#e3e0f1',
-  muted:   'rgba(227,224,241,0.45)',
-  cyan:    '#78dce8',
-  cyanDim: 'rgba(120,220,232,0.08)',
-  green:   '#a9dc76',
+  text:    '#f0eff8',
+  textMid: '#d8d6e6',
+  muted:   '#9b9aaa',
+  cyan:    '#5dd9f5',
+  cyanDim: 'rgba(93,217,245,0.08)',
+  green:   '#7ee8a3',
   SG:      "'Space Grotesk', system-ui, sans-serif",
   IN:      "'Inter', system-ui, sans-serif",
 };
@@ -48,7 +57,7 @@ function NavLink({ label, active = false, onClick }: { label: string; active?: b
 }
 
 function RailBtn({ icon, active = false, title, onClick }: {
-  icon: string; active?: boolean; title?: string; onClick?: () => void;
+  icon: React.ReactNode; active?: boolean; title?: string; onClick?: () => void;
 }) {
   const [hov, setHov] = useState(false);
   return (
@@ -58,15 +67,18 @@ function RailBtn({ icon, active = false, title, onClick }: {
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
-        width: 40, height: 40, border: 'none', borderRadius: 8,
+        width: 44, height: 44, borderRadius: 10,
         cursor: onClick ? 'pointer' : 'default',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 16,
+        color: active ? C.cyan : hov ? C.text : C.muted,
         background: active
-          ? 'rgba(120,220,232,0.1)'
-          : hov ? 'rgba(255,255,255,0.04)' : 'transparent',
-        boxShadow: active ? '0 0 12px rgba(120,220,232,0.15)' : 'none',
-        transition: 'background 0.15s',
+          ? 'rgba(93,217,245,0.12)'
+          : hov ? 'rgba(93,217,245,0.08)' : 'transparent',
+        border: active ? '1px solid rgba(93,217,245,0.25)' : hov ? '1px solid rgba(93,217,245,0.15)' : '1px solid transparent',
+        backdropFilter: active ? 'blur(6px)' : 'none',
+        boxShadow: active ? '0 0 16px rgba(93,217,245,0.2), inset 0 1px 0 rgba(93,217,245,0.15)' : 'none',
+        transition: 'all 0.25s ease-out',
+        transform: hov ? 'scale(1.08)' : 'scale(1)',
       }}
     >
       {icon}
@@ -98,7 +110,7 @@ function OfficeView() {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', height: '100vh',
-      background: C.bg, color: C.text, fontFamily: C.IN, overflow: 'hidden',
+      background: C.bg as string, color: C.text, fontFamily: C.IN, overflow: 'hidden',
     }}>
 
       {/* ── Fixed top nav ── */}
@@ -106,8 +118,10 @@ function OfficeView() {
         position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
         height: 64, display: 'flex', alignItems: 'center',
         justifyContent: 'space-between', padding: '0 24px',
-        background: C.s0,
-        boxShadow: '0 0 20px rgba(120,220,232,0.08)',
+        background: C.s0 as string,
+        backdropFilter: C.s0Blur,
+        borderBottom: '1px solid rgba(93,217,245,0.08)',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 36 }}>
           <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 20, color: C.cyan, letterSpacing: '-0.03em' }}>
@@ -154,22 +168,22 @@ function OfficeView() {
 
         {/* ── Left icon rail ── */}
         <div style={{
-          width: 56, flexShrink: 0,
-          background: 'rgba(18,18,29,0.96)', backdropFilter: 'blur(12px)',
-          borderRight: '1px solid rgba(120,220,232,0.06)',
+          width: 64, flexShrink: 0,
+          background: 'rgba(18,18,29,0.85)', backdropFilter: 'blur(20px)',
+          borderRight: '1px solid rgba(93,217,245,0.08)',
           display: 'flex', flexDirection: 'column', alignItems: 'center',
-          paddingTop: 20, gap: 6,
+          paddingTop: 24, gap: 8,
         }}>
-          <RailBtn icon="🚀" active title="Oficina" />
-          <RailBtn icon="📊" title="Pipeline" onClick={() => setView('dashboard')} />
-          <RailBtn icon="✅" title="Aprobados" onClick={() => setView('dashboard')} />
-          <RailBtn icon="🤖" title="Agentes" />
+          <RailBtn icon={<HomeIcon />} active title="Oficina" />
+          <RailBtn icon={<BarChartIcon />} title="Pipeline" onClick={() => setView('dashboard')} />
+          <RailBtn icon={<CheckIcon />} title="Aprobados" onClick={() => setView('dashboard')} />
+          <RailBtn icon={<UsersIcon />} title="Agentes" />
         </div>
 
         {/* ── Canvas section ── */}
         <section style={{
           flex: 1, minWidth: 0, position: 'relative',
-          background: C.bg, overflow: 'auto',
+          background: C.bgSolid, overflow: 'auto',
           display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
           padding: 32,
         }}>
