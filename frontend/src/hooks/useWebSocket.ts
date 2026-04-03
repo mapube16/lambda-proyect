@@ -39,17 +39,15 @@ export function useWebSocket() {
     setCurrentRunId,
     setAgentLogs,
     isAuthenticated,
-    authToken,
   } = useOfficeStore();
 
   // Load leads + active campaign from MongoDB after connect
-  const hydrateFromDB = useCallback(async (token: string) => {
-    const headers = { 'Authorization': `Bearer ${token}` };
+  const hydrateFromDB = useCallback(async () => {
     try {
       const [leadsRes, campaignRes, agentsRes] = await Promise.all([
-        apiFetch(`${API_URL}/api/leads`, { headers }),
-        apiFetch(`${API_URL}/api/campaigns/active`, { headers }),
-        apiFetch(`${API_URL}/api/agents`, { headers }),
+        apiFetch(`${API_URL}/api/leads`),
+        apiFetch(`${API_URL}/api/campaigns/active`),
+        apiFetch(`${API_URL}/api/agents`),
       ]);
       if (leadsRes.ok) {
         const rawLeads = await leadsRes.json() as Array<Record<string, unknown>>;
@@ -99,22 +97,16 @@ export function useWebSocket() {
   const approveLead = useCallback(async (leadId: string | undefined, url: string) => {
     approveLeadLocal(leadId, url);
     if (!leadId) return;
-    const token = useOfficeStore.getState().authToken;
-    if (!token) return;
     apiFetch(`${API_URL}/api/leads/${leadId}/approve`, {
       method: 'PATCH',
-      headers: { 'Authorization': `Bearer ${token}` },
     }).catch(e => console.error('[approveLead]', e));
   }, [approveLeadLocal]);
 
   const rejectLead = useCallback(async (leadId: string | undefined, url: string) => {
     discardLeadLocal(leadId, url);
     if (!leadId) return;
-    const token = useOfficeStore.getState().authToken;
-    if (!token) return;
     apiFetch(`${API_URL}/api/leads/${leadId}/reject`, {
       method: 'PATCH',
-      headers: { 'Authorization': `Bearer ${token}` },
     }).catch(e => console.error('[rejectLead]', e));
   }, [discardLeadLocal]);
 
@@ -230,77 +222,81 @@ export function useWebSocket() {
 
   // Load agents via HTTP immediately — no WebSocket dependency
   useEffect(() => {
-    if (!isAuthenticated || !authToken) return;
-    apiFetch(`${API_URL}/api/agents`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    })
+    if (!isAuthenticated) return;
+    apiFetch(`${API_URL}/api/agents`)
       .then(r => r.ok ? r.json() : [])
       .then((agents: Agent[]) => { if (agents.length > 0) setAgents(agents); })
       .catch(() => {});
-  }, [isAuthenticated, authToken, setAgents]);
+  }, [isAuthenticated, setAgents]);
 
   useEffect(() => {
     // Don't connect if not authenticated
-    if (!isAuthenticated || !authToken) {
+    if (!isAuthenticated) {
       wsRef.current?.close();
       return;
     }
 
     let mounted = true;
 
-    const connectAsync = () => {
+    const connectAsync = async () => {
       if (!mounted) return;
       if (wsRef.current?.readyState === WebSocket.OPEN) return;
       if (wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
-      const token = useOfficeStore.getState().authToken;
-      if (!token) return;
+      // Obtain a short-lived ticket via httpOnly cookie auth
+      try {
+        const ticketRes = await apiFetch(`${API_URL}/api/ws-ticket`, { method: 'POST' });
+        if (!ticketRes.ok) return;
+        const { ticket } = await ticketRes.json();
 
-      const wsUrl = `${WS_URL_BASE}?token=${token}`;
-      console.log('🔌 Connecting to WebSocket...');
-      const ws = new WebSocket(wsUrl);
+        if (!mounted) return;
+        const wsUrl = `${WS_URL_BASE}?token=${ticket}`;
+        console.log('🔌 Connecting to WebSocket...');
+        const ws = new WebSocket(wsUrl);
 
-      ws.onopen = () => {
-        if (mounted) {
-          console.log('✅ WebSocket connected');
-          reconnectDelayRef.current = 3000;
-          setConnected(true);
-          setWebSocket(ws);
-          if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current);
-            reconnectTimeoutRef.current = null;
+        ws.onopen = () => {
+          if (mounted) {
+            console.log('✅ WebSocket connected');
+            reconnectDelayRef.current = 3000;
+            setConnected(true);
+            setWebSocket(ws);
+            if (reconnectTimeoutRef.current) {
+              clearTimeout(reconnectTimeoutRef.current);
+              reconnectTimeoutRef.current = null;
+            }
+            hydrateFromDB();
           }
-          hydrateFromDB(token);
-        }
-      };
+        };
 
-      ws.onmessage = (event) => {
-        try {
-          const data: WSMessage = JSON.parse(event.data);
-          handleMessage(data);
-        } catch (e) {
-          console.error('Failed to parse WS message:', e);
-        }
-      };
+        ws.onmessage = (event) => {
+          try {
+            const data: WSMessage = JSON.parse(event.data);
+            handleMessage(data);
+          } catch (e) {
+            console.error('Failed to parse WS message:', e);
+          }
+        };
 
-      ws.onclose = (event) => {
-        if (mounted) {
-          setConnected(false);
-          setWebSocket(null);
-          // Only reconnect if still authenticated
-          if (!useOfficeStore.getState().isAuthenticated) return;
-          reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 1.5, MAX_RECONNECT_DELAY);
-          const delay = reconnectDelayRef.current;
-          console.log(`🔌 WS closed (${event.code}) — retrying in ${Math.round(delay / 1000)}s`);
-          reconnectTimeoutRef.current = window.setTimeout(connectAsync, delay);
-        }
-      };
+        ws.onclose = (event) => {
+          if (mounted) {
+            setConnected(false);
+            setWebSocket(null);
+            if (!useOfficeStore.getState().isAuthenticated) return;
+            reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 1.5, MAX_RECONNECT_DELAY);
+            const delay = reconnectDelayRef.current;
+            console.log(`🔌 WS closed (${event.code}) — retrying in ${Math.round(delay / 1000)}s`);
+            reconnectTimeoutRef.current = window.setTimeout(connectAsync, delay);
+          }
+        };
 
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-      };
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+        };
 
-      wsRef.current = ws;
+        wsRef.current = ws;
+      } catch (e) {
+        console.error('[WS] ticket fetch failed:', e);
+      }
     };
 
     connectAsync();
@@ -315,14 +311,12 @@ export function useWebSocket() {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       wsRef.current?.close();
     };
-  }, [isAuthenticated, authToken, handleMessage, sendMessage, hydrateFromDB]);
+  }, [isAuthenticated, handleMessage, sendMessage, hydrateFromDB]);
 
   const startProspect = useCallback(async (
     campaign: Record<string, string> = {},
     max_results: number = 20,
   ) => {
-    const token = useOfficeStore.getState().authToken;
-    if (!token) return;
     clearLeads();
     setAgentLogs({});
     setCurrentRunId(null);
@@ -330,7 +324,7 @@ export function useWebSocket() {
     try {
       const res = await apiFetch(`${API_URL}/api/prospect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ campaign, max_results }),
       });
       if (res.ok) {

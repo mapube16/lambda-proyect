@@ -9,6 +9,7 @@ const CheckIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="no
 const UsersIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
 
 const _BACKEND = (import.meta as any).env?.VITE_BACKEND_URL || '';
+import { apiFetch } from './lib/apiFetch';
 import { LoginView } from './components/LoginView';
 import { StaffDashboard } from './components/StaffDashboard';
 import { ClientDashboard } from './components/ClientDashboard';
@@ -93,9 +94,7 @@ function OfficeView() {
 
   // Hard fetch on mount — bypasses all store/WS timing issues
   useEffect(() => {
-    const token = sessionStorage.getItem('hive_token');
-    if (!token) return;
-    fetch(`${_BACKEND}/api/agents`, { headers: { Authorization: `Bearer ${token}` } })
+    apiFetch(`${_BACKEND}/api/agents`)
       .then(r => r.ok ? r.json() : [])
       .then((data: Agent[]) => { if (data?.length) setAgents(data); })
       .catch(() => {});

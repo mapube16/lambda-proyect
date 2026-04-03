@@ -491,6 +491,22 @@ async def login(user: UserCreate, request: Request):
     return response
 
 
+@app.post("/api/ws-ticket")
+async def ws_ticket(current_user: dict = Depends(get_current_user)):
+    """
+    Issue a short-lived JWT (30 s) for WebSocket authentication.
+    The frontend calls this (authenticated via httpOnly cookie) right before
+    opening a WebSocket, then passes the ticket as ?token= query param.
+    This avoids exposing the long-lived session token to JavaScript.
+    """
+    from datetime import timedelta
+    ticket = create_access_token(
+        data={"sub": str(current_user["user_id"]), "role": current_user.get("role", "client")},
+        expires_delta=timedelta(seconds=30),
+    )
+    return {"ticket": ticket}
+
+
 @app.post("/auth/google-login")
 async def google_login(data: dict):
     """
@@ -535,13 +551,24 @@ async def google_login(data: dict):
         
         # Create JWT token for our app
         token = create_access_token(data={"sub": str(db_user["id"]), "role": db_user.get("role", "client")})
-        return {
-            "access_token": token,
-            "token_type": "bearer",
+        from fastapi.responses import JSONResponse
+        response_data = {
             "user_id": str(db_user["id"]),
             "role": db_user.get("role", "client"),
             "email": db_user["email"],
+            "authenticated": True,
         }
+        response = JSONResponse(content=response_data, status_code=200)
+        response.set_cookie(
+            key="hive_token",
+            value=token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60,
+            path="/",
+        )
+        return response
     
     except Exception as e:
         logger.error(f"[google_login] Authentication error: {e}")
@@ -2192,6 +2219,19 @@ async def staff_get_client_leads(
 ):
     leads = await get_leads_by_user(client_id, limit=200)
     return leads
+
+
+@app.post("/api/staff/clients/{client_id}/campaigns")
+async def staff_save_client_campaign(
+    client_id: str,
+    campaign: dict,
+    _staff: dict = Depends(require_staff),
+):
+    """Staff-only: save a campaign on behalf of a client."""
+    campaign.setdefault("llm_analista", "openrouter/anthropic/claude-haiku-3")
+    campaign.setdefault("llm_redactor", "openrouter/openai/gpt-5.4-2026-03-05")
+    campaign_id = await save_campaign(client_id, campaign)
+    return {"campaign_id": campaign_id}
 
 
 @app.get("/api/staff/clients/{client_id}/campaigns")

@@ -552,7 +552,6 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const auth = () => ({ Authorization: `Bearer ${useOfficeStore.getState().authToken}` });
 
   const resetOnboardingWorkspace = async (userId: string) => {
     try {
@@ -674,7 +673,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     try {
       const res = await apiFetch(`${API_URL}/api/staff/onboard/save-conversation/${tempUserId}`, {
         method: 'POST',
-        headers: { ...auth(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: transcript.trim() }),
       });
       if (!res.ok) {
@@ -724,7 +723,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     try {
       const res = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/url`, {
         method: 'POST',
-        headers: { ...auth(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: tempUserId,
           urls,
@@ -827,26 +826,17 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     setCreating(true);
     setError('');
     try {
-      // Log in as the new client to get their token, then save campaign
-      const loginRes = await apiFetch(`${API_URL}/auth/login`, {
+      // Save campaign on behalf of the client via staff endpoint
+      const saveCampRes = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/campaigns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      if (!loginRes.ok) throw new Error('No se pudo autenticar al nuevo cliente');
-      const loginData = await loginRes.json();
-      const clientToken = loginData.access_token;
-
-      const saveCampRes = await apiFetch(`${API_URL}/api/campaigns`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${clientToken}` },
         body: JSON.stringify(editedProposal.campaign),
       });
       if (!saveCampRes.ok) throw new Error('No se pudo guardar la campaña');
 
       const saveProfileRes = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/profile`, {
         method: 'POST',
-        headers: { ...auth(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           business_summary: editedProposal.resumen_negocio,
           personality_prompt: editedProposal.system_prompt_analista,
@@ -859,7 +849,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
       // Send welcome email (fire & forget — don't block UX if it fails)
       apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/send-welcome`, {
         method: 'POST',
-        headers: { ...auth(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           password,
           agents: editedProposal.agents,
@@ -1505,7 +1495,6 @@ function CobranzaToggle({ clientId, enabled, onToggle }: {
 }
 
 function FuentesPanel({ client }: { client: ClientData }) {
-  const token = useOfficeStore.getState().authToken;
   const [fuentes, setFuentes] = useState<string[]>(client.fuentes_habilitadas ?? ['google_maps']);
   const [notificationChannel, setNotificationChannel] = useState<string>(client.notification_channel ?? 'web');
   const [waPhoneNumber, setWaPhoneNumber] = useState<string>(client.wa_phone_number ?? '');
@@ -1516,9 +1505,7 @@ function FuentesPanel({ client }: { client: ClientData }) {
   // Load bot flags from backend on mount
   React.useEffect(() => {
     if (!client.wa_phone_number) return;
-    apiFetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(client.wa_phone_number)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then(r => r.ok ? r.json() : null).then(d => {
+    apiFetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(client.wa_phone_number)}`).then(r => r.ok ? r.json() : null).then(d => {
       if (d?.bots) setWaBots(d.bots);
     }).catch(() => {});
   }, [client.wa_phone_number]);
@@ -1550,7 +1537,7 @@ function FuentesPanel({ client }: { client: ClientData }) {
 
       await apiFetch(`${API_URL}/api/staff/clients/${client.id}/sources`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
     } catch (e) {
@@ -1676,7 +1663,7 @@ function FuentesPanel({ client }: { client: ClientData }) {
                       setWaBots(updated);
                       await apiFetch(`${API_URL}/api/staff/wa-config/${encodeURIComponent(waPhoneNumber)}`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ bots: updated }),
                       });
                     }}
