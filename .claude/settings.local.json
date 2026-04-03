@@ -182,7 +182,8 @@
       "Bash(git -C /c/Users/maxim/Desktop/hive-pixel-office add .planning/phases/17-voice-cobranza-agent/17-VERIFICATION.md)",
       "Bash(git -C /c/Users/maxim/Desktop/hive-pixel-office commit -m \"docs\\(17\\): add VERIFICATION.md — 4/4 automated checks passed, 5 human items\")",
       "Bash(/c/Users/maxim/Desktop/hive-pixel-office/backend/venv/Scripts/pip install:*)",
-      "Bash(python3 -c \"import sys,json; routes=[r[''''summary''''] if ''''summary'''' in r else p for p,m in json.load\\(sys.stdin\\)[''''paths''''].items\\(\\) for r in m.values\\(\\)]; [print\\(r\\) for r in routes if ''''cobr'''' in r.lower\\(\\) or ''''vapi'''' in r.lower\\(\\) or ''''cobranza'''' in r.lower\\(\\)]\")"
+      "Bash(python3 -c \"import sys,json; routes=[r[''''summary''''] if ''''summary'''' in r else p for p,m in json.load\\(sys.stdin\\)[''''paths''''].items\\(\\) for r in m.values\\(\\)]; [print\\(r\\) for r in routes if ''''cobr'''' in r.lower\\(\\) or ''''vapi'''' in r.lower\\(\\) or ''''cobranza'''' in r.lower\\(\\)]\")",
+      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")"
     ]
   }
 }
