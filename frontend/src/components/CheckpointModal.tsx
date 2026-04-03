@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useOfficeStore } from '../store/officeStore';
 import { apiFetch } from '../lib/apiFetch';
 
 const API_URL = '';
@@ -33,7 +32,6 @@ interface CheckpointDetail {
 }
 
 export function CheckpointModal({ lead, onClose }: CheckpointModalProps) {
-  const authToken = useOfficeStore(s => s.authToken);
   const [detail, setDetail] = useState<CheckpointDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,9 +44,7 @@ export function CheckpointModal({ lead, onClose }: CheckpointModalProps) {
     setLoading(true);
     setError(null);
 
-    apiFetch(`${API_URL}/api/leads/checkpoint`, {
-      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-    })
+    apiFetch(`${API_URL}/api/leads/checkpoint`)
       .then(r => {
         if (!r.ok) throw new Error(`Error ${r.status}`);
         return r.json();
@@ -82,7 +78,7 @@ export function CheckpointModal({ lead, onClose }: CheckpointModalProps) {
       });
 
     return () => { cancelled = true; };
-  }, [lead.leadId, authToken, lead.empresa, lead.puntaje]);
+  }, [lead.leadId, lead.empresa, lead.puntaje]);
 
   async function postDecision(decision: 'aprobar' | 'pausar' | 'rechazar') {
     setSubmitting(true);
@@ -94,10 +90,7 @@ export function CheckpointModal({ lead, onClose }: CheckpointModalProps) {
 
       const res = await apiFetch(`${API_URL}/api/leads/${lead.leadId}/decision`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!res.ok) {

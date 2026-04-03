@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useOfficeStore } from '../store/officeStore';
 import { apiFetch } from '../lib/apiFetch';
 
 const API_URL = '';
@@ -39,7 +38,6 @@ interface HandoverDetail {
 }
 
 export function HandoverModal({ lead, onClose }: HandoverModalProps) {
-  const authToken = useOfficeStore(s => s.authToken);
   const [detail, setDetail] = useState<HandoverDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,9 +48,7 @@ export function HandoverModal({ lead, onClose }: HandoverModalProps) {
     setLoading(true);
     setError(null);
 
-    apiFetch(`${API_URL}/api/leads/${lead.leadId}/handover`, {
-      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-    })
+    apiFetch(`${API_URL}/api/leads/${lead.leadId}/handover`)
       .then(r => {
         if (!r.ok) throw new Error(`Error ${r.status}`);
         return r.json() as Promise<HandoverDetail>;
@@ -79,10 +75,7 @@ export function HandoverModal({ lead, onClose }: HandoverModalProps) {
     try {
       const res = await apiFetch(`${API_URL}/api/leads/${lead.leadId}/handover/tomar`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
       if (!res.ok) {
         const msg = await res.text();

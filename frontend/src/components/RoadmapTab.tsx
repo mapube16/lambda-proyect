@@ -257,25 +257,25 @@ function HitosCard({ state, onCycle }: { state: Record<string, boolean | string>
 
 // ── Main Component ───────────────────────────────────────────────────────
 export const RoadmapTab: React.FC = () => {
-  const { userRole, authToken } = useOfficeStore();
+  const { userRole, isAuthenticated } = useOfficeStore();
   const [state, setState] = useState<Record<string, boolean | string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!isAuthenticated) return;
     setLoading(true);
-    apiFetch('/api/roadmap-state', { headers: { Authorization: 'Bearer ' + authToken } })
+    apiFetch('/api/roadmap-state')
       .then(r => r.json())
       .then(data => { setState(data.state || {}); setLoading(false); })
       .catch(() => { setError('No se pudo cargar el estado'); setLoading(false); });
-  }, [authToken]);
+  }, [isAuthenticated]);
 
   const saveState = (newState: Record<string, boolean | string>) => {
-    if (!authToken) return;
+    if (!isAuthenticated) return;
     apiFetch('/api/roadmap-state', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ state: newState }),
     });
   };

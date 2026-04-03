@@ -333,28 +333,10 @@ function CampaignChat({ onCampaignReady, resetKey }: {
     setLoading(true);
 
     try {
-      // Get token from sessionStorage fallback or try anonymous
-      const tokenKey = 'hive_token';
-      let token = sessionStorage.getItem(tokenKey);
-      if (!token) {
-        // Quick register+login
-        const email = `chat-${Math.random().toString(36).slice(7)}@example.com`;
-        await apiFetch(`${API_URL}/auth/register`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password: 'demo-password-123' }),
-        });
-        const res = await apiFetch(`${API_URL}/auth/login`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password: 'demo-password-123' }),
-        });
-        const data = await res.json();
-        token = data.access_token;
-        if (token) sessionStorage.setItem(tokenKey, token);
-      }
-
+      // apiFetch sends httpOnly cookie automatically via credentials:'include'
       const res = await apiFetch(`${API_URL}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: next }),
       });
       const data = await res.json();
@@ -393,29 +375,12 @@ function CampaignChat({ onCampaignReady, resetKey }: {
   const startChat = () => {
     setStarted(true);
     setLoading(true);
-    apiFetch(`${API_URL}/auth/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: `chat-${Math.random().toString(36).slice(7)}@example.com`, password: 'demo-password-123' }),
-    }).catch(() => {});
-    // Trigger first AI message
+    // Trigger first AI message — cookie auth handled by apiFetch
     (async () => {
       try {
-        const email = `chat-init-${Math.random().toString(36).slice(7)}@example.com`;
-        await apiFetch(`${API_URL}/auth/register`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password: 'demo-password-123' }),
-        });
-        const loginRes = await apiFetch(`${API_URL}/auth/login`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password: 'demo-password-123' }),
-        });
-        const loginData = await loginRes.json();
-        const token = loginData.access_token;
-        if (token) sessionStorage.setItem('hive_token', token);
-
         const res = await apiFetch(`${API_URL}/api/chat`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: [] }),
         });
         const data = await res.json();
@@ -554,10 +519,9 @@ function LeadsChat() {
   const applyIntent = async (idx: number, intent: ChatIntent) => {
     setApplying(prev => ({ ...prev, [idx]: true }));
     try {
-      const token = useOfficeStore.getState().authToken;
       const res = await apiFetch(`${API_URL}/api/campaign/apply-intent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ intent_type: intent.type, payload: intent.payload }),
       });
       if (res.ok) {
@@ -579,10 +543,9 @@ function LeadsChat() {
     setLoading(true);
 
     try {
-      const token = useOfficeStore.getState().authToken;
       const res = await apiFetch(`${API_URL}/api/chat/leads`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: next }),
       });
       const data = await res.json();
