@@ -1441,7 +1441,6 @@ function CobranzaToggle({ clientId, enabled, onToggle }: {
   enabled: boolean;
   onToggle: (val: boolean) => void;
 }) {
-  const token = useOfficeStore.getState().authToken;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -1452,7 +1451,7 @@ function CobranzaToggle({ clientId, enabled, onToggle }: {
     try {
       const res = await apiFetch(`${API_URL}/api/staff/clients/${clientId}/cobranza/${action}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
