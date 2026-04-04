@@ -348,8 +348,10 @@ async def discover_via_bright_data_serp(
 ) -> list[dict]:
     """
     Google Search results via Bright Data SERP API.
-    Higher quality than Serper, but more expensive (~$0.01-0.02 per search).
-    Sign up: https://brightdata.com
+    Uses Bright Data's dataset collector API for Google search results.
+
+    NOTE: Bright Data SERP requires special dataset ID setup in their dashboard.
+    If this fails, fallback to Serper or DuckDuckGo.
     """
     queries = [
         f'empresas {industria} {ciudad} sitio web',
@@ -364,11 +366,16 @@ async def discover_via_bright_data_serp(
             if len(results) >= max_results:
                 break
             try:
-                # Bright Data SERP API endpoint
+                # Try Bright Data SERP API endpoint
+                # NOTE: This requires a SERP dataset to be configured in Bright Data dashboard
                 resp = await client.post(
-                    "https://api.brightdata.com/serp",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    "https://api.brightdata.com/datasets/geos/parse",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
                     json={
+                        "dataset": "serp",
                         "query": query,
                         "country": "CO",
                         "language": "es",
@@ -376,8 +383,17 @@ async def discover_via_bright_data_serp(
                     },
                     timeout=15,
                 )
-                if resp.status_code != 200:
-                    logger.warning("[Bright Data SERP] status=%d query=%r", resp.status_code, query)
+
+                logger.info("[Bright Data SERP] query=%r status=%d", query, resp.status_code)
+
+                if resp.status_code == 401:
+                    logger.error("[Bright Data SERP] API authentication failed — check BRIGHT_DATA_API_KEY")
+                    raise Exception("Bright Data authentication failed (401)")
+                elif resp.status_code == 403:
+                    logger.error("[Bright Data SERP] API forbidden — dataset may not be configured")
+                    raise Exception("Bright Data dataset not accessible (403)")
+                elif resp.status_code != 200:
+                    logger.warning("[Bright Data SERP] status=%d query=%r response=%s", resp.status_code, query, resp.text[:300])
                     continue
 
                 data = resp.json()
@@ -421,11 +437,10 @@ async def scrape_bright_data_web(
     industria: str, ciudad: str, max_results: int, api_key: str
 ) -> list[dict]:
     """
-    Bright Data Web Scraper for extracting contacts from Colombian directories:
-    - LinkedIn company pages
-    - Pages Amarillas (directorio.com.co)
-    - Chambers of Commerce (ccb.org.co, ccc.org.co)
-    - Google Maps (with phone/email extraction)
+    Bright Data Web Scraper for extracting contacts from Colombian directories.
+
+    WARNING: This requires custom dataset setup in Bright Data dashboard.
+    If not configured, will fail and fallback to other sources.
 
     Returns enriched leads with email, phone, address.
     """
@@ -458,14 +473,16 @@ async def scrape_bright_data_web(
 
             try:
                 # Use Bright Data Web Scraper API
-                scraper_url = "https://api.brightdata.com/datasets/geos/scrape"
+                scraper_url = "https://api.brightdata.com/datasets/geos/parse"
                 payload = {
-                    "source": source["name"],
+                    "dataset": "web_scraper",
                     "url": source["url_template"],
                     "selector": source["selector"],
                     "fields": ["name", "email", "phone", "address", "website", "industry"],
                     "limit": max_results - len(results),
                 }
+
+                logger.debug("[Bright Data Web] Calling API for source=%s url=%s", source["name"], source["url_template"][:80])
 
                 resp = await client.post(
                     scraper_url,
@@ -477,11 +494,20 @@ async def scrape_bright_data_web(
                     timeout=30,
                 )
 
-                if resp.status_code != 200:
+                logger.info("[Bright Data Web] source=%s status=%d", source["name"], resp.status_code)
+
+                if resp.status_code == 401:
+                    logger.error("[Bright Data Web] API authentication failed — check BRIGHT_DATA_API_KEY")
+                    raise Exception("Bright Data authentication failed (401)")
+                elif resp.status_code == 403:
+                    logger.error("[Bright Data Web] API forbidden — dataset may not be configured in dashboard")
+                    raise Exception("Bright Data dataset not accessible (403)")
+                elif resp.status_code != 200:
                     logger.warning(
-                        "[Bright Data Web] source=%s status=%d",
+                        "[Bright Data Web] source=%s status=%d response=%s",
                         source["name"],
                         resp.status_code,
+                        resp.text[:300],
                     )
                     continue
 
@@ -772,14 +798,18 @@ async def discover_companies(
             try:
                 if bright_data_type == "web_scraper":
                     # Premium: Web Scraper extracts emails, phones, full contact info
+                    logger.info("[Discovery] Using Bright Data Web Scraper (premium)")
                     bd_results = await scrape_bright_data_web(industria, ciudad, max_results, bright_data_key)
                 else:
                     # Standard: SERP API (web search)
+                    logger.info("[Discovery] Using Bright Data SERP API")
                     bd_results = await discover_via_bright_data_serp(industria, ciudad, max_results, bright_data_key)
                 add(bd_results)
                 discovery_results["bright_data"] = len(bd_results)
+                logger.info("[Discovery] Bright Data returned %d results", len(bd_results))
             except Exception as e:
-                logger.warning("[Discovery] Bright Data failed, falling back: %s", str(e))
+                import traceback
+                logger.error("[Discovery] Bright Data failed: %s\n%s", str(e), traceback.format_exc())
                 discovery_results["bright_data"] = 0
 
         if "serper" in sources_to_use and serper_key and len(merged) < max_results:
