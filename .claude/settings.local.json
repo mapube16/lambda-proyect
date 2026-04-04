@@ -186,7 +186,13 @@
       "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
       "WebFetch(domain:www.assemblyai.com)",
       "Bash(grep -n \"BRIGHT_DATA\" /c/Users/maxim/Desktop/hive-pixel-office/backend/*.py /c/Users/maxim/Desktop/hive-pixel-office/.env*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(grep -r \"def login\\\\|/auth/login\" backend/*.py)",
+      "Bash(netstat -tuln)",
+      "Bash(PYTHONPATH=/c/Users/maxim/Desktop/hive-pixel-office/backend python /tmp/test_voice_call.py)",
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office/backend/cobranza -name \"*.py\" -exec grep -l \"POST.*debtors\\\\|def.*create.*debtor\" {} \\\\;)",
+      "Bash(pkill -9 -f \"python.*uvicorn\")",
+      "Bash(ngrok http:*)"
     ]
   }
 }

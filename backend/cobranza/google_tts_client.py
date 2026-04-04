@@ -59,9 +59,10 @@ async def text_to_speech(
             name=voice_name,
         )
 
-        # Audio config (MP3 format)
+        # Audio config (LINEAR_16 for Twilio compatibility, will convert to mulaw)
         audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.MP3,
+            audio_encoding=texttospeech.AudioEncoding.LINEAR_16,
+            sample_rate_hertz=8000,  # Twilio uses 8kHz
             speaking_rate=1.0,  # Normal speed
             pitch=0.0,  # Normal pitch
         )
@@ -74,11 +75,20 @@ async def text_to_speech(
         )
 
         logger.info(
-            "[Google TTS] Synthesized %d chars → %d bytes",
+            "[Google TTS] Synthesized %d chars → %d bytes (LINEAR_16)",
             len(text),
             len(response.audio_content),
         )
-        return response.audio_content
+
+        # Convert LINEAR_16 to mulaw for Twilio
+        try:
+            import audioop
+            mulaw_audio = audioop.lin2ulaw(response.audio_content, 2)
+            logger.info("[Google TTS] Converted to mulaw: %d bytes", len(mulaw_audio))
+            return mulaw_audio
+        except Exception as e:
+            logger.warning("[Google TTS] Failed to convert to mulaw: %s, returning as-is", e)
+            return response.audio_content
 
     except Exception as e:
         logger.error("[Google TTS] Synthesis failed: %s", e, exc_info=True)
