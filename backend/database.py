@@ -63,6 +63,15 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.email_events.create_index([("user_id", 1), ("timestamp", -1)])
     await db.email_events.create_index("message_id")
     await db.email_events.create_index("lead_id")
+    # ── Phase 17: Voice Orchestrator (Assembly AI) ───────────────────────────
+    await db.cobranza_calls_in_progress.create_index("call_sid", unique=True)
+    await db.cobranza_calls_in_progress.create_index([("user_id", 1), ("started_at", -1)])
+    await db.cobranza_calls_in_progress.create_index(
+        [("started_at", 1)],
+        expireAfterSeconds=3600,  # 1 hour TTL (cleanup old mappings)
+    )
+    await db.cobranza_calls.create_index([("user_id", 1), ("created_at", -1)])
+    await db.cobranza_calls.create_index("call_id", unique=True)
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
