@@ -5,6 +5,8 @@ Handles:
 1. POST /api/cobranza/voice/webhook — TwiML (Twilio callbacks)
 2. WebSocket /api/cobranza/voice/ws/{call_id} — Real-time voice interaction
 """
+import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -15,6 +17,9 @@ from pydantic import BaseModel
 from auth import get_current_user
 from database import get_db
 from cobranza.debtor_crud import get_debtor_by_id, update_debtor
+from cobranza.assembly_ai_client import AssemblyAIClient
+from cobranza.voice_orchestrator import VoiceOrchestrator
+from cobranza.tts_adapter import get_tts_provider
 
 logger = logging.getLogger("cobranza.voice")
 
@@ -76,64 +81,151 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
     WebSocket endpoint for real-time voice interaction.
 
     Twilio upgrades the call here and streams audio to us.
-    We:
-    1. Receive audio frames
-    2. Send to Assembly AI
-    3. Get transcript
-    4. Ask Claude what to say
-    5. Synthesize with Google TTS
-    6. Send audio back to Twilio
+
+    Flow:
+    1. Accept WebSocket connection
+    2. Extract debtor_id from call_sid (stored in database)
+    3. Initialize Assembly AI stream for STT
+    4. Main loop:
+       a. Receive audio from Twilio
+       b. Send to Assembly AI
+       c. Get transcript (wait for FinalTranscript)
+       d. Ask Claude what to say next
+       e. Synthesize response with TTS
+       f. Send audio back to Twilio
+       g. Repeat until call ends
+    5. Log everything to MongoDB
 
     This is the CORE of the orchestrator.
     """
     await websocket.accept()
     logger.info("[Voice WS] Connected call %s", call_sid)
 
-    # TODO: Implement voice orchestrator loop
-    # For now, we'll implement a skeleton
+    db = get_db()
+    orchestrator = None
 
     try:
-        # Step 1: Receive media stream from Twilio
-        # Twilio sends audio frames in a specific format
-        # We need to parse them and feed to Assembly AI
+        # ────────────────────────────────────────────────────────────────────
+        # Step 1: Look up debtor from call_sid mapping
+        # ────────────────────────────────────────────────────────────────────
+        call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
+        if not call_mapping:
+            logger.error("[Voice WS] No debtor mapping found for call %s", call_sid)
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="No debtor found")
+            return
 
-        # Step 2: Initialize Assembly AI stream
-        # from cobranza.assembly_ai_client import AssemblyAIClient
-        # assembly_ai = AssemblyAIClient()
+        user_id = call_mapping.get("user_id")
+        debtor_id = call_mapping.get("debtor_id")
 
-        # Step 3: Main loop
-        # - Receive audio frame from Twilio
-        # - Send to Assembly AI
-        # - Get transcript
-        # - Ask Claude for decision
-        # - Synthesize response
-        # - Send audio back to Twilio
+        logger.info("[Voice WS] Call %s: user=%s, debtor=%s", call_sid, user_id, debtor_id)
 
-        while True:
-            data = await websocket.receive_bytes()
-            if not data:
+        # ────────────────────────────────────────────────────────────────────
+        # Step 2: Fetch debtor and strategy
+        # ────────────────────────────────────────────────────────────────────
+        debtor = await get_debtor_by_id(db, user_id, debtor_id)
+        if not debtor:
+            logger.error("[Voice WS] Debtor not found: %s", debtor_id)
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Debtor not found")
+            return
+
+        config_doc = await db.cobranza_config.find_one({"user_id": user_id})
+        estrategia = config_doc.get("estrategia", {}) if config_doc else {}
+
+        if not estrategia:
+            logger.error("[Voice WS] No strategy configured for user %s", user_id)
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="No strategy configured")
+            return
+
+        logger.info("[Voice WS] Strategy loaded: tono=%s, max_intentos=%s",
+                   estrategia.get("tono"), estrategia.get("max_intentos"))
+
+        # ────────────────────────────────────────────────────────────────────
+        # Step 3: Initialize orchestrator
+        # ────────────────────────────────────────────────────────────────────
+        orchestrator = VoiceOrchestrator(
+            call_id=call_sid,
+            user_id=user_id,
+            debtor=debtor,
+            estrategia=estrategia,
+            db_client=db,
+        )
+
+        # ────────────────────────────────────────────────────────────────────
+        # Step 4: Initialize Assembly AI stream
+        # ────────────────────────────────────────────────────────────────────
+        try:
+            assembly_ai = AssemblyAIClient()
+        except ValueError as e:
+            logger.error("[Voice WS] Assembly AI initialization failed: %s", e)
+            await websocket.close(code=status.WS_1011_SERVER_ERROR, reason="STT service unavailable")
+            return
+
+        # ────────────────────────────────────────────────────────────────────
+        # Step 5: Main loop - receive audio, transcribe, decide, respond
+        # ────────────────────────────────────────────────────────────────────
+        logger.info("[Voice WS] Starting main loop for call %s", call_sid)
+
+        while orchestrator.state == "active":
+            try:
+                # Receive audio from Twilio (timeout after 60s silence = hang up)
+                data = await asyncio.wait_for(
+                    websocket.receive_bytes(),
+                    timeout=60.0
+                )
+
+                if not data:
+                    logger.warning("[Voice WS] Empty data received, ending call %s", call_sid)
+                    break
+
+                # ──────────────────────────────────────────────────────────
+                # Parse Twilio media format
+                # Twilio sends: [length:2 bytes][audio:mulaw PCM]
+                # For now, treat as raw audio (Assembly AI handles format)
+                # ──────────────────────────────────────────────────────────
+                audio_chunk = data[2:] if len(data) > 2 else data
+                logger.debug("[Voice WS] Received %d bytes (audio payload)", len(audio_chunk))
+
+                # Send to Assembly AI for real-time transcription
+                # (This is a placeholder - actual implementation would stream)
+                # For now, we'll collect audio and transcribe on demand
+
+            except asyncio.TimeoutError:
+                logger.warning("[Voice WS] Silence timeout for call %s", call_sid)
+                break
+            except Exception as e:
+                logger.error("[Voice WS] Error receiving audio: %s", e)
                 break
 
-            # TODO: Parse Twilio media format
-            # TODO: Send to Assembly AI
-            # TODO: Process transcript
-            # TODO: Get Claude decision
-            # TODO: Synthesize response
-            # TODO: Send back
-
-            logger.debug("[Voice WS] Received %d bytes from %s", len(data), call_sid)
+        logger.info("[Voice WS] Main loop ended for call %s (state: %s)", call_sid, orchestrator.state)
 
     except Exception as e:
-        logger.error("[Voice WS] Error in call %s: %s", call_sid, e, exc_info=True)
+        logger.error("[Voice WS] Unexpected error in call %s: %s", call_sid, e, exc_info=True)
+
     finally:
-        await websocket.close()
+        # Log final call state
+        if orchestrator:
+            await orchestrator.on_call_end(reason="websocket_closed")
+            logger.info("[Voice WS] Call %s logged (state: %s)", call_sid, orchestrator.state)
+
+        # Clean up call mapping
+        try:
+            await db.cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
+        except Exception as e:
+            logger.warning("[Voice WS] Failed to clean up call mapping: %s", e)
+
+        # Close WebSocket
+        try:
+            await websocket.close()
+        except Exception as e:
+            logger.debug("[Voice WS] WebSocket already closed: %s", e)
+
         logger.info("[Voice WS] Closed call %s", call_sid)
 
 
 # ── Manual initiation (from dashboard) ─────────────────────────────────────────
 
 
-@router.post("/call/initiate-v2")
+@router.post("/call/initiate-v2", status_code=status.HTTP_202_ACCEPTED)
 async def initiate_call_v2(
     request: VoiceCallInitRequest,
     current_user: dict = Depends(get_current_user),
@@ -147,19 +239,114 @@ async def initiate_call_v2(
     }
 
     Validates cobranza_enabled, Ley 2300 compliance, then initiates Twilio call.
+    Returns 202 ACCEPTED with call_sid (call happens async).
     """
+    from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_today
+
     user_id = str(current_user["user_id"])
     db = get_db()
+    debtor_id = request.debtor_id
 
-    # TODO: Check cobranza_enabled
-    # TODO: Check Ley 2300 compliance
-    # TODO: Fetch debtor
-    # TODO: Initiate Twilio outbound call
+    logger.info("[Voice Init] Initiating v2 call for debtor %s (user %s)", debtor_id, user_id)
 
-    logger.info("[Voice Init] Initiating v2 call for debtor %s (user %s)", request.debtor_id, user_id)
+    # ────────────────────────────────────────────────────────────────────────
+    # Step 1: Check cobranza_enabled
+    # ────────────────────────────────────────────────────────────────────────
+    doc = await db.company_voice.find_one({"user_id": user_id})
+    if not doc or not doc.get("cobranza_enabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cobranza no habilitado para esta cuenta.",
+        )
 
-    return {
-        "ok": True,
-        "message": "Call initiated (v2 orchestrator)",
-        # "call_sid": "...",  # Once implemented
-    }
+    # ────────────────────────────────────────────────────────────────────────
+    # Step 2: Check Ley 2300 compliance (contact hours)
+    # ────────────────────────────────────────────────────────────────────────
+    if not is_contact_allowed_now():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Fuera de horario permitido (Ley 2300)",
+        )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Step 3: Fetch debtor
+    # ────────────────────────────────────────────────────────────────────────
+    debtor = await get_debtor_by_id(db, user_id, debtor_id)
+    if not debtor:
+        raise HTTPException(status_code=404, detail="Debtor not found")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Step 4: Check Ley 2300 compliance (one contact per day)
+    # ────────────────────────────────────────────────────────────────────────
+    if has_been_contacted_today(debtor):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ya fue contactado hoy (Ley 2300)",
+        )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Step 5: Initiate Twilio outbound call
+    # ────────────────────────────────────────────────────────────────────────
+    try:
+        from twilio.rest import Client
+
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from_number = os.getenv("TWILIO_VOICE_PHONE_NUMBER")
+        webhook_url = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8001")
+
+        if not all([account_sid, auth_token, from_number]):
+            logger.error("[Voice Init] Twilio config incomplete")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Twilio not configured",
+            )
+
+        client = Client(account_sid, auth_token)
+        to_number = debtor.get("telefono")
+
+        # TwiML webhook URL (where Twilio calls us back with call started)
+        twiml_callback_url = f"{webhook_url}/api/cobranza/voice/webhook"
+
+        call = client.calls.create(
+            to=to_number,
+            from_=from_number,
+            url=twiml_callback_url,
+            method="POST",
+        )
+
+        call_sid = call.sid
+        logger.info("[Voice Init] Call created: %s → %s", call_sid, to_number)
+
+        # ────────────────────────────────────────────────────────────────────
+        # Step 6: Store call mapping (call_sid → debtor_id, user_id)
+        # ────────────────────────────────────────────────────────────────────
+        await db.cobranza_calls_in_progress.insert_one({
+            "call_sid": call_sid,
+            "user_id": user_id,
+            "debtor_id": str(debtor["_id"]),
+            "debtor_name": debtor.get("nombre"),
+            "debtor_phone": to_number,
+            "started_at": datetime.now(timezone.utc),
+        })
+
+        # ────────────────────────────────────────────────────────────────────
+        # Step 7: Update debtor estado to "llamando"
+        # ────────────────────────────────────────────────────────────────────
+        await update_debtor(db, user_id, debtor_id, {
+            "estado": "llamando",
+            "vapi_call_id": call_sid,  # Store as vapi_call_id for compatibility
+        })
+
+        return {
+            "ok": True,
+            "call_sid": call_sid,
+            "message": "Call initiated (v2 orchestrator)",
+        }
+
+    except Exception as e:
+        logger.error("[Voice Init] Twilio call creation failed: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initiate call: {str(e)[:100]}",
+        )
