@@ -3384,6 +3384,10 @@ app.include_router(cobranza_router)
 from cobranza.webhooks import vapi_router as _vapi_router
 app.include_router(_vapi_router)
 
+# ── Phase 17: Voice orchestrator (Assembly AI + Claude + Google TTS) ──────────
+from cobranza.voice_router import router as voice_router
+app.include_router(voice_router)
+
 
 # ── Phase 17: Staff endpoint to enable cobranza for a client ─────────────────
 

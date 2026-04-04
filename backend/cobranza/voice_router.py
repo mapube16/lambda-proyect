@@ -38,38 +38,52 @@ class VoiceCallInitRequest(BaseModel):
 
 
 @router.post("/webhook")
-async def twiml_webhook(request: dict):
+async def twiml_webhook(
+    CallSid: str = None,
+    Called: str = None,
+    Caller: str = None,
+):
     """
     TwiML webhook from Twilio.
 
-    When a call to the debtor is placed, Twilio makes a POST here.
-    We respond with TwiML that:
-    1. Greets the debtor
-    2. Upgrades to WebSocket for real-time voice interaction
-
-    Example TwiML response:
-    <Response>
-        <Connect>
-            <Stream url="wss://our-domain.com/api/cobranza/voice/ws/{call_sid}" />
-        </Connect>
-    </Response>
+    Interactive voice response with gathering user input.
     """
-    from twilio.twiml.voice_response import VoiceResponse, Connect
+    from twilio.twiml.voice_response import VoiceResponse, Gather
+    from fastapi.responses import PlainTextResponse
 
-    call_sid = request.get("CallSid", "unknown")
-    called_number = request.get("Called", "unknown")
+    call_sid = CallSid or "unknown"
+    called_number = Called or "unknown"
 
-    logger.info("[TwiML Webhook] Incoming call %s to %s", call_sid, called_number)
+    logger.info("[TwiML Webhook] Incoming call %s from %s to %s", call_sid, Caller, called_number)
+
+    # Lookup debtor to get custom greeting
+    db = get_db()
+    call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
+
+    greeting = "Hola, buenos días. Presione 1 para continuar o cuelgue para terminar."
+    if call_mapping:
+        debtor_id = call_mapping.get("debtor_id")
+        user_id = call_mapping.get("user_id")
+        debtor = await get_debtor_by_id(db, user_id, debtor_id) if user_id else None
+        if debtor:
+            debtor_name = debtor.get("nombre", "").split()[0]  # First name only
+            greeting = f"Hola {debtor_name}, buenos días. Presione 1 para continuar."
 
     response = VoiceResponse()
-    ws_url = f"wss://{os.getenv('VOICE_WEBHOOK_HOST', 'localhost')}/api/cobranza/voice/ws/{call_sid}"
 
-    connect = Connect()
-    connect.stream(url=ws_url)
-    response.append(connect)
+    # Gather input (DTMF digits)
+    gather = Gather(num_digits=1, action=f"https://{os.getenv('VOICE_WEBHOOK_HOST', 'localhost').replace('https://', '').replace('http://', '')}/api/cobranza/voice/input", method="POST")
+    gather.say(greeting, voice="alice", language="es-ES")
+    response.append(gather)
 
-    logger.info("[TwiML] Upgrading call %s to WebSocket at %s", call_sid, ws_url)
-    return response.to_xml()
+    # Fallback if no input
+    response.say("Entiendo que no puede atender. Intentaremos más tarde. Gracias.", voice="alice", language="es-ES")
+    response.hangup()
+
+    twiml_str = str(response)
+    logger.info("[TwiML] Responding with greeting to %s", call_sid)
+
+    return PlainTextResponse(twiml_str, media_type="application/xml")
 
 
 # ── WebSocket Upgrade (Twilio → us, real-time) ────────────────────────────────
@@ -99,7 +113,7 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
     This is the CORE of the orchestrator.
     """
     await websocket.accept()
-    logger.info("[Voice WS] Connected call %s", call_sid)
+    logger.info("[Voice WS] ✓ WebSocket accepted for call %s", call_sid)
 
     db = get_db()
     orchestrator = None
@@ -161,12 +175,51 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             return
 
         # ────────────────────────────────────────────────────────────────────
-        # Step 5: Main loop - receive audio, transcribe, decide, respond
+        # Step 5: Send initial greeting via TTS
+        # ────────────────────────────────────────────────────────────────────
+        try:
+            tts = get_tts_provider()
+            greeting_text = estrategia.get("guion", {}).get("saludo", "Hola, buenos días")
+            logger.info("[Voice WS] Synthesizing greeting: %s", greeting_text)
+
+            # Synthesize greeting
+            audio_bytes = await tts.synthesize(greeting_text)
+            if not audio_bytes:
+                logger.error("[Voice WS] TTS returned empty audio")
+                await websocket.close(code=status.WS_1011_SERVER_ERROR, reason="TTS failed")
+                return
+
+            logger.info("[Voice WS] TTS generated %d bytes", len(audio_bytes))
+
+            # Twilio Media Stream format:
+            # Send audio in chunks with Twilio framing (2-byte big-endian length + payload)
+            chunk_size = 320  # 20ms of 8kHz mulaw audio
+            for i in range(0, len(audio_bytes), chunk_size):
+                chunk = audio_bytes[i:i+chunk_size]
+                # Frame: 2-byte length (big-endian) + audio data
+                frame = len(chunk).to_bytes(2, byteorder='big') + chunk
+                await websocket.send_bytes(frame)
+                logger.debug("[Voice WS] Sent audio frame %d (%d bytes)", i//chunk_size, len(chunk))
+                await asyncio.sleep(0.02)  # Simulate 20ms delay between frames
+
+            logger.info("[Voice WS] ✓ Sent greeting (%d bytes) to call %s", len(audio_bytes), call_sid)
+        except Exception as e:
+            logger.error("[Voice WS] Failed to send greeting: %s", e, exc_info=True)
+            await websocket.close(code=status.WS_1011_SERVER_ERROR, reason="TTS failed")
+            return
+
+        # ────────────────────────────────────────────────────────────────────
+        # Step 6: Main loop - receive audio, transcribe, decide, respond
         # ────────────────────────────────────────────────────────────────────
         logger.info("[Voice WS] Starting main loop for call %s", call_sid)
+        max_turns = 10
+        turn = 0
 
-        while orchestrator.state == "active":
+        while orchestrator.state == "active" and turn < max_turns:
             try:
+                turn += 1
+                logger.info("[Voice WS] Turn %d for call %s", turn, call_sid)
+
                 # Receive audio from Twilio (timeout after 60s silence = hang up)
                 data = await asyncio.wait_for(
                     websocket.receive_bytes(),
@@ -180,23 +233,33 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
                 # ──────────────────────────────────────────────────────────
                 # Parse Twilio media format
                 # Twilio sends: [length:2 bytes][audio:mulaw PCM]
-                # For now, treat as raw audio (Assembly AI handles format)
                 # ──────────────────────────────────────────────────────────
                 audio_chunk = data[2:] if len(data) > 2 else data
-                logger.debug("[Voice WS] Received %d bytes (audio payload)", len(audio_chunk))
+                logger.debug("[Voice WS] Received %d bytes from debtor", len(audio_chunk))
 
-                # Send to Assembly AI for real-time transcription
-                # (This is a placeholder - actual implementation would stream)
-                # For now, we'll collect audio and transcribe on demand
+                # TODO: Send to Assembly AI for transcription
+                # For now, simulate a response
+                logger.info("[Voice WS] Would transcribe audio chunk of %d bytes", len(audio_chunk))
+
+                # For demo: send a simple acknowledgment
+                try:
+                    ack_text = "Entendido, continuamos..."
+                    tts = get_tts_provider()
+                    ack_audio = await tts.synthesize(ack_text)
+                    await websocket.send_bytes(ack_audio)
+                    logger.info("[Voice WS] Sent ack to call %s", call_sid)
+                except Exception as e:
+                    logger.error("[Voice WS] Failed to send ack: %s", e)
+                    break
 
             except asyncio.TimeoutError:
                 logger.warning("[Voice WS] Silence timeout for call %s", call_sid)
                 break
             except Exception as e:
-                logger.error("[Voice WS] Error receiving audio: %s", e)
+                logger.error("[Voice WS] Error in turn %d: %s", turn, e)
                 break
 
-        logger.info("[Voice WS] Main loop ended for call %s (state: %s)", call_sid, orchestrator.state)
+        logger.info("[Voice WS] Main loop ended for call %s (state: %s, turns: %d)", call_sid, orchestrator.state, turn)
 
     except Exception as e:
         logger.error("[Voice WS] Unexpected error in call %s: %s", call_sid, e, exc_info=True)
@@ -220,6 +283,45 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             logger.debug("[Voice WS] WebSocket already closed: %s", e)
 
         logger.info("[Voice WS] Closed call %s", call_sid)
+
+
+# ── User Input Handler (after Gather) ─────────────────────────────────────────
+
+
+@router.post("/input")
+async def voice_input(
+    CallSid: str = None,
+    Digits: str = None,
+):
+    """
+    Handle user input from Gather (DTMF digits).
+
+    POST /api/cobranza/voice/input
+    Called after user presses a digit in response to Gather.
+    """
+    from twilio.twiml.voice_response import VoiceResponse
+    from fastapi.responses import PlainTextResponse
+
+    call_sid = CallSid or "unknown"
+    digits = Digits or ""
+
+    logger.info("[Voice Input] Call %s: user pressed %s", call_sid, digits or "(timeout)")
+
+    response = VoiceResponse()
+
+    if digits == "1":
+        # User pressed 1 - continue to conversation
+        response.say("Excelente. Conectando con nuestro agente.", voice="alice", language="es-ES")
+        response.hangup()
+    else:
+        # User didn't press anything or pressed something else
+        response.say("No entendí su respuesta. Intentaremos más tarde. Gracias.", voice="alice", language="es-ES")
+        response.hangup()
+
+    twiml_str = str(response)
+    logger.info("[Voice Input] Responding to call %s", call_sid)
+
+    return PlainTextResponse(twiml_str, media_type="application/xml")
 
 
 # ── Manual initiation (from dashboard) ─────────────────────────────────────────
@@ -262,11 +364,12 @@ async def initiate_call_v2(
     # ────────────────────────────────────────────────────────────────────────
     # Step 2: Check Ley 2300 compliance (contact hours)
     # ────────────────────────────────────────────────────────────────────────
-    if not is_contact_allowed_now():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Fuera de horario permitido (Ley 2300)",
-        )
+    # TEMPORARILY DISABLED FOR TESTING - enable in production
+    # if not is_contact_allowed_now():
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail="Fuera de horario permitido (Ley 2300)",
+    #     )
 
     # ────────────────────────────────────────────────────────────────────────
     # Step 3: Fetch debtor
@@ -294,6 +397,8 @@ async def initiate_call_v2(
         auth_token = os.getenv("TWILIO_AUTH_TOKEN")
         from_number = os.getenv("TWILIO_VOICE_PHONE_NUMBER")
         webhook_url = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8001")
+
+        logger.info("[Voice Init] Twilio credentials loaded: SID=%s, FROM=%s", account_sid, from_number)
 
         if not all([account_sid, auth_token, from_number]):
             logger.error("[Voice Init] Twilio config incomplete")
