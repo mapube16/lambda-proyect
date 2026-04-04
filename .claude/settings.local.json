@@ -185,7 +185,8 @@
       "Bash(python3 -c \"import sys,json; routes=[r[''''summary''''] if ''''summary'''' in r else p for p,m in json.load\\(sys.stdin\\)[''''paths''''].items\\(\\) for r in m.values\\(\\)]; [print\\(r\\) for r in routes if ''''cobr'''' in r.lower\\(\\) or ''''vapi'''' in r.lower\\(\\) or ''''cobranza'''' in r.lower\\(\\)]\")",
       "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
       "WebFetch(domain:www.assemblyai.com)",
-      "Bash(grep -n \"BRIGHT_DATA\" /c/Users/maxim/Desktop/hive-pixel-office/backend/*.py /c/Users/maxim/Desktop/hive-pixel-office/.env*)"
+      "Bash(grep -n \"BRIGHT_DATA\" /c/Users/maxim/Desktop/hive-pixel-office/backend/*.py /c/Users/maxim/Desktop/hive-pixel-office/.env*)",
+      "Bash(git checkout:*)"
     ]
   }
 }
