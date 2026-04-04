@@ -192,7 +192,10 @@
       "Bash(PYTHONPATH=/c/Users/maxim/Desktop/hive-pixel-office/backend python /tmp/test_voice_call.py)",
       "Bash(find /c/Users/maxim/Desktop/hive-pixel-office/backend/cobranza -name \"*.py\" -exec grep -l \"POST.*debtors\\\\|def.*create.*debtor\" {} \\\\;)",
       "Bash(pkill -9 -f \"python.*uvicorn\")",
-      "Bash(ngrok http:*)"
+      "Bash(ngrok http:*)",
+      "Bash(pkill -9 -f \"python.*uvicorn\" pkill -9 -f \"reloader\" sleep 3 ps aux)",
+      "WebFetch(domain:www.twilio.com)",
+      "Bash(pkill -f ngrok)"
     ]
   }
 }

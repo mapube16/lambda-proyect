@@ -100,7 +100,7 @@ class ElevenLabsTts(TtsProvider):
 
 
 class AzureTts(TtsProvider):
-    """Azure Speech Services TTS provider."""
+    """Azure Speech Services TTS provider (Colombian voice — Sofia)."""
 
     async def synthesize(
         self, text: str, language_code: str = "es-CO"
@@ -108,10 +108,9 @@ class AzureTts(TtsProvider):
         """
         Synthesize using Azure Speech Services.
 
-        Requires AZURE_SPEECH_KEY and AZURE_SPEECH_REGION env vars.
+        Returns WAV audio (Riff16Khz16BitMonoPcm) which voice_router
+        converts to mulaw for Twilio.
         """
-        import os
-
         api_key = os.getenv("AZURE_SPEECH_KEY")
         region = os.getenv("AZURE_SPEECH_REGION", "eastus")
 
@@ -122,29 +121,36 @@ class AzureTts(TtsProvider):
         try:
             import azure.cognitiveservices.speech as speechsdk
 
-            speech_config = speechsdk.SpeechConfig(
-                subscription=api_key,
-                region=region,
-            )
-            speech_config.speech_synthesis_voice_name = "es-CO-LuisNeural"
+            speech_config = speechsdk.SpeechConfig(subscription=api_key, region=region)
+            speech_config.speech_synthesis_voice_name = "es-CO-SalomeNeural"
 
-            # Synthesize to in-memory stream
-            audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=False)
+            # Output as 16 kHz 16-bit mono WAV — easy to convert to mulaw
+            speech_config.set_speech_synthesis_output_format(
+                speechsdk.SpeechSynthesisOutputFormat.Riff16Khz16BitMonoPcm
+            )
+
             synthesizer = speechsdk.SpeechSynthesizer(
                 speech_config=speech_config,
-                audio_config=audio_config,
+                audio_config=None,  # No speaker output — just return bytes
             )
 
             result = synthesizer.speak_text_async(text).get()
+
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-                logger.debug("[Azure TTS] Synthesized %d chars", len(text))
+                logger.info("[Azure TTS] OK: %d chars → %d bytes WAV (Sofia)", len(text), len(result.audio_data))
                 return result.audio_data
             else:
-                logger.error("[Azure TTS] Synthesis failed: %s", result.reason)
+                cancellation = result.cancellation_details
+                logger.error("[Azure TTS] Failed: %s / %s", result.reason, cancellation.reason if cancellation else "?")
+                if cancellation:
+                    logger.error("[Azure TTS] Detail: %s", cancellation.error_details)
                 return None
 
+        except ImportError:
+            logger.error("[Azure TTS] azure-cognitiveservices-speech not installed. Run: pip install azure-cognitiveservices-speech")
+            return None
         except Exception as e:
-            logger.error("[Azure TTS] Error: %s", e)
+            logger.error("[Azure TTS] Error: %s", e, exc_info=True)
             return None
 
     def name(self) -> str:

@@ -2,23 +2,27 @@
 voice_router.py — FastAPI endpoints for voice orchestrator.
 
 Handles:
-1. POST /api/cobranza/voice/webhook — TwiML (Twilio callbacks)
-2. WebSocket /api/cobranza/voice/ws/{call_id} — Real-time voice interaction
+1. POST /api/cobranza/voice/webhook — TwiML (upgrades to WebSocket)
+2. WebSocket /api/cobranza/voice/ws/{call_id} — Real-time bidirectional voice
+3. POST /api/cobranza/voice/call/initiate-v2 — Outbound call initiation
 """
 import asyncio
+import base64
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, status
+import requests as sync_requests
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from auth import get_current_user
 from database import get_db
 from cobranza.debtor_crud import get_debtor_by_id, update_debtor
-from cobranza.assembly_ai_client import AssemblyAIClient
-from cobranza.voice_orchestrator import VoiceOrchestrator
 from cobranza.tts_adapter import get_tts_provider
 
 logger = logging.getLogger("cobranza.voice")
@@ -26,305 +30,388 @@ logger = logging.getLogger("cobranza.voice")
 router = APIRouter(prefix="/api/cobranza/voice", tags=["voice"])
 
 
-# ── Models ────────────────────────────────────────────────────────────────────
+# ── Models ───────────────────────────────────────────────────────────────────
 
 class VoiceCallInitRequest(BaseModel):
-    """Request to initiate a voice call via new orchestrator (v2)."""
-
     debtor_id: str
 
 
-# ── TwiML Webhook (Twilio → us) ───────────────────────────────────────────────
+# ── TwiML Webhook ────────────────────────────────────────────────────────────
 
 
 @router.post("/webhook")
-async def twiml_webhook(
-    CallSid: str = None,
-    Called: str = None,
-    Caller: str = None,
-):
+async def twiml_webhook(request: Request):
     """
-    TwiML webhook from Twilio.
-
-    Interactive voice response with gathering user input.
+    Twilio calls this when the outbound call connects.
+    We respond with TwiML that upgrades to a bidirectional WebSocket.
     """
-    from twilio.twiml.voice_response import VoiceResponse, Gather
-    from fastapi.responses import PlainTextResponse
+    from twilio.twiml.voice_response import VoiceResponse, Connect
 
-    call_sid = CallSid or "unknown"
-    called_number = Called or "unknown"
+    # Twilio sends application/x-www-form-urlencoded
+    form = await request.form()
+    form_dict = dict(form)
+    logger.info("[Webhook] Raw form data: %s", form_dict)
+    call_sid = form_dict.get("CallSid", "unknown")
+    Called = form_dict.get("Called", "unknown")
+    Caller = form_dict.get("Caller", "unknown")
+    logger.info("[Webhook] Call %s answered (from %s to %s)", call_sid, Caller, Called)
 
-    logger.info("[TwiML Webhook] Incoming call %s from %s to %s", call_sid, Caller, called_number)
-
-    # Lookup debtor to get custom greeting
-    db = get_db()
-    call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
-
-    greeting = "Hola, buenos días. Presione 1 para continuar o cuelgue para terminar."
-    if call_mapping:
-        debtor_id = call_mapping.get("debtor_id")
-        user_id = call_mapping.get("user_id")
-        debtor = await get_debtor_by_id(db, user_id, debtor_id) if user_id else None
-        if debtor:
-            debtor_name = debtor.get("nombre", "").split()[0]  # First name only
-            greeting = f"Hola {debtor_name}, buenos días. Presione 1 para continuar."
+    host = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8001")
+    host_clean = host.replace("https://", "").replace("http://", "")
+    ws_url = f"wss://{host_clean}/api/cobranza/voice/ws/{call_sid}"
 
     response = VoiceResponse()
+    connect = Connect()
+    connect.stream(url=ws_url)
+    response.append(connect)
 
-    # Gather input (DTMF digits)
-    gather = Gather(num_digits=1, action=f"https://{os.getenv('VOICE_WEBHOOK_HOST', 'localhost').replace('https://', '').replace('http://', '')}/api/cobranza/voice/input", method="POST")
-    gather.say(greeting, voice="alice", language="es-ES")
-    response.append(gather)
-
-    # Fallback if no input
-    response.say("Entiendo que no puede atender. Intentaremos más tarde. Gracias.", voice="alice", language="es-ES")
-    response.hangup()
-
-    twiml_str = str(response)
-    logger.info("[TwiML] Responding with greeting to %s", call_sid)
-
-    return PlainTextResponse(twiml_str, media_type="application/xml")
+    twiml = str(response)
+    logger.info("[Webhook] TwiML → Stream to %s", ws_url)
+    return PlainTextResponse(twiml, media_type="application/xml")
 
 
-# ── WebSocket Upgrade (Twilio → us, real-time) ────────────────────────────────
+# ── WebSocket (Bidirectional Media Stream) ───────────────────────────────────
 
 
 @router.websocket("/ws/{call_sid}")
 async def voice_websocket(websocket: WebSocket, call_sid: str):
     """
-    WebSocket endpoint for real-time voice interaction.
+    Twilio Media Streams bidirectional WebSocket.
 
-    Twilio upgrades the call here and streams audio to us.
+    Protocol (per https://www.twilio.com/docs/voice/media-streams/websocket-messages):
+      Twilio → us:  { "event": "connected" | "start" | "media" | "stop" }
+      us → Twilio:  { "event": "media", "streamSid": "...", "media": {"payload": "<base64 mulaw>"} }
 
-    Flow:
-    1. Accept WebSocket connection
-    2. Extract debtor_id from call_sid (stored in database)
-    3. Initialize Assembly AI stream for STT
-    4. Main loop:
-       a. Receive audio from Twilio
-       b. Send to Assembly AI
-       c. Get transcript (wait for FinalTranscript)
-       d. Ask Claude what to say next
-       e. Synthesize response with TTS
-       f. Send audio back to Twilio
-       g. Repeat until call ends
-    5. Log everything to MongoDB
-
-    This is the CORE of the orchestrator.
+    Audio format: audio/x-mulaw, 8 kHz, mono, base64-encoded. No file headers.
     """
     await websocket.accept()
-    logger.info("[Voice WS] ✓ WebSocket accepted for call %s", call_sid)
+    logger.info("[WS] Accepted for call %s", call_sid)
 
     db = get_db()
-    orchestrator = None
+    stream_sid: Optional[str] = None
+    audio_buffer = bytearray()
+    transcript_history: list[dict] = []
+    turn = 0
+    greeting_sent = False
 
     try:
-        # ────────────────────────────────────────────────────────────────────
-        # Step 1: Look up debtor from call_sid mapping
-        # ────────────────────────────────────────────────────────────────────
+        # ── Load call context ────────────────────────────────────────────
         call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
         if not call_mapping:
-            logger.error("[Voice WS] No debtor mapping found for call %s", call_sid)
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="No debtor found")
+            logger.error("[WS] No call mapping for %s", call_sid)
+            await websocket.close(1008, "No call mapping")
             return
 
-        user_id = call_mapping.get("user_id")
-        debtor_id = call_mapping.get("debtor_id")
-
-        logger.info("[Voice WS] Call %s: user=%s, debtor=%s", call_sid, user_id, debtor_id)
-
-        # ────────────────────────────────────────────────────────────────────
-        # Step 2: Fetch debtor and strategy
-        # ────────────────────────────────────────────────────────────────────
+        user_id = call_mapping["user_id"]
+        debtor_id = call_mapping["debtor_id"]
         debtor = await get_debtor_by_id(db, user_id, debtor_id)
-        if not debtor:
-            logger.error("[Voice WS] Debtor not found: %s", debtor_id)
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Debtor not found")
-            return
-
         config_doc = await db.cobranza_config.find_one({"user_id": user_id})
-        estrategia = config_doc.get("estrategia", {}) if config_doc else {}
+        estrategia = (config_doc or {}).get("estrategia", {})
 
-        if not estrategia:
-            logger.error("[Voice WS] No strategy configured for user %s", user_id)
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="No strategy configured")
+        if not debtor or not estrategia:
+            logger.error("[WS] Missing debtor/strategy for call %s", call_sid)
+            await websocket.close(1008, "Missing config")
             return
 
-        logger.info("[Voice WS] Strategy loaded: tono=%s, max_intentos=%s",
-                   estrategia.get("tono"), estrategia.get("max_intentos"))
+        debtor_name = debtor.get("nombre", "señor o señora")
+        tts = get_tts_provider()
+        logger.info("[WS] Ready: debtor=%s, tts=%s", debtor_name, tts.name())
 
-        # ────────────────────────────────────────────────────────────────────
-        # Step 3: Initialize orchestrator
-        # ────────────────────────────────────────────────────────────────────
-        orchestrator = VoiceOrchestrator(
-            call_id=call_sid,
-            user_id=user_id,
-            debtor=debtor,
-            estrategia=estrategia,
-            db_client=db,
-        )
-
-        # ────────────────────────────────────────────────────────────────────
-        # Step 4: Initialize Assembly AI stream
-        # ────────────────────────────────────────────────────────────────────
-        try:
-            assembly_ai = AssemblyAIClient()
-        except ValueError as e:
-            logger.error("[Voice WS] Assembly AI initialization failed: %s", e)
-            await websocket.close(code=status.WS_1011_SERVER_ERROR, reason="STT service unavailable")
-            return
-
-        # ────────────────────────────────────────────────────────────────────
-        # Step 5: Send initial greeting via TTS
-        # ────────────────────────────────────────────────────────────────────
-        try:
-            tts = get_tts_provider()
-            greeting_text = estrategia.get("guion", {}).get("saludo", "Hola, buenos días")
-            logger.info("[Voice WS] Synthesizing greeting: %s", greeting_text)
-
-            # Synthesize greeting
-            audio_bytes = await tts.synthesize(greeting_text)
-            if not audio_bytes:
-                logger.error("[Voice WS] TTS returned empty audio")
-                await websocket.close(code=status.WS_1011_SERVER_ERROR, reason="TTS failed")
-                return
-
-            logger.info("[Voice WS] TTS generated %d bytes", len(audio_bytes))
-
-            # Twilio Media Stream format:
-            # Send audio in chunks with Twilio framing (2-byte big-endian length + payload)
-            chunk_size = 320  # 20ms of 8kHz mulaw audio
-            for i in range(0, len(audio_bytes), chunk_size):
-                chunk = audio_bytes[i:i+chunk_size]
-                # Frame: 2-byte length (big-endian) + audio data
-                frame = len(chunk).to_bytes(2, byteorder='big') + chunk
-                await websocket.send_bytes(frame)
-                logger.debug("[Voice WS] Sent audio frame %d (%d bytes)", i//chunk_size, len(chunk))
-                await asyncio.sleep(0.02)  # Simulate 20ms delay between frames
-
-            logger.info("[Voice WS] ✓ Sent greeting (%d bytes) to call %s", len(audio_bytes), call_sid)
-        except Exception as e:
-            logger.error("[Voice WS] Failed to send greeting: %s", e, exc_info=True)
-            await websocket.close(code=status.WS_1011_SERVER_ERROR, reason="TTS failed")
-            return
-
-        # ────────────────────────────────────────────────────────────────────
-        # Step 6: Main loop - receive audio, transcribe, decide, respond
-        # ────────────────────────────────────────────────────────────────────
-        logger.info("[Voice WS] Starting main loop for call %s", call_sid)
-        max_turns = 10
-        turn = 0
-
-        while orchestrator.state == "active" and turn < max_turns:
+        # ── Main loop ────────────────────────────────────────────────────
+        while True:
             try:
-                turn += 1
-                logger.info("[Voice WS] Turn %d for call %s", turn, call_sid)
-
-                # Receive audio from Twilio (timeout after 60s silence = hang up)
-                data = await asyncio.wait_for(
-                    websocket.receive_bytes(),
-                    timeout=60.0
-                )
-
-                if not data:
-                    logger.warning("[Voice WS] Empty data received, ending call %s", call_sid)
-                    break
-
-                # ──────────────────────────────────────────────────────────
-                # Parse Twilio media format
-                # Twilio sends: [length:2 bytes][audio:mulaw PCM]
-                # ──────────────────────────────────────────────────────────
-                audio_chunk = data[2:] if len(data) > 2 else data
-                logger.debug("[Voice WS] Received %d bytes from debtor", len(audio_chunk))
-
-                # TODO: Send to Assembly AI for transcription
-                # For now, simulate a response
-                logger.info("[Voice WS] Would transcribe audio chunk of %d bytes", len(audio_chunk))
-
-                # For demo: send a simple acknowledgment
-                try:
-                    ack_text = "Entendido, continuamos..."
-                    tts = get_tts_provider()
-                    ack_audio = await tts.synthesize(ack_text)
-                    await websocket.send_bytes(ack_audio)
-                    logger.info("[Voice WS] Sent ack to call %s", call_sid)
-                except Exception as e:
-                    logger.error("[Voice WS] Failed to send ack: %s", e)
-                    break
-
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
             except asyncio.TimeoutError:
-                logger.warning("[Voice WS] Silence timeout for call %s", call_sid)
+                logger.warning("[WS] 30 s silence — hanging up")
                 break
-            except Exception as e:
-                logger.error("[Voice WS] Error in turn %d: %s", turn, e)
+            except WebSocketDisconnect:
+                logger.info("[WS] Disconnected")
                 break
 
-        logger.info("[Voice WS] Main loop ended for call %s (state: %s, turns: %d)", call_sid, orchestrator.state, turn)
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            event = msg.get("event")
+
+            # ── connected ────────────────────────────────────────────────
+            if event == "connected":
+                logger.info("[WS] Connected event received")
+
+            # ── start ────────────────────────────────────────────────────
+            elif event == "start":
+                stream_sid = msg.get("start", {}).get("streamSid") or msg.get("streamSid")
+                logger.info("[WS] Stream started — streamSid=%s", stream_sid)
+
+                # Send greeting as soon as stream starts
+                if stream_sid and not greeting_sent:
+                    greeting = f"Aló, buenas tardes, será que hablo con {debtor_name}?"
+                    logger.info("[WS] Sending greeting: %s", greeting)
+                    audio = await _tts_to_mulaw(tts, greeting)
+                    if audio:
+                        await _send_audio(websocket, stream_sid, audio)
+                        transcript_history.append({"speaker": "agent", "text": greeting})
+                        greeting_sent = True
+                        logger.info("[WS] Greeting sent (%d bytes mulaw)", len(audio))
+                    else:
+                        logger.error("[WS] TTS failed for greeting")
+
+            # ── media (inbound audio from caller) ────────────────────────
+            elif event == "media":
+                payload = msg.get("media", {}).get("payload", "")
+                if payload:
+                    chunk = base64.b64decode(payload)
+                    audio_buffer.extend(chunk)
+
+                    # Accumulate ~3 seconds of audio (8000 bytes/sec for mulaw 8kHz)
+                    if len(audio_buffer) >= 24000:
+                        turn += 1
+                        logger.info("[WS] Turn %d — %d bytes of audio collected", turn, len(audio_buffer))
+
+                        # Transcribe
+                        transcript = await _transcribe_mulaw(bytes(audio_buffer))
+                        audio_buffer.clear()
+
+                        if not transcript or len(transcript.strip()) < 2:
+                            logger.info("[WS] Empty transcript, waiting for more audio")
+                            continue
+
+                        logger.info("[WS] Debtor said: «%s»", transcript)
+                        transcript_history.append({"speaker": "debtor", "text": transcript})
+
+                        # Claude decides what Camila says next
+                        from cobranza.claude_decision import get_next_action
+                        decision = await get_next_action(
+                            estrategia=estrategia,
+                            debtor=debtor,
+                            transcript_history=transcript_history,
+                            latest_debtor_input=transcript,
+                            turn_number=turn,
+                        )
+
+                        camila_text = decision.get("response_text", "Entendido, gracias.")
+                        action = decision.get("action", "continue")
+                        logger.info("[WS] Camila [%s]: %s", action, camila_text[:120])
+                        transcript_history.append({"speaker": "agent", "text": camila_text})
+
+                        # Synthesize and send back
+                        response_audio = await _tts_to_mulaw(tts, camila_text)
+                        if response_audio and stream_sid:
+                            await _send_audio(websocket, stream_sid, response_audio)
+                            logger.info("[WS] Sent response (%d bytes)", len(response_audio))
+
+                        # If Claude says end the call, break
+                        if action in ("end", "escalate"):
+                            logger.info("[WS] Call ending: action=%s", action)
+                            break
+
+            # ── stop ─────────────────────────────────────────────────────
+            elif event == "stop":
+                logger.info("[WS] Stream stopped by Twilio")
+                break
+
+        logger.info("[WS] Call %s ended after %d turns", call_sid, turn)
 
     except Exception as e:
-        logger.error("[Voice WS] Unexpected error in call %s: %s", call_sid, e, exc_info=True)
-
+        logger.error("[WS] Fatal: %s", e, exc_info=True)
     finally:
-        # Log final call state
-        if orchestrator:
-            await orchestrator.on_call_end(reason="websocket_closed")
-            logger.info("[Voice WS] Call %s logged (state: %s)", call_sid, orchestrator.state)
+        # Log conversation to MongoDB
+        try:
+            await db.cobranza_calls.insert_one({
+                "call_sid": call_sid,
+                "user_id": user_id if "user_id" in dir() else None,
+                "debtor_id": debtor_id if "debtor_id" in dir() else None,
+                "transcript": transcript_history,
+                "turns": turn,
+                "created_at": datetime.now(timezone.utc),
+            })
+        except Exception as e:
+            logger.warning("[WS] Failed to log call: %s", e)
 
-        # Clean up call mapping
         try:
             await db.cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
-        except Exception as e:
-            logger.warning("[Voice WS] Failed to clean up call mapping: %s", e)
-
-        # Close WebSocket
+        except:
+            pass
         try:
             await websocket.close()
-        except Exception as e:
-            logger.debug("[Voice WS] WebSocket already closed: %s", e)
-
-        logger.info("[Voice WS] Closed call %s", call_sid)
-
-
-# ── User Input Handler (after Gather) ─────────────────────────────────────────
+        except:
+            pass
+        logger.info("[WS] Cleanup done for %s", call_sid)
 
 
-@router.post("/input")
-async def voice_input(
-    CallSid: str = None,
-    Digits: str = None,
-):
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+async def _tts_to_mulaw(tts, text: str) -> Optional[bytes]:
     """
-    Handle user input from Gather (DTMF digits).
+    Synthesize text and convert to raw mulaw 8 kHz (no file headers).
 
-    POST /api/cobranza/voice/input
-    Called after user presses a digit in response to Gather.
+    Twilio requires: audio/x-mulaw, 8000 Hz, mono, no headers.
     """
-    from twilio.twiml.voice_response import VoiceResponse
-    from fastapi.responses import PlainTextResponse
+    try:
+        audio = await tts.synthesize(text)
+        if not audio:
+            return None
 
-    call_sid = CallSid or "unknown"
-    digits = Digits or ""
+        # The TTS provider might return MP3, WAV, or raw PCM.
+        # We need raw mulaw. Use audioop for conversion if we get PCM.
+        # If we get MP3/WAV from Azure, we need to decode first.
+        # For now, try to convert assuming raw PCM int16 at some sample rate.
+        try:
+            import audioop
+            import io
+            import wave
 
-    logger.info("[Voice Input] Call %s: user pressed %s", call_sid, digits or "(timeout)")
+            # Try to parse as WAV first
+            try:
+                wav_io = io.BytesIO(audio)
+                with wave.open(wav_io, "rb") as wf:
+                    pcm_data = wf.readframes(wf.getnframes())
+                    sample_width = wf.getsampwidth()
+                    sample_rate = wf.getframerate()
+                    channels = wf.getnchannels()
 
-    response = VoiceResponse()
+                # Convert to mono if stereo
+                if channels == 2:
+                    pcm_data = audioop.tomono(pcm_data, sample_width, 1, 1)
 
-    if digits == "1":
-        # User pressed 1 - continue to conversation
-        response.say("Excelente. Conectando con nuestro agente.", voice="alice", language="es-ES")
-        response.hangup()
-    else:
-        # User didn't press anything or pressed something else
-        response.say("No entendí su respuesta. Intentaremos más tarde. Gracias.", voice="alice", language="es-ES")
-        response.hangup()
+                # Resample to 8000 Hz if needed
+                if sample_rate != 8000:
+                    pcm_data, _ = audioop.ratecv(pcm_data, sample_width, 1, sample_rate, 8000, None)
 
-    twiml_str = str(response)
-    logger.info("[Voice Input] Responding to call %s", call_sid)
+                # Convert to mulaw
+                mulaw = audioop.lin2ulaw(pcm_data, sample_width)
+                logger.debug("[TTS→mulaw] WAV %dHz/%dch → %d bytes mulaw", sample_rate, channels, len(mulaw))
+                return mulaw
 
-    return PlainTextResponse(twiml_str, media_type="application/xml")
+            except wave.Error:
+                # Not a WAV — maybe it's already mulaw or raw PCM
+                # Try treating as 16-bit PCM at 16kHz
+                pcm_data, _ = audioop.ratecv(audio, 2, 1, 16000, 8000, None)
+                mulaw = audioop.lin2ulaw(pcm_data, 2)
+                logger.debug("[TTS→mulaw] Raw PCM → %d bytes mulaw", len(mulaw))
+                return mulaw
+
+        except Exception as conv_err:
+            logger.warning("[TTS→mulaw] Conversion failed: %s — returning raw", conv_err)
+            return audio
+
+    except Exception as e:
+        logger.error("[TTS→mulaw] Error: %s", e)
+        return None
 
 
-# ── Manual initiation (from dashboard) ─────────────────────────────────────────
+async def _send_audio(websocket: WebSocket, stream_sid: str, mulaw_audio: bytes) -> None:
+    """
+    Send mulaw audio back to Twilio over the bidirectional Media Stream.
+
+    Sends in 20 ms chunks (160 bytes of mulaw at 8 kHz).
+    """
+    CHUNK = 160  # 20 ms at 8 kHz mulaw (1 byte per sample)
+    for i in range(0, len(mulaw_audio), CHUNK):
+        chunk = mulaw_audio[i:i + CHUNK]
+        payload = base64.b64encode(chunk).decode("ascii")
+        await websocket.send_json({
+            "event": "media",
+            "streamSid": stream_sid,
+            "media": {
+                "payload": payload,
+            },
+        })
+        # Pace at roughly real-time so Twilio's jitter buffer stays happy
+        await asyncio.sleep(0.018)
+
+    # Send a mark so we know when playback finishes
+    await websocket.send_json({
+        "event": "mark",
+        "streamSid": stream_sid,
+        "mark": {"name": f"response_{int(time.time())}"},
+    })
+
+
+async def _transcribe_mulaw(audio: bytes) -> Optional[str]:
+    """
+    Transcribe mulaw audio using Assembly AI (upload → submit → poll).
+
+    Converts mulaw 8kHz to WAV before uploading (Assembly AI needs a proper format).
+    """
+    import audioop
+    import io
+    import wave
+
+    api_key = os.getenv("ASSEMBLY_AI_API_KEY")
+    if not api_key:
+        logger.error("[STT] ASSEMBLY_AI_API_KEY not set")
+        return None
+
+    # Convert mulaw to WAV
+    try:
+        pcm = audioop.ulaw2lin(audio, 2)  # mulaw → 16-bit PCM
+        wav_buf = io.BytesIO()
+        with wave.open(wav_buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
+            wf.writeframes(pcm)
+        wav_bytes = wav_buf.getvalue()
+        logger.info("[STT] Converted %d bytes mulaw → %d bytes WAV", len(audio), len(wav_bytes))
+    except Exception as e:
+        logger.error("[STT] mulaw→WAV conversion failed: %s", e)
+        return None
+
+    headers = {"Authorization": api_key, "Content-Type": "application/octet-stream"}
+
+    try:
+        # 1. Upload WAV audio
+        up = sync_requests.post(
+            "https://api.assemblyai.com/v2/upload",
+            headers=headers,
+            data=wav_bytes,
+            timeout=10,
+        )
+        up.raise_for_status()
+        audio_url = up.json()["upload_url"]
+
+        # 2. Submit transcription job
+        sub = sync_requests.post(
+            "https://api.assemblyai.com/v2/transcript",
+            headers={"Authorization": api_key},
+            json={
+                "audio_url": audio_url,
+                "language_code": "es",
+                "speech_models": ["universal-3-pro"],
+            },
+            timeout=10,
+        )
+        if sub.status_code != 200:
+            logger.error("[STT] Submit failed %d: %s", sub.status_code, sub.text[:300])
+            return None
+        tid = sub.json()["id"]
+
+        # 3. Poll (up to 30 s)
+        poll_url = f"https://api.assemblyai.com/v2/transcript/{tid}"
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            r = sync_requests.get(poll_url, headers={"Authorization": api_key}, timeout=10)
+            r.raise_for_status()
+            body = r.json()
+            if body["status"] == "completed":
+                return body.get("text", "")
+            if body["status"] == "error":
+                logger.error("[STT] Assembly AI error: %s", body.get("error"))
+                return None
+            await asyncio.sleep(1)
+
+        logger.warning("[STT] Timed out waiting for transcript")
+        return None
+
+    except Exception as e:
+        logger.error("[STT] Error: %s", e)
+        return None
+
+
+# ── Outbound Call Initiation ─────────────────────────────────────────────────
 
 
 @router.post("/call/initiate-v2", status_code=status.HTTP_202_ACCEPTED)
@@ -333,15 +420,10 @@ async def initiate_call_v2(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Manually trigger a voice call via new orchestrator.
+    Manually trigger a voice call.
 
     POST /api/cobranza/voice/call/initiate-v2
-    {
-        "debtor_id": "65f8c1a2b3c4d5e6f7g8h9i0"
-    }
-
-    Validates cobranza_enabled, Ley 2300 compliance, then initiates Twilio call.
-    Returns 202 ACCEPTED with call_sid (call happens async).
+    { "debtor_id": "..." }
     """
     from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_today
 
@@ -349,47 +431,23 @@ async def initiate_call_v2(
     db = get_db()
     debtor_id = request.debtor_id
 
-    logger.info("[Voice Init] Initiating v2 call for debtor %s (user %s)", debtor_id, user_id)
+    logger.info("[Init] Call for debtor %s (user %s)", debtor_id, user_id)
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Step 1: Check cobranza_enabled
-    # ────────────────────────────────────────────────────────────────────────
+    # Check cobranza enabled
     doc = await db.company_voice.find_one({"user_id": user_id})
     if not doc or not doc.get("cobranza_enabled", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cobranza no habilitado para esta cuenta.",
-        )
+        raise HTTPException(403, "Cobranza no habilitado para esta cuenta.")
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Step 2: Check Ley 2300 compliance (contact hours)
-    # ────────────────────────────────────────────────────────────────────────
-    # TEMPORARILY DISABLED FOR TESTING - enable in production
-    # if not is_contact_allowed_now():
-    #     raise HTTPException(
-    #         status_code=status.HTTP_400_BAD_REQUEST,
-    #         detail="Fuera de horario permitido (Ley 2300)",
-    #     )
-
-    # ────────────────────────────────────────────────────────────────────────
-    # Step 3: Fetch debtor
-    # ────────────────────────────────────────────────────────────────────────
+    # Fetch debtor
     debtor = await get_debtor_by_id(db, user_id, debtor_id)
     if not debtor:
-        raise HTTPException(status_code=404, detail="Debtor not found")
+        raise HTTPException(404, "Debtor not found")
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Step 4: Check Ley 2300 compliance (one contact per day)
-    # ────────────────────────────────────────────────────────────────────────
+    # Ley 2300 (one contact / day)
     if has_been_contacted_today(debtor):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Ya fue contactado hoy (Ley 2300)",
-        )
+        raise HTTPException(400, "Ya fue contactado hoy (Ley 2300)")
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Step 5: Initiate Twilio outbound call
-    # ────────────────────────────────────────────────────────────────────────
+    # Twilio call
     try:
         from twilio.rest import Client
 
@@ -398,34 +456,18 @@ async def initiate_call_v2(
         from_number = os.getenv("TWILIO_VOICE_PHONE_NUMBER")
         webhook_url = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8001")
 
-        logger.info("[Voice Init] Twilio credentials loaded: SID=%s, FROM=%s", account_sid, from_number)
-
         if not all([account_sid, auth_token, from_number]):
-            logger.error("[Voice Init] Twilio config incomplete")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Twilio not configured",
-            )
+            raise HTTPException(500, "Twilio not configured")
 
         client = Client(account_sid, auth_token)
         to_number = debtor.get("telefono")
+        twiml_url = f"{webhook_url}/api/cobranza/voice/webhook"
 
-        # TwiML webhook URL (where Twilio calls us back with call started)
-        twiml_callback_url = f"{webhook_url}/api/cobranza/voice/webhook"
-
-        call = client.calls.create(
-            to=to_number,
-            from_=from_number,
-            url=twiml_callback_url,
-            method="POST",
-        )
-
+        call = client.calls.create(to=to_number, from_=from_number, url=twiml_url, method="POST")
         call_sid = call.sid
-        logger.info("[Voice Init] Call created: %s → %s", call_sid, to_number)
+        logger.info("[Init] Call %s → %s", call_sid, to_number)
 
-        # ────────────────────────────────────────────────────────────────────
-        # Step 6: Store call mapping (call_sid → debtor_id, user_id)
-        # ────────────────────────────────────────────────────────────────────
+        # Store mapping
         await db.cobranza_calls_in_progress.insert_one({
             "call_sid": call_sid,
             "user_id": user_id,
@@ -435,23 +477,16 @@ async def initiate_call_v2(
             "started_at": datetime.now(timezone.utc),
         })
 
-        # ────────────────────────────────────────────────────────────────────
-        # Step 7: Update debtor estado to "llamando"
-        # ────────────────────────────────────────────────────────────────────
+        # Update debtor status
         await update_debtor(db, user_id, debtor_id, {
             "estado": "llamando",
-            "vapi_call_id": call_sid,  # Store as vapi_call_id for compatibility
+            "vapi_call_id": call_sid,
         })
 
-        return {
-            "ok": True,
-            "call_sid": call_sid,
-            "message": "Call initiated (v2 orchestrator)",
-        }
+        return {"ok": True, "call_sid": call_sid, "message": "Call initiated (v2 orchestrator)"}
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("[Voice Init] Twilio call creation failed: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to initiate call: {str(e)[:100]}",
-        )
+        logger.error("[Init] Failed: %s", e, exc_info=True)
+        raise HTTPException(500, f"Failed to initiate call: {str(e)[:100]}")
