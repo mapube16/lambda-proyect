@@ -16,38 +16,42 @@ import sys
 import base64
 import json
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
 
 def check_env_var(name: str, required: bool = True) -> bool:
     """Check if env var exists and has value."""
     value = os.getenv(name)
-    status = "✓" if value else "✗"
+    status = "OK" if value else "FAIL"
     req = "REQUIRED" if required else "optional"
-    print(f"  {status} {name}: {req}")
+    print(f"  [{status}] {name}: {req}")
     return bool(value)
 
 def check_assembly_ai() -> bool:
     """Verify Assembly AI API key."""
-    print("\n📍 Assembly AI (Speech-to-Text)")
+    print("\n[Assembly AI] Speech-to-Text")
     api_key = os.getenv("ASSEMBLY_AI_API_KEY")
     if not api_key:
-        print("  ✗ ASSEMBLY_AI_API_KEY not set")
+        print("  [FAIL] ASSEMBLY_AI_API_KEY not set")
         return False
-    print(f"  ✓ ASSEMBLY_AI_API_KEY: {api_key[:20]}...")
+    print(f"  [OK] ASSEMBLY_AI_API_KEY: {api_key[:20]}...")
     return True
 
 def check_google_tts() -> bool:
     """Verify Google Cloud TTS credentials."""
-    print("\n📍 Google Cloud TTS (Text-to-Speech)")
+    print("\n[Google Cloud TTS] Text-to-Speech")
 
     creds_b64 = os.getenv("GOOGLE_CLOUD_TTS_CREDENTIALS_JSON")
     project_id = os.getenv("GOOGLE_CLOUD_TTS_PROJECT_ID")
 
     if not creds_b64:
-        print("  ✗ GOOGLE_CLOUD_TTS_CREDENTIALS_JSON not set")
+        print("  [FAIL] GOOGLE_CLOUD_TTS_CREDENTIALS_JSON not set")
         return False
 
     if not project_id:
-        print("  ✗ GOOGLE_CLOUD_TTS_PROJECT_ID not set")
+        print("  [FAIL] GOOGLE_CLOUD_TTS_PROJECT_ID not set")
         return False
 
     try:
@@ -55,20 +59,20 @@ def check_google_tts() -> bool:
         creds_dict = json.loads(creds_json)
 
         if "project_id" not in creds_dict:
-            print("  ✗ Invalid credentials JSON (missing project_id)")
+            print("  [FAIL] Invalid credentials JSON (missing project_id)")
             return False
 
-        print(f"  ✓ GOOGLE_CLOUD_TTS_CREDENTIALS_JSON: valid base64 JSON")
-        print(f"  ✓ GOOGLE_CLOUD_TTS_PROJECT_ID: {project_id}")
+        print(f"  [OK] GOOGLE_CLOUD_TTS_CREDENTIALS_JSON: valid base64 JSON")
+        print(f"  [OK] GOOGLE_CLOUD_TTS_PROJECT_ID: {project_id}")
         print(f"    - Service account: {creds_dict.get('client_email', '?')}")
         return True
     except Exception as e:
-        print(f"  ✗ Failed to decode credentials: {e}")
+        print(f"  [FAIL] Failed to decode credentials: {e}")
         return False
 
 def check_twilio() -> bool:
     """Verify Twilio config."""
-    print("\n📍 Twilio (Phone Provider)")
+    print("\n[Twilio] Phone Provider")
 
     has_sid = check_env_var("TWILIO_ACCOUNT_SID")
     has_token = check_env_var("TWILIO_AUTH_TOKEN")
@@ -79,14 +83,14 @@ def check_twilio() -> bool:
 
 def check_openai() -> bool:
     """Verify OpenAI API key (for Claude decisions)."""
-    print("\n📍 OpenAI API (Claude Decisions)")
+    print("\n[OpenAI API] Claude Decisions")
     return check_env_var("OPENAI_API_KEY")
 
 def check_tts_provider() -> bool:
     """Verify TTS provider is configured."""
-    print("\n📍 TTS Provider Configuration")
+    print("\n[TTS Provider] Configuration")
     provider = os.getenv("TTS_PROVIDER", "google-cloud")
-    print(f"  ✓ TTS_PROVIDER: {provider}")
+    print(f"  [OK] TTS_PROVIDER: {provider}")
     return True
 
 def main():
@@ -108,18 +112,18 @@ def main():
     print("=" * 70)
 
     for name, result in results.items():
-        status = "✓ OK" if result else "✗ FAILED"
-        print(f"  {status}: {name}")
+        status = "OK" if result else "FAIL"
+        print(f"  [{status}] {name}")
 
     all_passed = all(results.values())
 
     print("\n" + "=" * 70)
     if all_passed:
-        print("✅ ALL CHECKS PASSED - Ready to implement WebSocket handler!")
+        print("SUCCESS: ALL CHECKS PASSED - Ready to implement WebSocket handler!")
         print("=" * 70)
         return 0
     else:
-        print("❌ SOME CHECKS FAILED - See above for details")
+        print("ERROR: SOME CHECKS FAILED - See above for details")
         print("=" * 70)
         return 1
 
