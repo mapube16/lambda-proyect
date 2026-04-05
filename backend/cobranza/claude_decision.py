@@ -33,6 +33,7 @@ def _build_decision_prompt(
     latest_debtor_input: str,
     turn_number: int,
     intentos_used: int,
+    call_state: dict = None,
 ) -> str:
     """
     Build the system + user prompts for Claude to decide the next action.
@@ -97,12 +98,20 @@ Eres Camila, asesora de cartera en De Pe Ge Seguros. Tienes experiencia, pacienc
 6. Si hay objeciones, responde con amabilidad, empatía y naturalidad.
 7. Si tras 2-3 intentos no logras validar identidad o la persona está incómoda, cierra con agradecimiento.
 
-TU OBJETIVO:
-1. Confirmar identidad si no está confirmada
-2. Confirmar los detalles de la deuda
-3. Ofrecer opciones de pago (fecha, monto)
+[ESTADO ACTUAL DE LA LLAMADA — usa esto para saber en qué paso estás]
+- Identidad confirmada: {"SÍ" if (call_state or {}).get("identity_confirmed") else "NO"}
+- Deuda mencionada: {"SÍ" if (call_state or {}).get("debt_mentioned") else "NO"}
+- Pago discutido: {"SÍ" if (call_state or {}).get("payment_discussed") else "NO"}
+- Objeción detectada: {(call_state or {}).get("objection_type") or "ninguna"}
+
+TU OBJETIVO (sigue estos pasos EN ORDEN, avanza al siguiente cuando el anterior esté resuelto):
+1. CONFIRMAR IDENTIDAD: Si el deudor dice "sí", "con él habla", "soy yo", "él habla", o cualquier confirmación — DA POR CONFIRMADA LA IDENTIDAD y avanza al paso 2. NO sigas preguntando.
+2. PRESENTARTE Y MENCIONAR LA DEUDA: "Le llamo de De Pe Ge Seguros, tenemos un saldo pendiente de ${monto:,.0f} con vencimiento {vencimiento}..."
+3. OFRECER OPCIONES DE PAGO: fecha, monto, facilidades
 4. Si hay objeciones, manejarlas con empatía pero firmeza
 5. Si se alcanza max_intentos, escalar a un supervisor
+
+IMPORTANTE: Si el historial de la conversación ya muestra que el deudor confirmó su identidad (dijo "sí", "con él", "soy yo", etc.), NO vuelvas a preguntar. Avanza directamente al siguiente paso.
 
 INSTRUCCIONES DE NATURALIDAD:
 - Habla como un colombiano real, NO como robot
@@ -154,6 +163,7 @@ async def get_next_action(
     latest_debtor_input: str,
     turn_number: int = 1,
     intentos_used: int = 0,
+    call_state: dict = None,
 ) -> dict:
     """
     Use Claude to decide the next conversational action.
@@ -181,7 +191,8 @@ async def get_next_action(
         }
 
     system_prompt, user_prompt = _build_decision_prompt(
-        estrategia, debtor, transcript_history, latest_debtor_input, turn_number, intentos_used
+        estrategia, debtor, transcript_history, latest_debtor_input, turn_number, intentos_used,
+        call_state=call_state,
     )
 
     try:
