@@ -195,7 +195,8 @@
       "Bash(ngrok http:*)",
       "Bash(pkill -9 -f \"python.*uvicorn\" pkill -9 -f \"reloader\" sleep 3 ps aux)",
       "WebFetch(domain:www.twilio.com)",
-      "Bash(pkill -f ngrok)"
+      "Bash(pkill -f ngrok)",
+      "WebFetch(domain:assemblyai.com)"
     ]
   }
 }
