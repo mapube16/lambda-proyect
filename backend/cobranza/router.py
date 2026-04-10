@@ -5,6 +5,7 @@ Prefix: /api/cobranza
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -381,13 +382,38 @@ async def onboarding_approve(
 # ── Llamar Ahora (manual immediate call) ──────────────────────────────────────
 
 async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict) -> None:
-    """Fire-and-forget: initiate Vapi call and update debtor state on result."""
+    """Fire-and-forget: initiate Twilio/Pipecat call and update debtor state."""
+    from datetime import datetime, timezone
     debtor_id = str(debtor["_id"])
     try:
-        logger.info("[llamar-ahora] Starting call for debtor %s with config keys: %s", debtor_id, list(config.keys()))
-        call_id = await initiate_call(debtor, config)
-        await update_debtor(db, user_id, debtor_id, {"vapi_call_id": call_id})
-        logger.info("[llamar-ahora] Call initiated %s for debtor %s", call_id, debtor_id)
+        logger.info("[llamar-ahora] Starting Pipecat call for debtor %s", debtor_id)
+        from twilio.rest import Client
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from_number = os.getenv("TWILIO_VOICE_PHONE_NUMBER")
+        webhook_url = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
+
+        if not all([account_sid, auth_token, from_number]):
+            raise RuntimeError("Twilio not configured")
+
+        client = Client(account_sid, auth_token)
+        to_number = debtor.get("telefono")
+        call = client.calls.create(
+            to=to_number, from_=from_number,
+            url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+        )
+        call_sid = call.sid
+        logger.info("[llamar-ahora] Twilio call %s -> %s", call_sid, to_number)
+
+        # Store call mapping for WebSocket handler
+        await db.cobranza_calls_in_progress.insert_one({
+            "call_sid": call_sid, "user_id": user_id,
+            "debtor_id": debtor_id, "debtor_name": debtor.get("nombre"),
+            "debtor_phone": to_number, "started_at": datetime.now(timezone.utc),
+        })
+
+        await update_debtor(db, user_id, debtor_id, {"vapi_call_id": call_sid})
+        logger.info("[llamar-ahora] Call initiated %s for debtor %s", call_sid, debtor_id)
     except (ValueError, RuntimeError) as e:
         logger.error("[llamar-ahora] Call failed for debtor %s: %s", debtor_id, e, exc_info=True)
         await update_debtor(db, user_id, debtor_id, {"estado": "pendiente"})
@@ -399,6 +425,7 @@ async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict
 @router.post("/debtors/{debtor_id}/llamar-ahora", status_code=status.HTTP_202_ACCEPTED)
 async def llamar_ahora(
     debtor_id: str,
+    test: bool = False,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -406,28 +433,33 @@ async def llamar_ahora(
     Manually trigger an immediate call to a debtor.
     Requires cobranza_enabled flag set by staff.
     Ley 2300 compliance guards applied before initiating.
+    Pass ?test=true to skip Ley 2300 guards (dev only).
     """
     await _require_cobranza_enabled(current_user)
     user_id = str(current_user["user_id"])
     db = get_db()
 
-    # Ley 2300: time window guard
-    if not is_contact_allowed_now():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Fuera de horario permitido (Ley 2300)",
-        )
+    is_dev = os.getenv("ENV", "development") != "production"
 
-    # Ley 2300: one contact per day guard
+    if not (test and is_dev):
+        # Ley 2300: time window guard
+        if not is_contact_allowed_now():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Fuera de horario permitido (Ley 2300)",
+            )
+
     debtor = await get_debtor_by_id(db, user_id, debtor_id)
     if debtor is None:
         raise HTTPException(status_code=404, detail="Debtor not found")
 
-    if has_been_contacted_today(debtor):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Ya fue contactado hoy (Ley 2300)",
-        )
+    if not (test and is_dev):
+        # Ley 2300: one contact per day guard
+        if has_been_contacted_today(debtor):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ya fue contactado hoy (Ley 2300)",
+            )
 
     # Fetch campaign config
     config_doc = await db.cobranza_config.find_one({"user_id": user_id}) or {}
@@ -436,7 +468,34 @@ async def llamar_ahora(
     # Mark as calling
     await update_debtor(db, user_id, debtor_id, {"estado": "llamando", "vapi_call_id": None})
 
-    # Fire and forget — does not block response
-    asyncio.create_task(_initiate_call_and_update(db, user_id, debtor, config))
+    # Initiate Twilio call (insert mapping first to avoid race condition with webhook)
+    from twilio.rest import Client as TwilioClient
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    from_number = os.getenv("TWILIO_VOICE_PHONE_NUMBER")
+    webhook_url = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
 
-    return {"ok": True, "message": "Llamada iniciada"}
+    if not all([account_sid, auth_token, from_number]):
+        raise HTTPException(500, "Twilio not configured")
+
+    twilio_client = TwilioClient(account_sid, auth_token)
+    to_number = debtor.get("telefono")
+    call = twilio_client.calls.create(
+        to=to_number, from_=from_number,
+        url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+        record=True,
+        recording_status_callback=f"{webhook_url}/api/cobranza/voice/recording-callback",
+        recording_status_callback_method="POST",
+    )
+    call_sid = call.sid
+    logger.info("[llamar-ahora] Twilio call %s -> %s", call_sid, to_number)
+
+    # Insert mapping IMMEDIATELY so webhook/WS handler finds it
+    await db.cobranza_calls_in_progress.insert_one({
+        "call_sid": call_sid, "user_id": user_id,
+        "debtor_id": debtor_id, "debtor_name": debtor.get("nombre"),
+        "debtor_phone": to_number, "started_at": datetime.now(timezone.utc),
+    })
+    await update_debtor(db, user_id, debtor_id, {"vapi_call_id": call_sid})
+
+    return {"ok": True, "call_sid": call_sid, "message": "Llamada iniciada (Pipecat)"}

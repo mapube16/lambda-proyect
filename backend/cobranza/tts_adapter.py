@@ -100,20 +100,16 @@ class ElevenLabsTts(TtsProvider):
 
 
 class AzureTts(TtsProvider):
-    """Azure Speech Services TTS provider (Colombian voice — Sofia)."""
+    """Azure Speech Services TTS — Salome (es-CO), cached synthesizer."""
+
+    _synth = None  # Reuse connection for speed
 
     async def synthesize(
         self, text: str, language_code: str = "es-CO"
     ) -> Optional[bytes]:
-        """
-        Synthesize using Azure Speech Services.
-
-        Returns WAV audio (Riff16Khz16BitMonoPcm) which voice_router
-        converts to mulaw for Twilio.
-        """
+        """Returns WAV 8kHz 16-bit mono (no resampling needed for Twilio)."""
         api_key = os.getenv("AZURE_SPEECH_KEY")
         region = os.getenv("AZURE_SPEECH_REGION", "eastus")
-
         if not api_key:
             logger.error("[Azure TTS] AZURE_SPEECH_KEY not set")
             return None
@@ -121,40 +117,59 @@ class AzureTts(TtsProvider):
         try:
             import azure.cognitiveservices.speech as speechsdk
 
-            speech_config = speechsdk.SpeechConfig(subscription=api_key, region=region)
-            speech_config.speech_synthesis_voice_name = "es-CO-SalomeNeural"
+            if AzureTts._synth is None:
+                cfg = speechsdk.SpeechConfig(subscription=api_key, region=region)
+                cfg.speech_synthesis_voice_name = "es-CO-SalomeNeural"
+                cfg.set_speech_synthesis_output_format(
+                    speechsdk.SpeechSynthesisOutputFormat.Riff8Khz16BitMonoPcm
+                )
+                AzureTts._synth = speechsdk.SpeechSynthesizer(speech_config=cfg, audio_config=None)
 
-            # Output as 16 kHz 16-bit mono WAV — easy to convert to mulaw
-            speech_config.set_speech_synthesis_output_format(
-                speechsdk.SpeechSynthesisOutputFormat.Riff16Khz16BitMonoPcm
-            )
-
-            synthesizer = speechsdk.SpeechSynthesizer(
-                speech_config=speech_config,
-                audio_config=None,  # No speaker output — just return bytes
-            )
-
-            result = synthesizer.speak_text_async(text).get()
-
+            result = AzureTts._synth.speak_text_async(text).get()
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-                logger.info("[Azure TTS] OK: %d chars → %d bytes WAV (Sofia)", len(text), len(result.audio_data))
+                logger.info("[Azure TTS] %d chars -> %d bytes (8kHz)", len(text), len(result.audio_data))
                 return result.audio_data
-            else:
-                cancellation = result.cancellation_details
-                logger.error("[Azure TTS] Failed: %s / %s", result.reason, cancellation.reason if cancellation else "?")
-                if cancellation:
-                    logger.error("[Azure TTS] Detail: %s", cancellation.error_details)
-                return None
 
-        except ImportError:
-            logger.error("[Azure TTS] azure-cognitiveservices-speech not installed. Run: pip install azure-cognitiveservices-speech")
+            logger.error("[Azure TTS] Failed: %s", result.reason)
+            AzureTts._synth = None
             return None
+
         except Exception as e:
-            logger.error("[Azure TTS] Error: %s", e, exc_info=True)
+            logger.error("[Azure TTS] Error: %s", e)
+            AzureTts._synth = None
             return None
 
     def name(self) -> str:
         return "azure"
+
+
+class DeepgramTts(TtsProvider):
+    """Deepgram Speak TTS provider (Aura voices).
+
+    Default model is configured via DEEPGRAM_TTS_MODEL (default: aura-2-celeste-es).
+    Output is converted to 8kHz μ-law for Twilio Media Streams.
+    """
+
+    async def synthesize(
+        self, text: str, language_code: str = "es-CO"
+    ) -> Optional[bytes]:
+        api_key = os.getenv("DEEPGRAM_API_KEY")
+        if not api_key:
+            logger.error("[Deepgram TTS] DEEPGRAM_API_KEY not set")
+            return None
+
+        try:
+            from cobranza.deepgram_tts_client import speak_mulaw_8k
+
+            audio = await speak_mulaw_8k(text, api_key=api_key)
+            logger.info("[Deepgram TTS] %d chars -> %d bytes (mulaw 8k)", len(text), len(audio))
+            return audio
+        except Exception as e:
+            logger.error("[Deepgram TTS] Synthesis failed: %s", e)
+            return None
+
+    def name(self) -> str:
+        return "deepgram"
 
 
 class TwilioTts(TtsProvider):
@@ -197,6 +212,7 @@ def get_tts_provider() -> TtsProvider:
     - "google-cloud" → Google Cloud TTS
     - "elevenlabs" → Elevenlabs (premium, very natural)
     - "azure" → Azure Speech Services
+    - "deepgram" → Deepgram Speak (Aura voices)
     - "twilio" → Twilio TTS
     - "mock" → Mock (for testing)
     """
@@ -206,6 +222,7 @@ def get_tts_provider() -> TtsProvider:
         "google-cloud": GoogleCloudTts(),
         "elevenlabs": ElevenLabsTts(),
         "azure": AzureTts(),
+        "deepgram": DeepgramTts(),
         "twilio": TwilioTts(),
         "mock": MockTts(),
     }

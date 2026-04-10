@@ -93,6 +93,17 @@ def check_tts_provider() -> bool:
     print(f"  [OK] TTS_PROVIDER: {provider}")
     return True
 
+
+def check_deepgram() -> bool:
+    """Verify Deepgram key is set (used for STT and optional TTS)."""
+    print("\n[Deepgram] STT/TTS")
+    api_key = os.getenv("DEEPGRAM_API_KEY")
+    if not api_key:
+        print("  [WARN] DEEPGRAM_API_KEY not set (Deepgram features disabled)")
+        return True
+    print(f"  [OK] DEEPGRAM_API_KEY: {api_key[:6]}... (redacted)")
+    return True
+
 def main():
     """Run all checks."""
     print("=" * 70)
@@ -102,6 +113,7 @@ def main():
     results = {
         "Assembly AI": check_assembly_ai(),
         "Google Cloud TTS": check_google_tts(),
+        "Deepgram": check_deepgram(),
         "Twilio": check_twilio(),
         "OpenAI": check_openai(),
         "TTS Provider": check_tts_provider(),
