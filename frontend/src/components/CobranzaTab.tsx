@@ -63,7 +63,7 @@ interface Debtor {
   telefono: string;
   monto: number;
   vencimiento: string;
-  estado: 'pendiente' | 'llamando' | 'promesa_de_pago' | 'sin_contacto' |
+  estado: 'pendiente' | 'llamando' | 'contactado' | 'promesa_de_pago' | 'sin_contacto' |
           'pagado' | 'fallido' | 'escalado' | 'agotado' | 'pausado';
   intentos: number;
   max_intentos: number;
@@ -81,6 +81,7 @@ function getEstadoConfig(estado: Debtor['estado']): { color: string; bg: string;
   switch (estado) {
     case 'pendiente':        return { color: C.cyan,    bg: C.cyanBg,    label: 'PENDIENTE' };
     case 'llamando':         return { color: C.yellow,  bg: C.yellowBg,  label: 'LLAMANDO',  pulsing: true };
+    case 'contactado':       return { color: C.green,   bg: C.greenBg,   label: 'CONTACTADO' };
     case 'promesa_de_pago':  return { color: C.green,   bg: C.greenBg,   label: 'PROMESA' };
     case 'sin_contacto':     return { color: C.muted,   bg: 'transparent', label: 'SIN CONTACTO' };
     case 'pagado':           return { color: C.green,   bg: C.greenBg,   label: 'PAGADO' };
@@ -171,6 +172,7 @@ function DebtorModal({
   const [saving, setSaving] = useState(false);
   const [acting, setActing] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [recordingBlobs, setRecordingBlobs] = useState<Record<string, string>>({});
 
   // ── Edit mode ────────────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
@@ -180,6 +182,32 @@ function DebtorModal({
     monto: String(debtor.monto),
     vencimiento: debtor.vencimiento ? debtor.vencimiento.slice(0, 10) : '',
   });
+
+  // ── Load recording blobs with authentication ────────────────────────────
+  useEffect(() => {
+    const loadRecordings = async () => {
+      if (!debtor.historial_llamadas) return;
+      const blobs: Record<string, string> = {};
+      for (const call of debtor.historial_llamadas) {
+        if (call.recording_url && !recordingBlobs[call.call_id]) {
+          try {
+            const resp = await apiFetch(call.recording_url);
+            if (resp.ok) {
+              const blob = await resp.blob();
+              blobs[call.call_id] = URL.createObjectURL(blob);
+            }
+          } catch (e) {
+            console.error(`Failed to load recording ${call.call_id}:`, e);
+          }
+        }
+      }
+      if (Object.keys(blobs).length) setRecordingBlobs(prev => ({ ...prev, ...blobs }));
+    };
+    loadRecordings();
+    return () => {
+      Object.values(recordingBlobs).forEach(url => URL.revokeObjectURL(url));
+    };
+  }, [debtor.historial_llamadas]);
 
   const handleSaveEdits = async () => {
     setSaving(true);
@@ -237,7 +265,9 @@ function DebtorModal({
   };
 
   const handleLlamarAhora = async () => {
-    const ok = await doAction('llamar-ahora');
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const path = isLocal ? 'llamar-ahora?test=true' : 'llamar-ahora';
+    const ok = await doAction(path);
     if (ok) showToast('Llamada iniciada');
   };
 
@@ -530,7 +560,7 @@ function DebtorModal({
                           {call.recording_url && (
                             <audio
                               controls
-                              src={call.recording_url}
+                              src={recordingBlobs[call.call_id] || call.recording_url}
                               style={{ marginTop: 6, width: '100%', height: 28, opacity: 0.8 }}
                             />
                           )}
@@ -853,6 +883,7 @@ const FILTERS: { value: EstadoFilter; label: string }[] = [
   { value: null,                label: 'TODOS' },
   { value: 'pendiente',         label: 'PENDIENTE' },
   { value: 'llamando',          label: 'LLAMANDO' },
+  { value: 'contactado',        label: 'CONTACTADO' },
   { value: 'promesa_de_pago',   label: 'PROMESA' },
   { value: 'pagado',            label: 'PAGADO' },
   { value: 'sin_contacto',      label: 'SIN CONTACTO' },
@@ -1235,10 +1266,13 @@ export function CobranzaTab() {
     }
   };
 
-  const handleLlamarAhora = (debtorId: string) =>
-    quickAction(debtorId, 'llamar-ahora', {}).then(() =>
+  const handleLlamarAhora = (debtorId: string) => {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const path = isLocal ? 'llamar-ahora?test=true' : 'llamar-ahora';
+    return quickAction(debtorId, path, {}).then(() =>
       addToast({ id: `call-${debtorId}`, message: 'Llamada iniciada', ok: true })
     );
+  };
 
   const handleMarcarPagado = (debtorId: string) =>
     quickAction(debtorId, 'pagar', { estado: 'pagado' }).then(() =>

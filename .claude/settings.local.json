@@ -196,7 +196,23 @@
       "Bash(pkill -9 -f \"python.*uvicorn\" pkill -9 -f \"reloader\" sleep 3 ps aux)",
       "WebFetch(domain:www.twilio.com)",
       "Bash(pkill -f ngrok)",
-      "WebFetch(domain:assemblyai.com)"
+      "WebFetch(domain:assemblyai.com)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(find . -type d -name \"__pycache__\" -exec rm -rf {} +)",
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office -type d -name \"__pycache__\" -exec rm -rf {} +)",
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office -type f -name \"*.pyc\" -delete)",
+      "Bash(tee /tmp/backend2.log)",
+      "Bash(PYTHONDONTWRITEBYTECODE=1 /c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8002)",
+      "Bash(find /c/Users/maxim/Desktop/hive-pixel-office/.venv/Lib/site-packages/pipecat/ -name \"*.pyc\" -path \"*silero*\" -exec ls -la {} \\\\;)",
+      "Bash(tasklist)",
+      "Bash(taskkill /F /IM python3.11.exe)",
+      "Bash(taskkill /F /PID 15300 /PID 38884)",
+      "Bash(PYTHONDONTWRITEBYTECODE=1 /c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8002 --log-level info)",
+      "Bash(/c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -c ':*)",
+      "Bash(PYTHONDONTWRITEBYTECODE=1 /c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -c \"from cobranza.voice_pipecat import run_bot; print\\('Import OK'\\)\")",
+      "Bash(/c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(t['public_url']\\) for t in d['tunnels']]\")",
+      "Bash(PYTHONDONTWRITEBYTECODE=1 /c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8002 --log-level debug)",
+      "Bash(ngrok version:*)"
     ]
   }
 }
