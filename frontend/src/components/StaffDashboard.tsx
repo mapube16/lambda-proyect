@@ -674,6 +674,7 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
       const res = await apiFetch(`${API_URL}/api/staff/onboard/save-conversation/${tempUserId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ text: transcript.trim() }),
       });
       if (!res.ok) {
