@@ -2716,6 +2716,36 @@ async def debug_onboard_knowledge(
     }
 
 
+@app.post("/api/staff/onboard/ensure-client")
+async def ensure_onboard_client(
+    body: dict = Body(...),
+    _staff: dict = Depends(require_staff),
+):
+    """
+    Look up or create a client account for onboarding.
+    Staff-only — does NOT set any cookies, so the staff session is preserved.
+    Returns {id, email, role, created}.
+    """
+    email = (body.get("email") or "").strip()
+    password = (body.get("password") or "").strip()
+    if not email or not password:
+        raise HTTPException(status_code=422, detail="Email y contraseña requeridos")
+
+    existing = await get_user_by_email(email)
+    if existing:
+        if existing.get("role") != "client":
+            raise HTTPException(status_code=409, detail="Ese email ya existe pero no es de tipo cliente. Usa otro email.")
+        return {"id": str(existing["_id"]), "email": existing["email"], "role": existing.get("role", "client"), "created": False}
+
+    hashed = hash_password(password)
+    try:
+        created = await create_user(email, hashed, role="client")
+    except DuplicateKeyError:
+        existing = await get_user_by_email(email)
+        return {"id": str(existing["_id"]), "email": existing["email"], "role": existing.get("role", "client"), "created": False}
+    return {"id": created["id"], "email": created["email"], "role": "client", "created": True}
+
+
 @app.post("/api/staff/onboard/create-client", status_code=201)
 async def create_onboarded_client(
     request: OnboardClientRequest,
