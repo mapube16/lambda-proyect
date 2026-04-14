@@ -619,46 +619,25 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
   const companyUrlTrim = companyUrlInput.trim();
   const companyUrlInvalid = companyUrlTrim.length > 0 && !isValidHttpUrl(companyUrlTrim);
 
-  // Step 1: Create a temp client account
+  // Step 1: Create or look up a temp client account via staff endpoint
   const handleAccountNext = async () => {
     if (!email.trim() || !password.trim()) return setError('Email y contraseña requeridos');
     setError('');
     try {
-      const res = await apiFetch(`${API_URL}/auth/register`, {
+      const res = await apiFetch(`${API_URL}/api/staff/onboard/ensure-client`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email: email.trim(), password: password.trim() }),
       });
       if (!res.ok) {
         const d = await res.json();
-        const detail = String(d?.detail || '');
-        if (detail.toLowerCase().includes('already registered')) {
-          const loginRes = await apiFetch(`${API_URL}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email.trim(), password: password.trim() }),
-          });
-          if (!loginRes.ok) {
-            return setError('Ese email ya existe con otra contraseña. Usa la contraseña correcta o un email nuevo.');
-          }
-          const loginData = await loginRes.json();
-          if (loginData.role && loginData.role !== 'client') {
-            return setError('Ese email ya existe pero no es de tipo cliente. Usa otro email.');
-          }
-          if (!loginData.user_id) {
-            return setError('No se pudo resolver el usuario existente. Intenta de nuevo.');
-          }
-          const existingUserId = String(loginData.user_id);
-          await resetOnboardingWorkspace(existingUserId);
-          setTempUserId(existingUserId);
-          setStep('conversation');
-          return;
-        }
         return setError(d.detail || 'No se pudo crear la cuenta');
       }
       const data = await res.json();
-      await resetOnboardingWorkspace(String(data.id));
-      setTempUserId(data.id);
+      const clientId = String(data.id);
+      await resetOnboardingWorkspace(clientId);
+      setTempUserId(clientId);
       setStep('conversation');
     } catch {
       setError('Error de conexión');
