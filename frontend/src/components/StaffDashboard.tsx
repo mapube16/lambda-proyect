@@ -537,6 +537,8 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
   // Transcript step
   const [transcript, setTranscript] = useState('');
   const [transcriptSaving, setTranscriptSaving] = useState(false);
+  const [transcriptFiles, setTranscriptFiles] = useState<File[]>([]);
+  const transcriptFileRef = useRef<HTMLInputElement>(null);
   // Upload step
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [companyUrlInput, setCompanyUrlInput] = useState('');
@@ -644,21 +646,38 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
     }
   };
 
-  // Step 2 → 3: Save meeting transcript then move to upload
+  // Step 2 → 3: Save meeting transcript + attached files then move to upload
   const handleTranscriptNext = async () => {
-    if (!transcript.trim()) { setStep('upload'); return; }
+    if (!transcript.trim() && transcriptFiles.length === 0) { setStep('upload'); return; }
     setTranscriptSaving(true);
     setError('');
     try {
-      const res = await apiFetch(`${API_URL}/api/staff/onboard/save-conversation/${tempUserId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ text: transcript.trim() }),
-      });
-      if (!res.ok) {
-        const d = await res.json();
-        return setError(d.detail || 'No se pudo guardar la transcripción');
+      // Save transcript text if provided
+      if (transcript.trim()) {
+        const res = await apiFetch(`${API_URL}/api/staff/onboard/save-conversation/${tempUserId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ text: transcript.trim() }),
+        });
+        if (!res.ok) {
+          const d = await res.json();
+          return setError(d.detail || 'No se pudo guardar la transcripción');
+        }
+      }
+      // Upload attached files if any
+      if (transcriptFiles.length > 0) {
+        const form = new FormData();
+        transcriptFiles.forEach(f => form.append('files', f));
+        const uploadRes = await apiFetch(`${API_URL}/api/staff/clients/${tempUserId}/knowledge/upload`, {
+          method: 'POST',
+          credentials: 'include',
+          body: form,
+        });
+        if (!uploadRes.ok) {
+          const d = await uploadRes.json();
+          return setError(d.detail || 'Error al subir archivos adjuntos');
+        }
       }
       setStep('upload');
     } catch {
@@ -963,12 +982,60 @@ function OnboardingWizard({ onClose, onSuccess }: { onClose: () => void; onSucce
                 placeholder="Pega aquí el texto de la reunión o entrevista con el cliente..."
               />
 
+              {/* File attachment */}
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  ref={transcriptFileRef}
+                  type="file"
+                  accept=".pdf,.docx,.doc,.txt,.csv,.xlsx"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={e => {
+                    if (e.target.files) setTranscriptFiles(prev => [...prev, ...Array.from(e.target.files!)]);
+                    if (transcriptFileRef.current) transcriptFileRef.current.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => transcriptFileRef.current?.click()}
+                  style={{
+                    padding: '6px 14px', borderRadius: 6,
+                    border: '1px solid rgba(120,220,232,0.25)',
+                    background: 'rgba(120,220,232,0.06)',
+                    color: 'rgba(120,220,232,0.9)',
+                    fontFamily: IN, fontSize: 12, cursor: 'pointer',
+                  }}
+                >
+                  Adjuntar archivo
+                </button>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
+                  PDF, DOCX, TXT, CSV, XLSX
+                </span>
+              </div>
+              {transcriptFiles.length > 0 && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {transcriptFiles.map((f, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>{(f.size / 1024).toFixed(0)} KB</span>
+                      <button
+                        type="button"
+                        onClick={() => setTranscriptFiles(prev => prev.filter((_, j) => j !== i))}
+                        style={{ background: 'none', border: 'none', color: 'rgba(255,100,100,0.7)', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <button
                 style={{ ...wz.primaryBtn, marginTop: 8 }}
                 disabled={transcriptSaving}
                 onClick={handleTranscriptNext}
               >
-                {transcriptSaving ? 'Guardando transcripción...' : transcript.trim() ? 'Guardar y continuar →' : 'Continuar sin transcripción →'}
+                {transcriptSaving ? 'Guardando...' : (transcript.trim() || transcriptFiles.length > 0) ? 'Guardar y continuar →' : 'Continuar sin transcripción →'}
               </button>
             </div>
           )}
