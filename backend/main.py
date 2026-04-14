@@ -2735,14 +2735,14 @@ async def ensure_onboard_client(
     if existing:
         if existing.get("role") != "client":
             raise HTTPException(status_code=409, detail="Ese email ya existe pero no es de tipo cliente. Usa otro email.")
-        return {"id": str(existing["_id"]), "email": existing["email"], "role": existing.get("role", "client"), "created": False}
+        return {"id": existing["id"], "email": existing["email"], "role": existing.get("role", "client"), "created": False}
 
     hashed = hash_password(password)
     try:
         created = await create_user(email, hashed, role="client")
     except DuplicateKeyError:
         existing = await get_user_by_email(email)
-        return {"id": str(existing["_id"]), "email": existing["email"], "role": existing.get("role", "client"), "created": False}
+        return {"id": existing["id"], "email": existing["email"], "role": existing.get("role", "client"), "created": False}
     return {"id": created["id"], "email": created["email"], "role": "client", "created": True}
 
 
