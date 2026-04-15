@@ -269,7 +269,7 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         ),
     )
 
-    # ── LLM Context (with pre-set first greeting) ─────────────────────
+    # ── First greeting (spoken as TTS, not LLM-generated) ─────────────
     import random
     first_name = debtor_name.split()[0] if debtor_name and debtor_name != "senor o senora" else ""
     if first_name:
@@ -287,10 +287,8 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         ]
     first_message = random.choice(greetings)
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "assistant", "content": first_message},
-    ]
+    # ── LLM Context ─────────────────────────────────────────────────────
+    messages = [{"role": "system", "content": system_prompt}]
     context = LLMContext(messages)
 
     # ── Transcript collectors ────────────────────────────────────────────
@@ -346,7 +344,12 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
-        logger.info("[VOICE] EVENT: on_client_connected")
+        logger.info("[VOICE] EVENT: on_client_connected — expected greeting: %s", first_message)
+        # Inject a user message that triggers the LLM to speak the greeting
+        context.messages.append({
+            "role": "user",
+            "content": f"[La llamada acaba de conectar. Di EXACTAMENTE esto y nada mas: '{first_message}']",
+        })
         await task.queue_frames([LLMContextFrame(context=context)])
 
     @transport.event_handler("on_client_disconnected")
