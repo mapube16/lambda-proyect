@@ -26,7 +26,6 @@ from cobranza.debtor_crud import (
 from cobranza.csv_parser import normalize_phone, parse_debtor_csv
 from cobranza.cobranza_queen import generate_cobranza_proposal
 from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_today
-from cobranza.vapi_client import initiate_call
 
 
 # ── Cobranza-enabled guard ─────────────────────────────────────────────────────

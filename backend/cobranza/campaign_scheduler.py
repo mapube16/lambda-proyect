@@ -7,6 +7,7 @@ Three periodic jobs:
   - rescue_stuck_llamando_job: fires every 10 min — rescues debtors stuck in 'llamando' > 15 min
 
 All jobs respect Ley 2300 compliance via is_contact_allowed_now() and has_been_contacted_today().
+Calls are initiated via Twilio + Pipecat (not Vapi).
 
 Usage:
     from cobranza.campaign_scheduler import register_cobranza_jobs
@@ -14,11 +15,11 @@ Usage:
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 
 from database import get_db
 from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_today
-from cobranza.vapi_client import initiate_call
 
 logger = logging.getLogger("cobranza.campaign_scheduler")
 
@@ -27,21 +28,46 @@ logger = logging.getLogger("cobranza.campaign_scheduler")
 # Helper
 # ---------------------------------------------------------------------------
 
-async def safe_initiate_call(debtor: dict, config: dict) -> None:
+async def safe_initiate_call(debtor: dict, user_id: str) -> None:
     """
-    Fire-and-forget wrapper around initiate_call().
-    On success: stores vapi_call_id on the debtor document.
+    Fire-and-forget: create outbound Twilio call → Pipecat pipeline.
+    On success: stores call_sid on the debtor document and inserts call mapping.
     On failure: resets estado to 'pendiente' so the next job run can retry.
     """
+    db = get_db()
     try:
-        call_id = await initiate_call(debtor, config)
-        await get_db().debtors.update_one(
+        from twilio.rest import Client
+
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from_number = os.getenv("TWILIO_VOICE_PHONE_NUMBER")
+        webhook_url = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
+
+        if not all([account_sid, auth_token, from_number]):
+            raise RuntimeError("Twilio not configured")
+
+        client = Client(account_sid, auth_token)
+        to_number = debtor.get("telefono")
+        call = client.calls.create(
+            to=to_number, from_=from_number,
+            url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+        )
+        call_sid = call.sid
+        logger.info("[scheduler] Twilio call %s -> %s (debtor %s)", call_sid, to_number, debtor["_id"])
+
+        await db.cobranza_calls_in_progress.insert_one({
+            "call_sid": call_sid, "user_id": user_id,
+            "debtor_id": str(debtor["_id"]), "debtor_name": debtor.get("nombre"),
+            "debtor_phone": to_number, "started_at": datetime.now(timezone.utc),
+        })
+
+        await db.debtors.update_one(
             {"_id": debtor["_id"]},
-            {"$set": {"vapi_call_id": call_id, "updated_at": datetime.now(timezone.utc)}},
+            {"$set": {"vapi_call_id": call_sid, "updated_at": datetime.now(timezone.utc)}},
         )
     except Exception as e:
         logger.error("[scheduler] Call failed for debtor %s: %s", debtor["_id"], e)
-        await get_db().debtors.update_one(
+        await db.debtors.update_one(
             {"_id": debtor["_id"]},
             {"$set": {"estado": "pendiente", "updated_at": datetime.now(timezone.utc)}},
         )
@@ -79,17 +105,12 @@ async def pre_vencimiento_job() -> None:
             continue
 
         user_id = debtor.get("user_id")
-        config_doc = await db.cobranza_config.find_one({"user_id": user_id})
-        if not config_doc:
-            logger.debug("[pre_vencimiento_job] No config for user_id=%s — skip debtor %s", user_id, debtor["_id"])
-            continue
-        config = config_doc.get("estrategia", {})
 
         await db.debtors.update_one(
             {"_id": debtor["_id"]},
             {"$set": {"estado": "llamando", "updated_at": datetime.now(timezone.utc)}},
         )
-        asyncio.create_task(safe_initiate_call(debtor, config))
+        asyncio.create_task(safe_initiate_call(debtor, user_id))
 
 
 # ---------------------------------------------------------------------------
@@ -136,13 +157,10 @@ async def post_vencimiento_job() -> None:
 
         user_id = debtor.get("user_id")
         config_doc = await db.cobranza_config.find_one({"user_id": user_id})
-        if not config_doc:
-            logger.debug("[post_vencimiento_job] No config for user_id=%s — skip debtor %s", user_id, debtor["_id"])
-            continue
-        config = config_doc.get("estrategia", {})
+        estrategia = (config_doc or {}).get("estrategia", {})
 
         # Respect frecuencia_dias: days since last contact
-        frecuencia_dias = config.get("frecuencia_dias", 1)
+        frecuencia_dias = estrategia.get("frecuencia_dias", 1)
         ultimo = debtor.get("ultimo_contacto_fecha")
         if ultimo is not None:
             if hasattr(ultimo, "tzinfo") and ultimo.tzinfo is None:
@@ -160,11 +178,11 @@ async def post_vencimiento_job() -> None:
             {"_id": debtor["_id"]},
             {"$set": {"estado": "llamando", "updated_at": datetime.now(timezone.utc)}},
         )
-        asyncio.create_task(safe_initiate_call(debtor, config))
+        asyncio.create_task(safe_initiate_call(debtor, user_id))
 
 
 # ---------------------------------------------------------------------------
-# Job 3: Rescue stuck 'llamando' debtors (Vapi end-of-call-report intermittent)
+# Job 3: Rescue stuck 'llamando' debtors (call may not complete cleanly)
 # ---------------------------------------------------------------------------
 
 async def rescue_stuck_llamando_job() -> None:
@@ -172,7 +190,7 @@ async def rescue_stuck_llamando_job() -> None:
     Resets debtors stuck in estado='llamando' for more than 15 minutes back to
     'sin_contacto' so they are eligible for retry by the next job run.
 
-    Handles Pitfall 7: Vapi end-of-call-report webhook may not always arrive.
+    Handles edge case where WebSocket/Pipecat pipeline may not complete cleanly.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
 
