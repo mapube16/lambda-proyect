@@ -183,13 +183,16 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         f"- Groserías o enojo → NO te alteres. Baja el tono: 'Entiendo que es una situacion incomoda, "
         f"no es mi intencion molestarlo. Si prefiere lo llamamos en otro momento.'\n"
         f"\n\n"
-        f"CUANDO COLGAR (critico):\n"
-        f"- Si el deudor dice 'no me llame mas', 'no me vuelva a llamar', 'dejeme en paz', "
-        f"o cualquier variante de que no quiere ser contactado: respeta inmediatamente. "
-        f"Di 'Entendido, le pido disculpas por la molestia. Que tenga buen dia.' y TERMINA la conversacion.\n"
-        f"- Si el deudor cuelga o hay silencio largo (>10 segundos): despidete y termina.\n"
-        f"- Si ya lograste el objetivo (promesa de pago o acuerdo): no sigas hablando, despidete.\n"
-        f"- Maximo 3-4 minutos de llamada. Si no avanzas, ofrece llamar otro dia y despidete.\n"
+        f"CUANDO COLGAR — usa la funcion end_call (OBLIGATORIO):\n"
+        f"Tienes una funcion llamada 'end_call'. DEBES usarla para terminar la llamada.\n"
+        f"Despues de decir tu despedida, SIEMPRE llama a end_call. Situaciones:\n"
+        f"- El deudor dice 'no me llame mas', 'no me vuelva a llamar', 'dejeme en paz', "
+        f"o cualquier variante → di tu despedida y llama end_call.\n"
+        f"- El deudor se despide o dice 'chao', 'adios', 'gracias' → despidete y llama end_call.\n"
+        f"- Ya lograste el objetivo (promesa de pago o acuerdo) → confirma, despidete y llama end_call.\n"
+        f"- El deudor esta grosero y no quiere hablar → despidete corto y llama end_call.\n"
+        f"- Maximo 3-4 minutos de llamada. Si no avanzas, ofrece llamar otro dia, despidete y llama end_call.\n"
+        f"- NUNCA sigas hablando despues de despedirte. Despedida → end_call, siempre.\n"
         f"\n\n"
         f"PROHIBIDO:\n"
         f"- Amenazar, presionar agresivamente, o mentir.\n"
@@ -216,6 +219,27 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         ),
     )
 
+    # ── Tool: end_call (LLM can hang up the call) ─────────────────────
+    end_call_tool = {
+        "type": "function",
+        "name": "end_call",
+        "description": (
+            "Termina la llamada. Usa esta funcion SIEMPRE que la conversacion deba finalizar: "
+            "cuando el deudor dice que no quiere hablar mas, cuando ya se llego a un acuerdo, "
+            "cuando te despides, o cuando el deudor pide que no lo llamen mas."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Motivo breve de por que se termina la llamada",
+                },
+            },
+            "required": ["reason"],
+        },
+    }
+
     # ── OpenAI Realtime (STT + LLM + TTS all-in-one) ────────────────────
     llm = OpenAIRealtimeLLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
@@ -240,6 +264,7 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
                         ),
                     ),
                 ),
+                tools=[end_call_tool],
             ),
         ),
     )
@@ -273,6 +298,31 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
             report_only_initial_ttfb=True,
         ),
     )
+
+    # ── Function call handler: end_call ────────────────────────────────
+    async def _handle_end_call(params):
+        reason = params.arguments.get("reason", "conversacion finalizada")
+        logger.info("[VOICE] end_call invoked: reason=%s", reason)
+        # Return result to LLM, then schedule hangup
+        await params.result_callback({"status": "ending", "reason": reason})
+        # Small delay to let final TTS flush before hanging up
+        import asyncio
+        await asyncio.sleep(2.0)
+        # Hang up Twilio call
+        try:
+            from twilio.rest import Client
+            twilio_client = Client(
+                os.getenv("TWILIO_ACCOUNT_SID"),
+                os.getenv("TWILIO_AUTH_TOKEN"),
+            )
+            twilio_client.calls(call_sid).update(status="completed")
+            logger.info("[VOICE] Twilio call %s hung up", call_sid)
+        except Exception as e:
+            logger.error("[VOICE] Failed to hang up Twilio call: %s", e)
+        # End pipeline
+        await task.queue_frames([EndFrame()])
+
+    llm.register_function("end_call", _handle_end_call)
 
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")
