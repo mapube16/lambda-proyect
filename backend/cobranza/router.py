@@ -425,6 +425,7 @@ async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict
 async def llamar_ahora(
     debtor_id: str,
     test: bool = False,
+    force: bool = False,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -433,6 +434,7 @@ async def llamar_ahora(
     Requires cobranza_enabled flag set by staff.
     Ley 2300 compliance guards applied before initiating.
     Pass ?test=true to skip Ley 2300 guards (dev only).
+    Pass ?force=true to override "already contacted today" (user accepted warning).
     """
     await _require_cobranza_enabled(current_user)
     user_id = str(current_user["user_id"])
@@ -452,11 +454,11 @@ async def llamar_ahora(
     if debtor is None:
         raise HTTPException(status_code=404, detail="Debtor not found")
 
-    if not (test and is_dev):
-        # Ley 2300: one contact per day guard
+    if not (test and is_dev) and not force:
+        # Ley 2300: one contact per day — return 409 so frontend can show modal
         if has_been_contacted_today(debtor):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
                 detail="Ya fue contactado hoy (Ley 2300)",
             )
 

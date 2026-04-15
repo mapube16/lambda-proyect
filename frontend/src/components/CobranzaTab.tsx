@@ -172,6 +172,7 @@ function DebtorModal({
   const [saving, setSaving] = useState(false);
   const [acting, setActing] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [showLey2300Warning, setShowLey2300Warning] = useState(false);
   const [recordingBlobs, setRecordingBlobs] = useState<Record<string, string>>({});
 
   // ── Edit mode ────────────────────────────────────────────────────────────
@@ -264,11 +265,30 @@ function DebtorModal({
     }
   };
 
-  const handleLlamarAhora = async () => {
+  const handleLlamarAhora = async (force = false) => {
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const path = isLocal ? 'llamar-ahora?test=true' : 'llamar-ahora';
-    const ok = await doAction(path);
-    if (ok) showToast('Llamada iniciada');
+    let path = isLocal ? 'llamar-ahora?test=true' : 'llamar-ahora';
+    if (force) path += isLocal ? '&force=true' : '?force=true';
+
+    setActing(true);
+    try {
+      const r = await apiFetch(`/api/cobranza/debtors/${debtor._id}/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (r.ok) {
+        showToast('Llamada iniciada');
+      } else if (r.status === 409) {
+        setShowLey2300Warning(true);
+      } else {
+        const data = await r.json().catch(() => ({}));
+        showToast((data as { detail?: string }).detail || `Error ${r.status}`);
+      }
+    } catch {
+      showToast('Error de conexión');
+    } finally {
+      setActing(false);
+    }
   };
 
   const handlePagar = async () => {
@@ -447,7 +467,7 @@ function DebtorModal({
               </>
             ) : (
               <button
-                onClick={handleLlamarAhora}
+                onClick={() => handleLlamarAhora()}
                 disabled={acting}
                 style={{
                   padding: '9px 18px', border: 'none', cursor: acting ? 'not-allowed' : 'pointer',
@@ -730,6 +750,55 @@ function DebtorModal({
           </div>
         </div>
       </div>
+
+      {/* Ley 2300 warning modal */}
+      {showLey2300Warning && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 400,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(13,13,24,0.85)', backdropFilter: 'blur(4px)',
+        }}>
+          <div style={{
+            background: C.s1, border: `1px solid ${C.orange}`,
+            padding: '28px 32px', maxWidth: 420, width: '90%',
+            animation: 'cobr-fade-in 0.2s ease',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <span style={{ fontSize: 22 }}>&#9888;</span>
+              <span style={{ fontFamily: C.SG, fontSize: 15, fontWeight: 600, color: C.orange }}>
+                Ley 2300 — Contacto duplicado
+              </span>
+            </div>
+            <p style={{ fontFamily: C.IN, fontSize: 13, color: C.text, lineHeight: 1.6, margin: '0 0 8px' }}>
+              Este deudor <strong>ya fue contactado hoy</strong>. Volver a llamar puede constituir una
+              infracción a la <strong>Ley 2300 de 2023</strong> (máximo 1 contacto por día).
+            </p>
+            <p style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, lineHeight: 1.5, margin: '0 0 20px' }}>
+              Si decides continuar, la responsabilidad del contacto adicional recae sobre el operador.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowLey2300Warning(false)}
+                style={{
+                  padding: '8px 18px', border: `1px solid ${C.s4}`, background: 'transparent',
+                  color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { setShowLey2300Warning(false); handleLlamarAhora(true); }}
+                style={{
+                  padding: '8px 18px', border: `1px solid ${C.orange}`, background: C.orangeBg,
+                  color: C.orange, fontFamily: C.SG, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Llamar de todos modos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* In-modal toast */}
       {toastMsg && (
@@ -1174,6 +1243,7 @@ export function CobranzaTab() {
   const [toasts, setToasts] = useState<CobrToast[]>([]);
   const [uploadingCsv, setUploadingCsv] = useState<false | 'create' | 'update'>(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [ley2300Confirm, setLey2300Confirm] = useState<string | null>(null); // debtor_id pending confirmation
   const csvInputRef = useRef<HTMLInputElement>(null);
   const csvUpdateRef = useRef<HTMLInputElement>(null);
 
@@ -1266,12 +1336,41 @@ export function CobranzaTab() {
     }
   };
 
-  const handleLlamarAhora = (debtorId: string) => {
+  const handleLlamarAhora = async (debtorId: string) => {
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     const path = isLocal ? 'llamar-ahora?test=true' : 'llamar-ahora';
-    return quickAction(debtorId, path, {}).then(() =>
-      addToast({ id: `call-${debtorId}`, message: 'Llamada iniciada', ok: true })
-    );
+    try {
+      const r = await apiFetch(`/api/cobranza/debtors/${debtorId}/${path}`, { method: 'POST' });
+      if (r.ok) {
+        addToast({ id: `call-${debtorId}`, message: 'Llamada iniciada', ok: true });
+      } else if (r.status === 409) {
+        setLey2300Confirm(debtorId);
+      } else {
+        const data = await r.json().catch(() => ({}));
+        addToast({ id: `err-${Date.now()}`, message: (data as { detail?: string }).detail || `Error ${r.status}`, ok: false });
+      }
+    } catch {
+      addToast({ id: `err-${Date.now()}`, message: 'Error de conexión', ok: false });
+    }
+  };
+
+  const handleForceLlamar = async () => {
+    if (!ley2300Confirm) return;
+    const debtorId = ley2300Confirm;
+    setLey2300Confirm(null);
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const path = isLocal ? 'llamar-ahora?test=true&force=true' : 'llamar-ahora?force=true';
+    try {
+      const r = await apiFetch(`/api/cobranza/debtors/${debtorId}/${path}`, { method: 'POST' });
+      if (r.ok) {
+        addToast({ id: `call-${debtorId}`, message: 'Llamada iniciada', ok: true });
+      } else {
+        const data = await r.json().catch(() => ({}));
+        addToast({ id: `err-${Date.now()}`, message: (data as { detail?: string }).detail || `Error ${r.status}`, ok: false });
+      }
+    } catch {
+      addToast({ id: `err-${Date.now()}`, message: 'Error de conexión', ok: false });
+    }
   };
 
   const handleMarcarPagado = (debtorId: string) =>
@@ -1539,6 +1638,55 @@ export function CobranzaTab() {
             addToast({ id: `new-${debtor._id}`, message: `${debtor.nombre} agregado`, ok: true });
           }}
         />
+      )}
+
+      {/* Ley 2300 confirmation modal (list view) */}
+      {ley2300Confirm && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 500,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(13,13,24,0.85)', backdropFilter: 'blur(4px)',
+        }}>
+          <div style={{
+            background: C.s1, border: `1px solid ${C.orange}`,
+            padding: '28px 32px', maxWidth: 420, width: '90%',
+            animation: 'cobr-fade-in 0.2s ease',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <span style={{ fontSize: 22 }}>&#9888;</span>
+              <span style={{ fontFamily: C.SG, fontSize: 15, fontWeight: 600, color: C.orange }}>
+                Ley 2300 — Contacto duplicado
+              </span>
+            </div>
+            <p style={{ fontFamily: C.IN, fontSize: 13, color: C.text, lineHeight: 1.6, margin: '0 0 8px' }}>
+              Este deudor <strong>ya fue contactado hoy</strong>. Volver a llamar puede constituir una
+              infracción a la <strong>Ley 2300 de 2023</strong> (máximo 1 contacto por día).
+            </p>
+            <p style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, lineHeight: 1.5, margin: '0 0 20px' }}>
+              Si decides continuar, la responsabilidad del contacto adicional recae sobre el operador.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setLey2300Confirm(null)}
+                style={{
+                  padding: '8px 18px', border: `1px solid ${C.s4}`, background: 'transparent',
+                  color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleForceLlamar}
+                style={{
+                  padding: '8px 18px', border: `1px solid ${C.orange}`, background: C.orangeBg,
+                  color: C.orange, fontFamily: C.SG, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Llamar de todos modos
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toast stack */}
