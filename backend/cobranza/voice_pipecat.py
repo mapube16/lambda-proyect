@@ -323,11 +323,10 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
     async def _handle_end_call(params):
         reason = params.arguments.get("reason", "conversacion finalizada")
         logger.info("[VOICE] end_call invoked: reason=%s", reason)
-        # Return result to LLM, then schedule hangup
         await params.result_callback({"status": "ending", "reason": reason})
-        # Small delay to let final TTS flush before hanging up
+        # Wait for the farewell TTS to finish playing before hanging up
         import asyncio
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(4.0)
         # Hang up Twilio call
         try:
             from twilio.rest import Client
@@ -339,10 +338,10 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
             logger.info("[VOICE] Twilio call %s hung up", call_sid)
         except Exception as e:
             logger.error("[VOICE] Failed to hang up Twilio call: %s", e)
-        # End pipeline
         await task.queue_frames([EndFrame()])
 
-    llm.register_function("end_call", _handle_end_call)
+    # cancel_on_interruption=False → user talking during goodbye won't cancel the hangup
+    llm.register_function("end_call", _handle_end_call, cancel_on_interruption=False)
 
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")
