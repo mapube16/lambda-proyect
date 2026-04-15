@@ -162,13 +162,13 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         f"- Vencimiento: {vencimiento_str}\n"
         f"\n\n"
         f"FLUJO DE LA CONVERSACION:\n"
-        f"1. Saluda naturalmente y confirma identidad: 'Alo, buenas tardes, sera que hablo con {debtor_name}?'\n"
-        f"2. Si confirma: presenta el motivo con tacto. NO sueltes el monto de una. "
-        f"   Ejemplo: 'Mire, le cuento, lo llamo de De Pe Ge Seguros porque tiene un saldito pendiente...'\n"
+        f"1. Tu primer mensaje ya fue enviado (un saludo corto confirmando identidad). Espera la respuesta.\n"
+        f"2. Si confirma que es el/ella: presenta el motivo con tacto. NO sueltes el monto de una. "
+        f"   Ejemplo: 'Mire, le cuento, lo llamo porque tiene un saldito pendiente con nosotros...'\n"
         f"3. Menciona el monto solo si el deudor pregunta o despues de que acepte escuchar.\n"
         f"4. Ofrece opciones: pago completo, acuerdo de pago, o que lo llamen despues.\n"
         f"5. Si acepta algo: confirma y agradece. 'Listo, perfecto, entonces quedamos asi.'\n"
-        f"6. Despidete corto: 'Muchas gracias, que tenga buena tarde. Chao.'\n"
+        f"6. Despidete corto y llama end_call.\n"
         f"\n\n"
         f"MANEJO DE OBJECIONES (muy importante):\n"
         f"- 'No tengo plata' → 'Entiendo, y por eso mismo lo llamo, para mirar como le podemos ayudar. "
@@ -269,8 +269,28 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         ),
     )
 
-    # ── LLM Context ─────────────────────────────────────────────────────
-    messages = [{"role": "system", "content": system_prompt}]
+    # ── LLM Context (with pre-set first greeting) ─────────────────────
+    import random
+    first_name = debtor_name.split()[0] if debtor_name and debtor_name != "senor o senora" else ""
+    if first_name:
+        greetings = [
+            f"Aló... buenas tardes. ¿Hablo con {first_name}?",
+            f"Buenas tardes... ¿{first_name}?",
+            f"Aló, buenas tardes. ¿Será que hablo con {first_name}?",
+            f"Hola, buenas tardes... ¿estoy hablando con {first_name}?",
+        ]
+    else:
+        greetings = [
+            "Aló... buenas tardes. ¿Con quién tengo el gusto?",
+            "Buenas tardes... ¿con quién hablo?",
+            "Aló, buenas tardes. ¿Quién me contesta?",
+        ]
+    first_message = random.choice(greetings)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "assistant", "content": first_message},
+    ]
     context = LLMContext(messages)
 
     # ── Transcript collectors ────────────────────────────────────────────
