@@ -139,26 +139,72 @@
 
 ## Traceability
 
-(Filled by roadmap creation)
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01..08 | TBD | Pending |
-| DATA-01..08 | TBD | Pending |
-| WEB-01..05 | TBD | Pending |
-| LLM-01..07 | TBD | Pending |
-| TOOL-01..07 | TBD | Pending |
-| AGENT-01..04 | TBD | Pending |
-| OUT-01..08 | TBD | Pending |
-| IN-01..02 | TBD | Pending |
-| L2-01..04 | TBD | Pending |
-| TEST-01..05 | TBD | Pending |
+| FOUND-01 | Phase 1: Foundation | Pending |
+| FOUND-02 | Phase 1: Foundation | Pending |
+| FOUND-03 | Phase 1: Foundation | Pending |
+| FOUND-04 | Phase 1: Foundation | Pending |
+| FOUND-05 | Phase 1: Foundation | Pending |
+| FOUND-06 | Phase 1: Foundation | Pending |
+| FOUND-07 | Phase 1: Foundation | Pending |
+| FOUND-08 | Phase 1: Foundation | Pending |
+| DATA-01 | Phase 2: Data Model | Pending |
+| DATA-02 | Phase 2: Data Model | Pending |
+| DATA-03 | Phase 2: Data Model | Pending |
+| DATA-04 | Phase 2: Data Model | Pending |
+| DATA-05 | Phase 2: Data Model | Pending |
+| DATA-06 | Phase 2: Data Model | Pending |
+| DATA-07 | Phase 2: Data Model | Pending |
+| DATA-08 | Phase 2: Data Model | Pending |
+| WEB-01 | Phase 3: Webhook Receiver + Session | Pending |
+| WEB-02 | Phase 3: Webhook Receiver + Session | Pending |
+| WEB-03 | Phase 3: Webhook Receiver + Session | Pending |
+| WEB-04 | Phase 3: Webhook Receiver + Session | Pending |
+| WEB-05 | Phase 3: Webhook Receiver + Session | Pending |
+| TOOL-01 | Phase 4: Tool Handlers (Read) | Pending |
+| TOOL-06 | Phase 4: Tool Handlers (Read) | Pending |
+| TOOL-07 | Phase 4: Tool Handlers (Read) | Pending |
+| TOOL-02 | Phase 5: Tool Handlers (Write) | Pending |
+| TOOL-03 | Phase 5: Tool Handlers (Write) | Pending |
+| TOOL-04 | Phase 5: Tool Handlers (Write) | Pending |
+| TOOL-05 | Phase 5: Tool Handlers (Write) | Pending |
+| LLM-01 | Phase 6: Custom LLM + Agent Config | Pending |
+| LLM-02 | Phase 6: Custom LLM + Agent Config | Pending |
+| LLM-03 | Phase 6: Custom LLM + Agent Config | Pending |
+| LLM-04 | Phase 6: Custom LLM + Agent Config | Pending |
+| LLM-05 | Phase 6: Custom LLM + Agent Config | Pending |
+| LLM-06 | Phase 6: Custom LLM + Agent Config | Pending |
+| LLM-07 | Phase 6: Custom LLM + Agent Config | Pending |
+| AGENT-01 | Phase 6: Custom LLM + Agent Config | Pending |
+| AGENT-02 | Phase 6: Custom LLM + Agent Config | Pending |
+| AGENT-03 | Phase 6: Custom LLM + Agent Config | Pending |
+| AGENT-04 | Phase 6: Custom LLM + Agent Config | Pending |
+| OUT-01 | Phase 7: Outbound Dialer + HTTP Routes | Pending |
+| OUT-02 | Phase 7: Outbound Dialer + HTTP Routes | Pending |
+| OUT-03 | Phase 7: Outbound Dialer + HTTP Routes | Pending |
+| OUT-04 | Phase 7: Outbound Dialer + HTTP Routes | Pending |
+| OUT-05 | Phase 7: Outbound Dialer + HTTP Routes | Pending |
+| OUT-06 | Phase 7: Outbound Dialer + HTTP Routes | Pending |
+| OUT-07 | Phase 7: Outbound Dialer + HTTP Routes | Pending |
+| OUT-08 | Phase 7: Outbound Dialer + HTTP Routes | Pending |
+| IN-01 | Phase 8: Inbound + Level 2 Hooks | Pending |
+| IN-02 | Phase 8: Inbound + Level 2 Hooks | Pending |
+| L2-01 | Phase 8: Inbound + Level 2 Hooks | Pending |
+| L2-02 | Phase 8: Inbound + Level 2 Hooks | Pending |
+| L2-03 | Phase 8: Inbound + Level 2 Hooks | Pending |
+| L2-04 | Phase 8: Inbound + Level 2 Hooks | Pending |
+| TEST-01 | Phase 9: Tests + Hardening | Pending |
+| TEST-02 | Phase 9: Tests + Hardening | Pending |
+| TEST-03 | Phase 9: Tests + Hardening | Pending |
+| TEST-04 | Phase 9: Tests + Hardening | Pending |
+| TEST-05 | Phase 9: Tests + Hardening | Pending |
 
 **Coverage:**
 - v1 requirements: 58 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 58 ⚠️ (will be 0 after roadmap)
+- Mapped to phases: 58
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-05-09*
-*Last updated: 2026-05-09 after initial definition*
+*Last updated: 2026-05-09 — traceability filled after roadmap creation*
