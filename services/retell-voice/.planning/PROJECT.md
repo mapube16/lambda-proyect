@@ -2,11 +2,19 @@
 
 ## What This Is
 
-Microservicio de voice agent para cobranza que usa Retell AI como runtime de voz, Anthropic como cerebro de la conversación y Mongo como persistencia. Expone tools deterministas (consultar deuda, registrar promesa de pago, agendar callback, marcar disputa, transferir a humano) que Retell invoca durante la llamada y que persisten cada interacción por `call_attempt`. Cliente piloto: Softseguros — cobranza de cartera vencida y gestión preventiva de cartera por vencer.
+Microservicio independiente de voice agent para cobranza, runtime de voz en Retell AI, cerebro en Anthropic (Claude con prompt caching) vía Custom LLM webhook, persistencia en la Mongo compartida de Landa. Cliente piloto: Softseguros — cartera vencida (overdue) y por vencer (upcoming). Multi-tenant día uno (`tenantId` en todo documento). Vive en `services/retell-voice/` dentro del repo `hive-pixel-office`, con su propio `.planning/` aislado del de la raíz.
 
 ## Core Value
 
-Una llamada de cobranza automatizada que conversa con naturalidad, ejecuta acciones reales sobre la BD (no solo habla), y deja trazabilidad completa por intento — para que Softseguros recupere cartera y registre promesas de pago sin operadores humanos en el primer contacto.
+Una llamada de cobranza automatizada que conversa con naturalidad, ejecuta acciones reales sobre la BD vía tools deterministas (no inventa datos), y deja trazabilidad completa por intento — para que Softseguros recupere cartera y registre promesas de pago sin operadores humanos en el primer contacto, y la arquitectura permita sumar tenants sin reescribir.
+
+## Architecture Decisions (locked)
+
+- **Híbrido Retell**: `Conversation Flow` para bordes deterministas (verificación de identidad al inicio, `transfer_to_human`, despedida). `Custom LLM` (webhook a este servicio) para el cuerpo de la negociación, manejo de objeciones, registro de promesas, agendamiento.
+- **NO RAG en POC** (decisión explícita: simplicidad > sofisticación). El conocimiento que el agente necesita se inyecta directo en el system prompt desde la config del tenant en Mongo. Si crecen los docs por tenant, evaluamos Retell KB nativo (no construirlo nosotros).
+- **Identidad del deudor**: ID externo de Softseguros, no `_id` Mongo nuevo — ambos servicios hablan el mismo idioma.
+- **Idempotencia de tool writes**: por `(callAttemptId, toolCallId)`.
+- **Anthropic prompt caching activo** desde día uno.
 
 ## Requirements
 
@@ -16,61 +24,125 @@ Una llamada de cobranza automatizada que conversa con naturalidad, ejecuta accio
 
 ### Active
 
-- [ ] Outbound: disparar llamada de cobranza vía HTTP endpoint (`POST /calls`) dado un `debtorId` + `campaignType`
-- [ ] Outbound: worker interno que lee `debtors` y agenda llamadas según ventana/cadencia mínima
-- [ ] Inbound: recibir llamadas entrantes vía webhook de Retell e identificar al deudor por número
-- [ ] Multi-tenancy: todo documento (`call_attempts`, `payment_promises`, `callbacks`, `disputes`, `transfers`) lleva `tenantId` y todas las queries lo filtran
-- [ ] Dos flujos por `campaignType`: `overdue` (cartera vencida) y `upcoming` (cartera por vencer) con system prompts y toolsets distintos
-- [ ] Tool `get_debt_info`: lee `debtors` y devuelve estado de deuda al agente
-- [ ] Tool `register_payment_promise`: persiste promesa con monto + fecha comprometida
-- [ ] Tool `schedule_callback`: agenda callback en ventana solicitada por el deudor
-- [ ] Tool `mark_dispute`: registra disputa cuando el deudor cuestiona la deuda
-- [ ] Tool `transfer_to_human`: marca el call_attempt para escalamiento
-- [ ] Persistir `call_attempt` por llamada con transcript, duración, outcome, tool calls invocadas
-- [ ] Webhook receiver de Retell: eventos de inicio/fin de llamada y function calls
-- [ ] Validación de payloads con Zod en todos los bordes (HTTP, webhooks)
-- [ ] Logs estructurados con Pino incluyendo `tenantId`, `callId`, `debtorId`
-- [ ] Deploy en Railway con secretos por env vars
-- [ ] Suite Vitest cubriendo tools deterministas y handlers de webhook
-- [ ] Hooks Nivel 2 preparados (interfaces/no-ops): OpenTelemetry, retry/circuit breaker hacia Retell+Anthropic, harness E2E con sandbox Retell, encriptación/redaction de transcripciones
+**Setup & infra**
+- [ ] Scaffolding del servicio con TS strict, Biome, Vitest configurados
+- [ ] Dockerfile multi-stage
+- [ ] Deploy a Railway con env vars
+- [ ] CI GitHub Actions (lint + typecheck + test)
+- [ ] Validación de env al boot (falla fuerte si falta variable)
+- [ ] Healthchecks `/health` y `/ready`
+- [ ] Graceful shutdown
+- [ ] Rate limiting en bordes públicos
+- [ ] Migrations versionadas para colecciones propias
+
+**Modelo de datos (multi-tenant)**
+- [ ] Colección `tenants` con config (cadencia, horarios, tono, prompt overrides, agentIds Retell por campaignType)
+- [ ] Colección `call_attempts` (transcript, outcome, duración, promptVersion, tool calls)
+- [ ] Colección `call_events` (eventos crudos del webhook de Retell con idempotencia)
+- [ ] Colección `payment_promises` (monto, fecha, medio, callAttemptId)
+- [ ] Colección `callbacks` (cuándo, motivo, tenantId)
+- [ ] `tenantId` obligatorio en todo documento; queries forzadas con scoping
+- [ ] Índices: `callId` único, `{tenantId, debtorExternalId}`, idempotencia por `(callAttemptId, toolCallId)`
+
+**Custom LLM webhook (cuerpo de la negociación)**
+- [ ] Endpoint webhook compatible con Retell Custom LLM (HTTP + WebSocket via Hono)
+- [ ] Verificación de firma de webhook Retell
+- [ ] System prompt construido al inicio de la llamada inyectando config del tenant
+- [ ] Anthropic SDK con prompt caching habilitado
+- [ ] Versionado del prompt en `call_attempts.promptVersion`
+- [ ] Dos system prompts diferenciados por `campaignType`: `overdue` / `upcoming`
+- [ ] Identificación obligatoria del agente al inicio del turno (compliance)
+- [ ] Aviso de grabación en primer turno
+
+**Tools deterministas (todas idempotentes en escritura)**
+- [ ] `get_debt_info(debtor_id)` — saldo, vencimiento, último pago. Lectura en vivo, sin cache
+- [ ] `register_payment_promise(debtor_id, monto, fecha, medio)` — idempotente por `(callAttemptId, toolCallId)`
+- [ ] `schedule_callback(debtor_id, fecha_hora, motivo)` — idempotente
+- [ ] `mark_dispute(debtor_id, motivo)` — idempotente
+- [ ] `transfer_to_human(motivo)` — marca el call_attempt para escalamiento
+- [ ] Validación Zod estricta en input/output de cada tool
+- [ ] Latencia de tool < 3s (Retell webhook es síncrono)
+
+**Outbound**
+- [ ] HTTP `POST /calls` con `{tenantId, debtorExternalId, campaignType}` para disparar llamada
+- [ ] Worker interno simple que lee `debtors` + config de tenant y agenda llamadas (cadencia mínima respetada)
+- [ ] Calling window por tenant (timezone) — el worker no dispara fuera de horario
+
+**Inbound**
+- [ ] Webhook receiver de Retell para llamadas entrantes
+- [ ] Resolución de `tenantId` por número entrante
+- [ ] Lookup de deudor por `from_number` con fallback unknown
+
+**Conversation Flow (Retell, no código)**
+- [ ] Identidad verificación al inicio (Conversation Flow)
+- [ ] Nodo de transferencia a humano (Conversation Flow)
+- [ ] Nodo de despedida (Conversation Flow)
+- [ ] Documentación de los flows en repo (export JSON o doc markdown)
+
+**Robustez Nivel 1**
+- [ ] Errores tipados
+- [ ] Logging estructurado Pino con `tenantId`, `callId`, `debtorExternalId`, `requestId`
+- [ ] Retries con backoff hacia Anthropic y Retell
+- [ ] Idempotencia en webhook receiver (upsert por `callId` + `eventId`)
+
+**Tests**
+- [ ] Unit tests de cada tool (input válido, input malformado, datos faltantes)
+- [ ] Tests del prompt builder por campaignType
+- [ ] Tests de webhook handler (firma inválida, replay, payload malformado)
+- [ ] Tests de scoping multi-tenant (query sin `tenantId` debe fallar)
+
+**Hooks Nivel 2 (preparados, no implementados)**
+- [ ] Outbox pattern: campo `outbox` en `call_events`/escrituras + colección `outbox` (sin consumer)
+- [ ] OpenTelemetry: spans nombrados en operaciones críticas (sin exportador conectado)
+- [ ] Feature flags: interfaz `getFlag(tenantId, key)` con implementación dummy
+- [ ] `TranscriptRedactor` interface con no-op default (PII redaction)
 
 ### Out of Scope
 
-- Scheduler de cadencia de campañas (lo dueño otro servicio)
-- UI de configuración / panel admin
-- Importación de Softseguros a Mongo (otro microservicio puebla `debtors`)
-- Implementación efectiva de los hooks Nivel 2 (solo dejamos puntos de extensión)
-- Secret manager externo (Railway env vars suficiente para piloto)
+- Scheduler de cadencia automática avanzado (worker simple sí; fase futura para sofisticado)
+- UI de configuración de tenants (otro servicio futuro)
+- Importación de cartera desde API Softseguros (otro microservicio paralelo)
+- RAG / Retell KB en v1 — decisión explícita
+- Dashboards, replay UI, load testing pesado
+- Implementación efectiva de hooks Nivel 2 (solo interfaces y puntos de extensión)
+- Secret manager externo (Railway env vars suficiente)
 - Multi-modelo de voz: solo Retell en v1
-- Reportería/analytics para Softseguros (consumirán Mongo directo o lo construye otro servicio)
 
 ## Context
 
-- **Ecosistema Landa**: este servicio vive dentro de `hive-pixel-office/services/retell-voice` y comparte Mongo con el resto de Landa. La colección `debtors` la pueblan otros microservicios.
-- **Cliente piloto**: Softseguros opera dos campañas — cartera vencida (cobro de deuda morosa) y cartera por vencer (recordatorio preventivo). Cada una requiere tono y toolset distintos.
-- **Decisión previa de stack**: usuario ya validó Node 20 + TS + Hono + Mongoose + Zod + Anthropic SDK + Retell SDK + Pino + Vitest + Biome. La research del workflow no debe cuestionarlo, sino versionarlo y profundizar en patrones (Retell function calling, manejo de webhooks, prompt engineering para cobranza).
-- **Producción Nivel 1 con hooks Nivel 2**: implementar lo necesario para correr en piloto real (validación, persistencia, logs, tests core) y dejar interfaces para observabilidad/retry/E2E/PII pero NO construirlas ahora.
-- **Multi-tenant día uno**: aunque el piloto es solo Softseguros, todo lleva `tenantId` para no rehacer migraciones cuando entre el segundo cliente.
+- **Ecosistema Landa**: vive en `services/retell-voice/` dentro del repo `hive-pixel-office`. La raíz del repo tiene su propio `.planning/` que NO se debe tocar.
+- **Mongo compartida**: lectura sobre `debtors` (poblada por otro microservicio que consume API Softseguros). Escrituras propias en colecciones del servicio.
+- **Cliente piloto Softseguros (Colombia)**: dos campañas — cartera vencida y por vencer. Compliance LatAm (Habeas Data Ley 1581, SFC Circular 100-000003/2020, Ley 2300/2023 sobre frecuencia) — gate legal antes del piloto real.
+- **Equipo**: hoy 1 dev (Maximiliano), entra otro dev en algún punto. Estructura legible para alguien nuevo.
+- **Branch**: `feature/retell-voice-poc` desde `origin/master`.
 
 ## Constraints
 
-- **Tech stack**: Node 20 + TypeScript + Hono + Mongoose + Zod + Anthropic SDK + Retell SDK + Pino + Vitest + Biome — decidido y cerrado.
-- **BD**: Mongo compartida con Landa. Solo lectura sobre `debtors`; escrituras propias bajo colecciones del servicio (`call_attempts`, `payment_promises`, etc.).
+- **Tech stack**: Node 20 + TypeScript strict + Hono (HTTP + WebSocket) + Mongoose + Zod + `@anthropic-ai/sdk` (prompt caching) + `retell-sdk` + Pino + Vitest + Biome — decidido y cerrado.
+- **BD**: Mongo compartida con Landa. Lectura `debtors`; escrituras en colecciones propias.
 - **Deploy**: Railway. Secretos vía env vars de Railway (sin secret manager).
-- **Multi-tenancy**: obligatorio en el modelo de datos desde día uno.
-- **Robustez**: Producción Nivel 1 — debe correr el piloto Softseguros sin operador humano detrás. Hooks Nivel 2 listos pero no implementados.
+- **CI**: GitHub Actions (lint + typecheck + test).
+- **Multi-tenancy**: obligatoria día uno; `tenantId` en todo, scoping forzado en queries.
+- **Robustez**: Producción Nivel 1 — el piloto Softseguros corre sin operador humano detrás. Hooks Nivel 2 preparados, no implementados.
+- **Latencia tool**: < 3s (Retell Custom LLM webhook es síncrono).
+- **Compliance**: identificación, aviso de grabación, calling window, cadencia mínima — go-live blockers.
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Retell AI como runtime de voz | Alternativa más madura/menos robótica vs Vapi para cobranza en español | — Pending |
-| Tools deterministas que persisten en BD | Auditabilidad + accionabilidad real, no solo conversación | — Pending |
-| Multi-tenant desde día uno (`tenantId` en todo) | Evita migración dolorosa cuando entre cliente #2 | — Pending |
-| Outbound vía HTTP + worker interno | Otros servicios pueden disparar puntualmente; worker cubre cadencia básica del piloto | — Pending |
-| `campaignType` como discriminator de flujo | Overdue y upcoming requieren prompt+tools distintos sin duplicar servicio | — Pending |
-| Hooks Nivel 2 (obs/retry/E2E/PII) preparados pero no construidos | Producción Nivel 1 suficiente para piloto; evitamos sobre-ingeniería | — Pending |
-| Railway env vars como secret store | Simple, suficiente para piloto; secret manager es scope futuro | — Pending |
+| Retell AI runtime de voz | Madurez para español LatAm; alternativa no robótica vs Vapi | — Pending |
+| Híbrido Conversation Flow + Custom LLM | Bordes deterministas en UI Retell, cuerpo flexible con tools en webhook | — Pending |
+| Sin RAG en POC | Simplicidad > sofisticación; system prompt + config tenant suficiente | — Pending |
+| Tools deterministas con persistencia | Auditabilidad + accionabilidad real | — Pending |
+| Multi-tenant día uno (`tenantId` en todo) | Evita migración dolorosa al entrar cliente #2 | — Pending |
+| Identidad deudor = ID externo Softseguros | Ambos servicios hablan el mismo idioma | — Pending |
+| Idempotencia tool writes por `(callAttemptId, toolCallId)` | Retell reintenta; sin esto duplicamos promesas | — Pending |
+| Outbound vía HTTP + worker interno simple | Disparo puntual + cadencia básica para piloto | — Pending |
+| `campaignType` discrimina prompt + agentId Retell | Overdue y upcoming requieren tono y toolset distintos | — Pending |
+| Anthropic prompt caching activo desde día uno | Costos y latencia | — Pending |
+| Hooks Nivel 2 preparados (outbox/OTel/flags/redactor) | Producción Nivel 1 suficiente; evitamos sobre-ingeniería | — Pending |
+| Railway env vars como secret store | Suficiente para piloto | — Pending |
 
 ---
-*Last updated: 2026-05-09 after initialization*
+*Last updated: 2026-05-09 after architectural briefing update*
