@@ -386,10 +386,49 @@ Plans:
 
 ---
 
+### Phase 18: SOFTSEGUROS Deudores Sync
+
+**Goal**: El corredor de seguros conecta sus credenciales SOFTSEGUROS y carga automáticamente toda su cartera de deudores (cuotas pendientes de pólizas), clasificada en dos vistas (próximos a vencer / ya vencidos), con sincronización diaria automática, botón de actualización manual rate-limited, y verificación puntual antes de cada llamada del voice agent (Phase 17) para evitar llamar a deudores que ya pagaron.
+**Depends on**: Phase 1, Phase 2, Phase 17
+**Requirements**: SOFTSEG-01, SOFTSEG-02, SOFTSEG-03, SOFTSEG-04, SOFTSEG-05, SOFTSEG-06, SOFTSEG-07, SOFTSEG-08, SOFTSEG-09, SOFTSEG-10
+
+**Success Criteria** (what must be TRUE):
+  1. Un corredor configura sus credenciales SOFTSEGUROS desde la UI; el backend valida (auth real contra `POST /api-token-auth/`) y las guarda encriptadas con Fernet per-user — credenciales jamás aparecen en logs ni en responses
+  2. El onboarding sync (one-shot) carga 100% de las cuotas pendientes (`pagopoliza.comisionada=false`) enriquecidas con datos de cliente, en menos de 2 minutos para una cartera de 1000 deudores, con barra de progreso visible
+  3. `GET /api/debtors?status=proximos_a_vencer` retorna solo filas con `fecha_pago` entre hoy y hoy+30, `comisionada=false`, `is_active=1`, scoped al `user_id` del JWT — multi-tenant verificado
+  4. `GET /api/debtors?status=ya_vencidos` retorna solo filas con `fecha_pago < hoy`, `comisionada=false`, `is_active=1`
+  5. El cron diario (configurable, default 3am) corre automáticamente vía APScheduler y actualiza la BD; cuotas que SOFTSEGUROS ahora marca como `comisionada=true` se marcan localmente como `status='pagado', is_active=0`
+  6. El botón "Actualizar ahora" en UI dispara un sync manual; el segundo clic dentro de 5 min retorna 429 con mensaje claro
+  7. `GET /api/debtors/{id}/verify-fresh` retorna `{should_call: false, reason: "already_paid"}` cuando la pagopoliza fue cobrada en SOFTSEGUROS desde el último sync, Y actualiza la fila local en la misma transacción
+  8. El sync respeta `asyncio.Semaphore(5)` — nunca >5 requests concurrentes a SOFTSEGUROS; 429/5xx disparan backoff exponencial vía tenacity sin crashear el sync
+  9. Si SOFTSEGUROS está caído durante el pre-call check, el endpoint retorna `should_call=true` con warning (fail-open) para no bloquear cobranzas legítimas
+  10. Phase 17 (voice agent) puede consumir `GET /api/debtors?status=ya_vencidos` como fuente de cola de llamadas, y `GET /api/debtors/{id}/verify-fresh` antes de cada llamada
+
+**Arquitectura:**
+- Modelo de datos: un "deudor" = una `pagopoliza` pendiente (no un cliente). Un cliente con N cuotas = N filas en tabla `debtors`. La API SOFTSEGUROS no expone endpoint "deudores"; se construye cruzando `/api/pagopoliza/` (deuda) con `/api/cliente/` (contacto) vía `/api/poliza/`
+- Tablas SQLite: `softseguros_credentials` (per-user, Fernet-encrypted), `debtors` (pagopoliza + cliente enriquecido), `sync_logs` (audit con `mode` ∈ onboarding|cron_daily|manual|pre_call_check)
+- Adapter HTTP: header `Authorization: Token <x>` (Django REST, NO Bearer); paginación fija 10/página (limitación de SOFTSEGUROS); retry tenacity con respeto de `Retry-After`
+- 3 modos de sync (NO polling continuo): onboarding one-shot, cron diario APScheduler, manual rate-limited 1/5min
+- 4to modo "pre-call check": 1 request puntual antes de cada llamada del voice agent; fail-open si SOFTSEGUROS caído
+- Concurrencia: `asyncio.Semaphore(5)`; cache de cliente/poliza en memoria durante el sync para evitar fetches duplicados
+- Endpoints REST: `/api/debtors` (list filtered), `/api/debtors/{id}`, `/api/debtors/{id}/verify-fresh`, `/api/debtors/sync-status`, `/api/debtors/sync-now`, `/api/debtors/configure-softseguros`
+- Frontend: SoftSegurosSetupPage (onboarding) + DebtorsPage (2 tabs + manual sync button + sync status badge)
+
+**Plans**: 5 plans
+
+Plans:
+- [ ] 18-01-PLAN.md — Wave 1: Nyquist xfail scaffold (20 stubs for SOFTSEG-01..10)
+- [ ] 18-02-PLAN.md — Wave 2: HTTP adapter (Token auth + retry) + Fernet credentials
+- [ ] 18-03-PLAN.md — Wave 2: Sync engine (3 modos) + classifier + APScheduler daily cron
+- [ ] 18-04-PLAN.md — Wave 3: REST routes (configure, list, sync-now, verify-fresh)
+- [ ] 18-05-PLAN.md — Wave 4: Frontend SOFTSEGUROS tab + integration test + green xfails
+
+---
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -410,3 +449,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
 | 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete    | 2026-03-26 |
 | 17. Voice Cobranza Agent | 8/8 | Complete | 2026-03-27 |
+| 18. SOFTSEGUROS Deudores Sync | 1/5 | In Progress|  |

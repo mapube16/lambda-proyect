@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 17-08-PLAN.md
-last_updated: "2026-03-27T20:08:18Z"
-last_activity: "2026-03-27 — Phase 17 Plan 08 complete: cobranza router wired, scheduler jobs registered, cobranza_enabled staff gate, 8 COBR tests green"
+stopped_at: Completed 18-01-PLAN.md
+last_updated: "2026-05-12T16:10:58.759Z"
+last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
 progress:
-  total_phases: 17
-  completed_phases: 5
-  total_plans: 43
-  completed_plans: 38
+  total_phases: 18
+  completed_phases: 6
+  total_plans: 48
+  completed_plans: 40
   percent: 44
 ---
 
@@ -69,6 +69,7 @@ Progress: [████░░░░░░] 44%
 | Phase 17-voice-cobranza-agent P04 | 9min | 2 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P07 | 9min | 2 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P08 | 8min | 3 tasks | 4 files |
+| Phase 18-softseguros-sync P01 | 3min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -149,6 +150,7 @@ Recent decisions affecting current work:
 - [Phase 17-05]: Terminal estados (promesa_de_pago, escalado, pagado) are never overwritten by endedReason mapping — tool calls set state mid-call
 - [Phase 17-07]: CustomEvent bridge (cobr:debtor_update) preferred over store coupling — CobranzaTab is self-contained with no store mutations
 - [Phase 17-07]: Section switcher uses display:none for leads panel when cobranza active — avoids remount and preserves leads scroll position
+- [Phase 18-softseguros-sync]: strict=False xfail markers + lazy main import + self-contained reset_db fixture — mirrors Phase 16/17 scaffold pattern
 
 ### Pending Todos
 
@@ -161,6 +163,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T19:49:00Z
-Stopped at: Completed 17-07-PLAN.md
+Last session: 2026-05-12T16:10:57.412Z
+Stopped at: Completed 18-01-PLAN.md
 Resume file: None
