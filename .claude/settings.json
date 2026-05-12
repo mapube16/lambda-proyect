@@ -23,7 +23,9 @@
       "Bash(find /c/Users/maxim/Desktop/hive-pixel-office/frontend -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js \\\\\\))",
       "Bash(xargs grep:*)",
       "Bash(python3 -c \"import secrets; print\\(secrets.token_urlsafe\\(32\\)\\)\")",
-      "WebFetch(domain:app.softseguros.com)"
+      "WebFetch(domain:app.softseguros.com)",
+      "Bash(cd /c/Users/maxim/Desktop/hive-pixel-office/backend && grep -n \"def get_poliza\\\\|def list_polizas\\\\|def parse_next_page\\\\|/api/poliza\\\\|api-token-auth\\\\|def authenticate\\\\|class SoftSeguros\" softseguros/adapter.py)",
+      "Read(//c/c/Users/maxim/Desktop/hive-pixel-office/backend/softseguros/**)"
     ]
   }
 }
