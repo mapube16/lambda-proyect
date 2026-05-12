@@ -137,12 +137,35 @@
 | VIZ-01 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-02 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-03 | Phase 8 — Real-Time Visualization | Pending |
+| SOFTSEG-01 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-02 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-03 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-04 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-05 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-06 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-07 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-08 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-09 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-10 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+
+### SOFTSEGUROS Deudores Sync (Phase 18)
+
+- **SOFTSEG-01**: Token-based auth contra `POST /api-token-auth/`; header `Authorization: Token <x>` (NO Bearer); re-auth transparente en 401
+- **SOFTSEG-02**: Tabla `softseguros_credentials` con Fernet encryption per-user; validación al guardar (auth real); jamás loggear credenciales
+- **SOFTSEG-03**: Paginar `/api/pagopoliza/` (10/página fijo) filtrando `comisionada=false`; enriquecer con `/api/poliza/{id}` → `/api/cliente/{id}`; cache de cliente/poliza en memoria por sync
+- **SOFTSEG-04**: `asyncio.Semaphore(5)` + tenacity retry exponencial en 429/5xx con `Retry-After`; sync no crashea ante errores; `sync_log` marca `failed`
+- **SOFTSEG-05**: Clasificación `ya_vencidos` (fecha_pago < hoy) y `proximos_a_vencer` (entre hoy y hoy+30), recalculada en cada sync
+- **SOFTSEG-06**: 3 modos — onboarding (one-shot), cron diario APScheduler default 3am, manual rate-limited 1/5min
+- **SOFTSEG-07**: `GET /api/debtors/{id}/verify-fresh` para voice agent; comportamiento: already_paid (marca local pagado+inactive), not_found (marca eliminado), outdated (actualiza local), ok (proceder), fail-open en timeout
+- **SOFTSEG-08**: REST API filtrada (`?status=...`) con JWT + multi-tenant strict (user A no ve nada de B); endpoints sync-status, sync-logs, configure-softseguros
+- **SOFTSEG-09**: Soft-delete only (`is_active=0`); cuotas ausentes del listado se verifican puntualmente para distinguir pagado vs eliminado; nunca hard-delete
+- **SOFTSEG-10**: SoftSegurosSetupPage (form + validación + loader onboarding); DebtorsPage (2 tabs + DebtorCard + SyncStatusBadge + botón actualizar disabled durante rate-limit); empty/error states
 
 **Coverage:**
-- v1 requirements: 25 total
-- Mapped to phases: 25
+- v1 requirements: 35 total
+- Mapped to phases: 35
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-17 after roadmap creation — traceability updated to 8-phase structure*
+*Last updated: 2026-05-12 — Phase 18 (SOFTSEG-01..10) added*
