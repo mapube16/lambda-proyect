@@ -23,3 +23,7 @@ phonenumbers==9.0.26
 pytz>=2024.1
 vapi_server_sdk>=0.1.0
 pandas>=2.0.0
+tenacity>=8.2
+cryptography>=42.0
+respx>=0.21
+
