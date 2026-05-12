@@ -54,20 +54,37 @@ async def test_softseg_01_header_uses_token_not_bearer(async_client):
 
 # ── SOFTSEG-02: Encrypted credentials per user ────────────────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-02 not implemented yet")
 async def test_softseg_02_save_credentials_encrypts(async_client):
     """save_credentials() Fernet-encrypts password and persists to softseguros_credentials."""
-    raise NotImplementedError(
-        "SOFTSEG-02: save_credentials() must Fernet-encrypt password before persisting"
-    )
+    from softseguros.credentials import save_credentials
+    db = database.get_db()
+    plaintext = "super-secret-password-123"
+    await save_credentials(db, user_id="u1", username="corredor@example.com", password=plaintext)
+    doc = await db.softseguros_credentials.find_one({"user_id": "u1"})
+    assert doc is not None
+    assert doc["username"] == "corredor@example.com"
+    # ciphertext stored, NOT plaintext
+    assert "password_encrypted" in doc
+    assert doc["password_encrypted"] != plaintext
+    assert plaintext not in doc["password_encrypted"]
+    # Fernet ciphertext starts with "gAAAAA" (version byte base64-encoded)
+    assert doc["password_encrypted"].startswith("gAAAAA")
+    assert "configured_at" in doc and "updated_at" in doc
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-02 not implemented yet")
 async def test_softseg_02_get_credentials_decrypts(async_client):
     """get_credentials() decrypts ciphertext and returns (username, plaintext_password); never logs plaintext."""
-    raise NotImplementedError(
-        "SOFTSEG-02: get_credentials() must decrypt and never log plaintext password"
-    )
+    from softseguros.credentials import save_credentials, get_credentials
+    db = database.get_db()
+    plaintext = "another-secret-xyz"
+    await save_credentials(db, user_id="u2", username="ana@example.com", password=plaintext)
+    result = await get_credentials(db, user_id="u2")
+    assert result is not None
+    username, decrypted = result
+    assert username == "ana@example.com"
+    assert decrypted == plaintext
+    # Missing user returns None
+    assert await get_credentials(db, user_id="nonexistent") is None
 
 
 # ── SOFTSEG-03: Fetch + enrich pagopoliza with cliente ────────────────────────
