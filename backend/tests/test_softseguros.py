@@ -36,20 +36,58 @@ async def async_client():
 
 # ── SOFTSEG-01: Token Auth (header `Token`, not Bearer) ───────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-01 not implemented yet")
-async def test_softseg_01_authenticate_post(async_client):
+async def test_softseg_01_authenticate_post():
     """SoftSegurosAdapter.authenticate() POSTs to /api-token-auth/ and returns token."""
-    raise NotImplementedError(
-        "SOFTSEG-01: authenticate() must POST /api-token-auth/ with {username,password} and return token"
-    )
+    import respx
+    from httpx import Response
+    from softseguros.adapter import SoftSegurosAdapter
+
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=True) as mock:
+        route = mock.post("/api-token-auth/").mock(
+            return_value=Response(200, json={"token": "abc123"})
+        )
+        adapter = SoftSegurosAdapter("user1", "pwd1", base_url=base)
+        try:
+            token = await adapter.authenticate()
+            assert token == "abc123"
+            assert adapter.token == "abc123"
+            # verify request body
+            assert route.called
+            posted = route.calls.last.request
+            assert posted.method == "POST"
+            import json as _json
+            payload = _json.loads(posted.content.decode("utf-8"))
+            assert payload == {"username": "user1", "password": "pwd1"}
+        finally:
+            await adapter.close()
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-01 not implemented yet")
-async def test_softseg_01_header_uses_token_not_bearer(async_client):
+async def test_softseg_01_header_uses_token_not_bearer():
     """Subsequent authenticated requests use header 'Authorization: Token <x>' (NOT Bearer)."""
-    raise NotImplementedError(
-        "SOFTSEG-01: adapter must send 'Authorization: Token <x>' header, never 'Bearer'"
-    )
+    import respx
+    from httpx import Response
+    from softseguros.adapter import SoftSegurosAdapter
+
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(
+            return_value=Response(200, json={"token": "tok-xyz"})
+        )
+        list_route = mock.get("/api/pagopoliza/").mock(
+            return_value=Response(200, json={"results": [], "count": 0})
+        )
+        adapter = SoftSegurosAdapter("u", "p", base_url=base)
+        try:
+            await adapter.list_pagopoliza(page=1)
+            assert list_route.called
+            req = list_route.calls.last.request
+            auth = req.headers.get("Authorization", "")
+            assert auth == "Token tok-xyz"
+            assert not auth.lower().startswith("bearer"), \
+                f"Adapter must NOT use Bearer; got {auth!r}"
+        finally:
+            await adapter.close()
 
 
 # ── SOFTSEG-02: Encrypted credentials per user ────────────────────────────────
@@ -115,12 +153,59 @@ async def test_softseg_04_semaphore_limits_concurrency(async_client):
     )
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-04 not implemented yet")
-async def test_softseg_04_retry_on_429_with_backoff(async_client):
+async def test_softseg_04_retry_on_429_with_backoff(monkeypatch):
     """Adapter retries on HTTP 429 with exponential backoff respecting Retry-After header."""
-    raise NotImplementedError(
-        "SOFTSEG-04: adapter must retry on 429 honoring Retry-After header"
-    )
+    import asyncio as _asyncio
+    import respx
+    from httpx import Response
+    from softseguros.adapter import SoftSegurosAdapter
+
+    # Speed up tenacity exponential waits and Retry-After sleeps
+    async def _no_sleep(_seconds):
+        return None
+    monkeypatch.setattr(_asyncio, "sleep", _no_sleep)
+    # Also patch tenacity's blocking sleep through nap
+    import tenacity.nap as _nap
+    monkeypatch.setattr(_nap, "sleep", lambda s: None)
+
+    sleep_calls: list[float] = []
+    real_sleep = _no_sleep
+
+    async def _tracking_sleep(seconds):
+        sleep_calls.append(seconds)
+        return await real_sleep(seconds)
+    monkeypatch.setattr("softseguros.adapter.asyncio.sleep", _tracking_sleep)
+
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(
+            return_value=Response(200, json={"token": "t-1"})
+        )
+        responses = [
+            Response(429, headers={"Retry-After": "1"}, json={"detail": "throttled"}),
+            Response(429, headers={"Retry-After": "1"}, json={"detail": "throttled"}),
+            Response(200, json={"results": [{"id": "p1"}], "count": 1}),
+        ]
+        call_count = {"n": 0}
+
+        def _side_effect(request):
+            i = call_count["n"]
+            call_count["n"] += 1
+            return responses[min(i, len(responses) - 1)]
+
+        mock.get("/api/pagopoliza/").mock(side_effect=_side_effect)
+
+        adapter = SoftSegurosAdapter("u", "p", base_url=base)
+        try:
+            result = await adapter.list_pagopoliza(page=1)
+            assert result == {"results": [{"id": "p1"}], "count": 1}
+            # Must have retried at least twice (3 total attempts)
+            assert call_count["n"] == 3
+            # Retry-After honored at least once
+            assert any(s == 1.0 for s in sleep_calls), \
+                f"Expected Retry-After=1s sleep; got {sleep_calls!r}"
+        finally:
+            await adapter.close()
 
 
 # ── SOFTSEG-05: Classification ────────────────────────────────────────────────
