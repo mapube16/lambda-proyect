@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: executing
-stopped_at: Completed 18-03-PLAN.md
-last_updated: "2026-05-12T22:46:49.496Z"
-last_activity: "2026-05-12 — Phase 18 Plan 02 complete: SoftSegurosAdapter + Fernet credentials"
+stopped_at: Completed 18-04-PLAN.md
+last_updated: "2026-05-12T18:00:00.000Z"
+last_activity: "2026-05-12 — Phase 18 Plan 04 complete: /api/debtors REST router + verify-fresh"
 progress:
   total_phases: 18
   completed_phases: 6
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-03-17)
 ## Current Position
 
 Phase: 18 of 18 (SOFTSEGUROS Deudores Sync)
-Plan: 03 of 05
-Status: Executing (18-02 complete, 18-03 next)
-Last activity: 2026-05-12 — Phase 18 Plan 02 complete: SoftSegurosAdapter + Fernet credentials
+Plan: 05 of 05
+Status: Executing (18-04 complete, 18-05 next)
+Last activity: 2026-05-12 — Phase 18 Plan 04 complete: /api/debtors REST router + verify-fresh
 
 Progress: [████░░░░░░] 45%
 
@@ -71,6 +71,8 @@ Progress: [████░░░░░░] 45%
 | Phase 17-voice-cobranza-agent P08 | 8min | 3 tasks | 4 files |
 | Phase 18-softseguros-sync P01 | 3min | 1 tasks | 1 files |
 | Phase 18-softseguros-sync P02 | ~12min | 3 tasks | 8 files |
+| Phase 18-softseguros-sync P03 | ~25min | 4 tasks | 7 files |
+| Phase 18-softseguros-sync P04 | ~20min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -158,6 +160,9 @@ Recent decisions affecting current work:
 - [Phase 18-02]: 429 handling sleeps Retry-After then raises SoftSegurosRateLimitError to drive tenacity exponential backoff — composed retry strategy
 - [Phase 18-02]: Authorization header is `Token <x>` (Django REST Framework), NEVER Bearer — verified by test_softseg_01_header_uses_token_not_bearer
 - [Phase 18-02]: conftest.py seeds SOFTSEGUROS_ENCRYPTION_KEY via os.environ.setdefault BEFORE any softseguros.* import — only way to satisfy fail-fast contract
+- [Phase 18-04]: verify_poliza_fresh treats 'futuro'/'pagado' classification as not-callable-now → mark pagado+inactive; fail-open (should_call=true, warning) on timeout/5xx/unexpected with NO local mutation
+- [Phase 18-04]: /api/debtors literal routes (sync-status, sync-logs, configure-softseguros, health) declared before /{debtor_id}; BackgroundTasks sync wrapped in _safe_run_sync
+- [Phase 18-04]: test JWT minted via auth.create_access_token (login only sets httpOnly Secure cookie, not persisted over http://test); flipped all 8 remaining SOFTSEG stubs → 21 passed / 0 xfailed
 
 ### Pending Todos
 
@@ -170,6 +175,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-12T22:46:49.478Z
-Stopped at: Completed 18-03-PLAN.md
+Last session: 2026-05-12T18:00:00.000Z
+Stopped at: Completed 18-04-PLAN.md
 Resume file: None

@@ -420,7 +420,7 @@ Plans:
 - [x] 18-01-PLAN.md — Wave 1: Nyquist xfail scaffold (20 stubs for SOFTSEG-01..10)
 - [x] 18-02-PLAN.md — Wave 2: HTTP adapter (Token auth + retry) + Fernet credentials
 - [x] 18-03-PLAN.md — Wave 2: Sync engine (onboarding + cron/manual delta) + classifier + APScheduler daily cron
-- [ ] 18-04-PLAN.md — Wave 3: REST routes (configure, list, sync-now, verify-fresh)
+- [x] 18-04-PLAN.md — Wave 3: REST routes (configure, list, sync-now, verify-fresh)
 - [ ] 18-05-PLAN.md — Wave 4: Frontend SOFTSEGUROS tab + integration test + green xfails
 
 ---
