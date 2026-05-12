@@ -59,6 +59,8 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.debtors.create_index([("user_id", 1), ("created_at", -1)])
     await db.debtors.create_index("vapi_call_id", sparse=True)
     await db.debtors.create_index([("user_id", 1), ("telefono", 1)], unique=True)
+    # ── Phase 18: SOFTSEGUROS credentials per user ───────────────────────────
+    await db.softseguros_credentials.create_index("user_id", unique=True)
     # ── Email OAuth + Events ──────────────────────────────────────────────────
     await db.email_events.create_index([("user_id", 1), ("timestamp", -1)])
     await db.email_events.create_index("message_id")

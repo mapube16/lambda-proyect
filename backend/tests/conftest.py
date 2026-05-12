@@ -1,3 +1,10 @@
+import os
+# Phase 18: ensure SOFTSEGUROS Fernet key is set before any softseguros module is imported.
+os.environ.setdefault(
+    "SOFTSEGUROS_ENCRYPTION_KEY",
+    "zmWmHEnQ7E5jXk9V2bN4qY7tR1xL0pUaG3sH6vN8cZ4=",  # test-only key (valid Fernet)
+)
+
 import pytest
 import pytest_asyncio
 import database
