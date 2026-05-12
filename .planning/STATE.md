@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-17)
 
 **Core value:** Un cliente piloto puede configurar su agente prospector, ver los agentes trabajar en la oficina pixel art en tiempo real, y recibir expedientes con correos listos para enviar.
-**Current focus:** Phase 2 — Hive Adapter and Tenant Isolation
+**Current focus:** Phase 18 — SOFTSEGUROS Deudores Sync
 
 ## Current Position
 
-Phase: 2 of 8 (Hive Adapter and Tenant Isolation)
-Plan: —
-Status: Planning (not started)
-Last activity: 2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11
+Phase: 18 of 18 (SOFTSEGUROS Deudores Sync)
+Plan: 02 of 05
+Status: Executing (18-01 complete, 18-02 next)
+Last activity: 2026-05-12 — Phase 18 Plan 01 complete: 20 xfail stubs for SOFTSEG-01..10
 
 Progress: [████░░░░░░] 44%
 

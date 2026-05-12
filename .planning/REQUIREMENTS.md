@@ -137,16 +137,16 @@
 | VIZ-01 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-02 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-03 | Phase 8 — Real-Time Visualization | Pending |
-| SOFTSEG-01 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-02 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-03 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-04 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-05 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-06 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-07 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-08 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-09 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-10 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
+| SOFTSEG-01 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-02 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-03 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-04 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-05 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-06 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-07 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-08 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-09 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
+| SOFTSEG-10 | Phase 18 — SOFTSEGUROS Deudores Sync | Pending |
 
 ### SOFTSEGUROS Deudores Sync (Phase 18)
 
