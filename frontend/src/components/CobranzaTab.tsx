@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../lib/apiFetch';
+import { DebtorsSoftSegurosTab } from './DebtorsSoftSegurosTab';
 
 // ─── Inject keyframes once ─────────────────────────────────────────────────────
 if (typeof document !== 'undefined' && !document.getElementById('cobr-styles')) {
@@ -45,6 +46,32 @@ const lbl = (color = C.muted, size = 10): React.CSSProperties => ({
   fontFamily: C.SG, fontSize: size, fontWeight: 600,
   textTransform: 'uppercase', letterSpacing: '0.12em', color,
 });
+
+// ─── SOFTSEGUROS section (collapsible) ─────────────────────────────────────────
+function SoftSegurosSection() {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+          background: C.s0, border: `1px solid rgba(120,220,232,0.18)`,
+          padding: '10px 14px', cursor: 'pointer', color: C.cyan,
+          fontFamily: C.SG, fontWeight: 600, fontSize: 12, letterSpacing: '0.08em',
+        }}
+      >
+        <span style={{ fontSize: 10, transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▶</span>
+        DEUDORES SOFTSEGUROS
+      </button>
+      {expanded && (
+        <div style={{ marginTop: 8 }}>
+          <DebtorsSoftSegurosTab />
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface CallRecord {
@@ -1440,7 +1467,12 @@ export function CobranzaTab() {
     </div>
   );
   if (!configured) return (
-    <CobranzaOnboarding onDone={() => { setConfigured(true); fetchDebtors(); }} />
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'auto' }}>
+      <div style={{ padding: '26px 28px 0' }}>
+        <SoftSegurosSection />
+      </div>
+      <CobranzaOnboarding onDone={() => { setConfigured(true); fetchDebtors(); }} />
+    </div>
   );
 
   return (
@@ -1448,6 +1480,9 @@ export function CobranzaTab() {
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
+
+        {/* SOFTSEGUROS deudores (synced from the broker's SOFTSEGUROS account) */}
+        <SoftSegurosSection />
 
         {/* Page heading */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22 }}>
