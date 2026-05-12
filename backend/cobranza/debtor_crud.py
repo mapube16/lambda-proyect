@@ -211,3 +211,107 @@ async def delete_debtor(db, user_id: str, debtor_id: str) -> bool:
         return False
     result = await db.debtors.delete_one({"_id": oid, "user_id": user_id})
     return result.deleted_count > 0
+
+
+# ── Phase 18: SOFTSEGUROS-aware helpers ───────────────────────────────────────
+# Idempotency key: (user_id, softseguros_poliza_id). Phase 17 invariants
+# (estado/intentos/historial_llamadas/vapi_call_id/escalado/max_intentos) are only
+# ever set on first insert via $setOnInsert — never overwritten by a re-sync.
+
+# Fields that SOFTSEGUROS owns and we always overwrite on each sync.
+_SOFTSEGUROS_SET_FIELDS = (
+    "nombre", "telefono",
+    "monto", "vencimiento",
+    "numero_poliza", "softseguros_cliente_id",
+    "cliente_documento", "cliente_email", "cliente_celular",
+    "aseguradora_nit", "ramo_nombre", "ramo_global_nombre", "vendedores_nombre",
+    "estado_poliza_nombre", "estado_cartera",
+    "prima", "total", "total_pagado", "recaudado",
+    "fecha_inicio", "fecha_fin", "fecha_limite_pago",
+    "periodicidad", "comicionada",
+    "status_softseguros", "is_active",
+)
+
+
+async def upsert_debtor_by_softseguros_poliza_id(
+    db, user_id: str, softseguros_poliza_id: int, doc: dict,
+) -> dict:
+    """
+    Upsert a debtor keyed by (user_id, softseguros_poliza_id).
+
+    On insert: seeds Phase 17 cobranza invariants (estado='pendiente', intentos=0, ...)
+    and source='softseguros'. On update: only SOFTSEGUROS-owned fields are touched.
+
+    Returns {"created": bool, "updated": bool}.
+    """
+    now = _utcnow()
+    set_payload = {k: doc[k] for k in _SOFTSEGUROS_SET_FIELDS if k in doc}
+    set_payload["last_synced"] = now
+    set_payload["updated_at"] = now
+
+    on_insert = {
+        "user_id": user_id,
+        "source": "softseguros",
+        "softseguros_poliza_id": softseguros_poliza_id,
+        "estado": "pendiente",
+        "intentos": 0,
+        "max_intentos": int(doc.get("max_intentos", 5)),
+        "historial_llamadas": [],
+        "escalado": False,
+        "vapi_call_id": None,
+        "ultimo_contacto_fecha": None,
+        "created_at": now,
+    }
+    # Avoid Mongo conflict: a key cannot be in both $set and $setOnInsert.
+    for k in list(set_payload):
+        if k in on_insert:
+            on_insert.pop(k, None)
+
+    result = await db.debtors.update_one(
+        {"user_id": user_id, "softseguros_poliza_id": softseguros_poliza_id},
+        {"$set": set_payload, "$setOnInsert": on_insert},
+        upsert=True,
+    )
+    created = result.upserted_id is not None
+    return {"created": created, "updated": not created}
+
+
+async def mark_debtor_paid_by_softseguros_poliza_id(
+    db, user_id: str, softseguros_poliza_id: int,
+) -> bool:
+    """Soft-mark a SOFTSEGUROS debtor as paid (never hard-delete). Returns True if matched."""
+    result = await db.debtors.update_one(
+        {"user_id": user_id, "softseguros_poliza_id": softseguros_poliza_id},
+        {"$set": {
+            "status_softseguros": "pagado",
+            "is_active": False,
+            "comicionada": True,
+            "updated_at": _utcnow(),
+        }},
+    )
+    return result.matched_count > 0
+
+
+async def mark_debtor_deleted_by_softseguros_poliza_id(
+    db, user_id: str, softseguros_poliza_id: int,
+) -> bool:
+    """Soft-mark a SOFTSEGUROS debtor as deleted upstream (never hard-delete). Returns True if matched."""
+    result = await db.debtors.update_one(
+        {"user_id": user_id, "softseguros_poliza_id": softseguros_poliza_id},
+        {"$set": {
+            "status_softseguros": "eliminado",
+            "is_active": False,
+            "updated_at": _utcnow(),
+        }},
+    )
+    return result.matched_count > 0
+
+
+async def list_active_softseguros_poliza_ids(db, user_id: str) -> set:
+    """Return the set of softseguros_poliza_id for this user's active SOFTSEGUROS debtors."""
+    cursor = db.debtors.find(
+        {"user_id": user_id, "source": "softseguros", "is_active": True},
+        {"softseguros_poliza_id": 1},
+    )
+    docs = await cursor.to_list(length=None)
+    return {d["softseguros_poliza_id"] for d in docs if d.get("softseguros_poliza_id") is not None}
