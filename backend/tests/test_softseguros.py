@@ -1,0 +1,214 @@
+"""
+test_softseguros.py — Phase 18: SOFTSEGUROS Deudores Sync.
+
+Wave 1 Nyquist-compliant xfail scaffold. Tests cover SOFTSEG-01 through SOFTSEG-10
+(2 stubs per requirement). All stubs are marked xfail(strict=False) so CI does not
+block on unimplemented features — they flip to PASS as implementation lands.
+
+NOTE: backend/softseguros/ package does NOT exist yet. This file MUST be importable
+without it — use lazy imports inside fixtures, never at module level.
+"""
+import pytest
+import pytest_asyncio
+import database
+from mongomock_motor import AsyncMongoMockClient
+
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_db():
+    """Fresh in-memory MongoDB per test — mirrors test_cobranza.py pattern."""
+    mock_client = AsyncMongoMockClient()
+    await database.init_db(client=mock_client)
+    yield
+    await database.get_db().users.drop()
+
+
+@pytest_asyncio.fixture
+async def async_client():
+    # Lazy import — backend/softseguros/ may not exist at collection time.
+    from main import app
+    from httpx import AsyncClient, ASGITransport
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        yield client
+
+
+# ── SOFTSEG-01: Token Auth (header `Token`, not Bearer) ───────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-01 not implemented yet")
+async def test_softseg_01_authenticate_post(async_client):
+    """SoftSegurosAdapter.authenticate() POSTs to /api-token-auth/ and returns token."""
+    raise NotImplementedError(
+        "SOFTSEG-01: authenticate() must POST /api-token-auth/ with {username,password} and return token"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-01 not implemented yet")
+async def test_softseg_01_header_uses_token_not_bearer(async_client):
+    """Subsequent authenticated requests use header 'Authorization: Token <x>' (NOT Bearer)."""
+    raise NotImplementedError(
+        "SOFTSEG-01: adapter must send 'Authorization: Token <x>' header, never 'Bearer'"
+    )
+
+
+# ── SOFTSEG-02: Encrypted credentials per user ────────────────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-02 not implemented yet")
+async def test_softseg_02_save_credentials_encrypts(async_client):
+    """save_credentials() Fernet-encrypts password and persists to softseguros_credentials."""
+    raise NotImplementedError(
+        "SOFTSEG-02: save_credentials() must Fernet-encrypt password before persisting"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-02 not implemented yet")
+async def test_softseg_02_get_credentials_decrypts(async_client):
+    """get_credentials() decrypts ciphertext and returns (username, plaintext_password); never logs plaintext."""
+    raise NotImplementedError(
+        "SOFTSEG-02: get_credentials() must decrypt and never log plaintext password"
+    )
+
+
+# ── SOFTSEG-03: Fetch + enrich pagopoliza with cliente ────────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-03 not implemented yet")
+async def test_softseg_03_list_pagopoliza_paginates(async_client):
+    """adapter.list_pagopoliza(page=1) hits ?page=N and returns dict with 'results' array."""
+    raise NotImplementedError(
+        "SOFTSEG-03: list_pagopoliza must paginate with ?page=N (10/page fixed) and return results array"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-03 not implemented yet")
+async def test_softseg_03_enrich_with_cliente(async_client):
+    """Sync engine enriches each pagopoliza with cliente data via /api/poliza/{id} → /api/cliente/{id}."""
+    raise NotImplementedError(
+        "SOFTSEG-03: sync must enrich pagopoliza by following poliza → cliente"
+    )
+
+
+# ── SOFTSEG-04: Concurrency control + retry resilience ────────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-04 not implemented yet")
+async def test_softseg_04_semaphore_limits_concurrency(async_client):
+    """Sync respects asyncio.Semaphore(5) — never more than 5 concurrent SOFTSEGUROS requests."""
+    raise NotImplementedError(
+        "SOFTSEG-04: sync must cap concurrency at 5 via asyncio.Semaphore"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-04 not implemented yet")
+async def test_softseg_04_retry_on_429_with_backoff(async_client):
+    """Adapter retries on HTTP 429 with exponential backoff respecting Retry-After header."""
+    raise NotImplementedError(
+        "SOFTSEG-04: adapter must retry on 429 honoring Retry-After header"
+    )
+
+
+# ── SOFTSEG-05: Classification ────────────────────────────────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-05 not implemented yet")
+async def test_softseg_05_classify_ya_vencidos(async_client):
+    """classify_pagopoliza returns 'ya_vencidos' when fecha_pago < today AND comisionada=false."""
+    raise NotImplementedError(
+        "SOFTSEG-05: classify_pagopoliza must return 'ya_vencidos' for past-due unpaid cuotas"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-05 not implemented yet")
+async def test_softseg_05_classify_proximos_a_vencer(async_client):
+    """classify_pagopoliza returns 'proximos_a_vencer' when fecha_pago in [today, today+30] AND comisionada=false."""
+    raise NotImplementedError(
+        "SOFTSEG-05: classify_pagopoliza must return 'proximos_a_vencer' for cuotas in the next 30 days"
+    )
+
+
+# ── SOFTSEG-06: Three sync modes (onboarding, manual rate-limited) ────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-06 not implemented yet")
+async def test_softseg_06_configure_triggers_onboarding(async_client):
+    """POST /api/debtors/configure-softseguros validates credentials and triggers onboarding sync in background."""
+    raise NotImplementedError(
+        "SOFTSEG-06: configure-softseguros must validate creds and kick off background onboarding sync"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-06 not implemented yet")
+async def test_softseg_06_sync_now_rate_limit(async_client):
+    """POST /api/debtors/sync-now returns 429 when last manual sync was < 5 minutes ago for that user."""
+    raise NotImplementedError(
+        "SOFTSEG-06: sync-now must enforce 5-min rate limit per user (429 response)"
+    )
+
+
+# ── SOFTSEG-07: Pre-call freshness check with fail-open ───────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-07 not implemented yet")
+async def test_softseg_07_verify_fresh_already_paid(async_client):
+    """verify-fresh returns should_call=false + reason='already_paid' when comisionada=true; updates local status='pagado', is_active=false."""
+    raise NotImplementedError(
+        "SOFTSEG-07: verify-fresh must cancel call and mark pagado when SOFTSEGUROS comisionada=true"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-07 not implemented yet")
+async def test_softseg_07_verify_fresh_fail_open(async_client):
+    """verify-fresh returns should_call=true with warning when SOFTSEGUROS times out (fail-open)."""
+    raise NotImplementedError(
+        "SOFTSEG-07: verify-fresh must fail-open (should_call=true) on SOFTSEGUROS timeout/5xx"
+    )
+
+
+# ── SOFTSEG-08: Filtered REST API + multi-tenant ──────────────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-08 not implemented yet")
+async def test_softseg_08_list_filtered_by_status(async_client):
+    """GET /api/debtors?status=ya_vencidos returns only docs where status_softseguros='ya_vencidos', is_active=true, scoped to current user_id."""
+    raise NotImplementedError(
+        "SOFTSEG-08: GET /api/debtors must filter by status_softseguros and current user_id"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-08 not implemented yet")
+async def test_softseg_08_tenant_isolation(async_client):
+    """GET /api/debtors/{id} returns 404 when the debtor belongs to a different user_id."""
+    raise NotImplementedError(
+        "SOFTSEG-08: GET /api/debtors/{id} must enforce tenant isolation (404 on cross-user access)"
+    )
+
+
+# ── SOFTSEG-09: Soft-delete + idempotency ─────────────────────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-09 not implemented yet")
+async def test_softseg_09_soft_delete_on_404(async_client):
+    """When pagopoliza disappears from listing, sync verifies via single GET; on 404 marks local is_active=false, status_softseguros='eliminado' (never hard-delete)."""
+    raise NotImplementedError(
+        "SOFTSEG-09: missing pagopoliza must be soft-deleted (is_active=false, status='eliminado'), never hard-deleted"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-09 not implemented yet")
+async def test_softseg_09_sync_is_idempotent(async_client):
+    """Multiple syncs for the same pagopoliza_id are idempotent — unique index (user_id, softseguros_pagopoliza_id) prevents duplicates."""
+    raise NotImplementedError(
+        "SOFTSEG-09: sync must be idempotent — unique (user_id, softseguros_pagopoliza_id) index"
+    )
+
+
+# ── SOFTSEG-10: Sync status + onboarding state endpoints ──────────────────────
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-10 not implemented yet")
+async def test_softseg_10_sync_status_endpoint(async_client):
+    """GET /api/debtors/sync-status returns last_sync_at, last_sync_mode, debtors_created/updated counts from softseguros_sync_logs."""
+    raise NotImplementedError(
+        "SOFTSEG-10: GET /api/debtors/sync-status must report last sync metadata from sync_logs"
+    )
+
+
+@pytest.mark.xfail(strict=False, reason="SOFTSEG-10 not implemented yet")
+async def test_softseg_10_configure_never_returns_password(async_client):
+    """GET /api/debtors/configure-softseguros returns {configured: bool, configured_at: datetime|null}; never returns password field."""
+    raise NotImplementedError(
+        "SOFTSEG-10: GET configure-softseguros must NEVER return the password field"
+    )
