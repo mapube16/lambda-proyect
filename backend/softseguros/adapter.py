@@ -32,6 +32,10 @@ class SoftSegurosAuthError(SoftSegurosAPIError):
     """Raised when authentication fails or 401 persists after re-auth."""
 
 
+class SoftSegurosNotFoundError(SoftSegurosAPIError):
+    """Raised on 404 — resource no longer exists upstream (drives soft-delete)."""
+
+
 class SoftSegurosRateLimitError(SoftSegurosAPIError):
     """Raised on 429 — retryable by tenacity."""
 
@@ -169,7 +173,11 @@ class SoftSegurosAdapter:
                 f"{response.status_code} from {method} {path}"
             )
 
-        # ── 4xx other than 401/429: non-retryable ────────────────────────────
+        # ── 404: distinct non-retryable (drives soft-delete) ─────────────────
+        if response.status_code == 404:
+            raise SoftSegurosNotFoundError(f"404 from {method} {path}")
+
+        # ── 4xx other than 401/404/429: non-retryable ────────────────────────
         if 400 <= response.status_code < 500:
             raise SoftSegurosAPIError(
                 f"{response.status_code} from {method} {path}: {response.text[:200]}"
@@ -194,10 +202,44 @@ class SoftSegurosAdapter:
         """GET /api/pagopoliza/{id} — single cuota detail."""
         return await self._get_json(f"/api/pagopoliza/{pagopoliza_id}")
 
-    async def get_poliza(self, poliza_id: str) -> dict:
-        """GET /api/poliza/{id} — resolves poliza → cliente_id."""
+    async def get_pagopoliza_safe(self, pagopoliza_id: str) -> Optional[dict]:  # pragma: no cover
+        """Legacy helper (unused — /api/pagopoliza/ is broken on SOFTSEGUROS, returns 504)."""
+        return await self._get_json(f"/api/pagopoliza/{pagopoliza_id}")
+
+    # ── Póliza endpoints (the real model — /api/pagopoliza/ is broken upstream) ──
+
+    async def list_polizas(self, page: int = 1) -> dict:
+        """
+        GET /api/poliza/?page=N — paginated list of pólizas (10/page, FIXED).
+
+        Server-side filters / page_size / ordering are all ignored — only ?page=N works.
+        Returns the raw response dict: {"count": int, "next": "page=N"|None, "previous": ..., "results": [...]}.
+        """
+        return await self._get_json("/api/poliza/", params={"page": page})
+
+    async def get_poliza(self, poliza_id) -> dict:
+        """GET /api/poliza/{id} — single póliza dict (raises SoftSegurosAPIError on 404)."""
         return await self._get_json(f"/api/poliza/{poliza_id}")
 
-    async def get_cliente(self, cliente_id: str) -> dict:
-        """GET /api/cliente/{id} — contact data for a cliente."""
-        return await self._get_json(f"/api/cliente/{cliente_id}")
+    @staticmethod
+    def parse_next_page(next_token: Optional[str]) -> Optional[int]:
+        """
+        SOFTSEGUROS returns `next` as a bare token like "page=2" (not a full URL).
+        Parse the page number out of it. Returns None when there is no next page.
+        """
+        if not next_token:
+            return None
+        s = str(next_token)
+        # Handle "page=2", "?page=2", or even a full "...&page=2" just in case.
+        marker = "page="
+        idx = s.rfind(marker)
+        if idx == -1:
+            return None
+        tail = s[idx + len(marker):]
+        digits = ""
+        for ch in tail:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        return int(digits) if digits else None
