@@ -339,9 +339,22 @@ async def lifespan(app: FastAPI):
     from landa.scheduler import scheduler as _cobr_scheduler
     from cobranza.campaign_scheduler import register_cobranza_jobs
     register_cobranza_jobs(_cobr_scheduler)
+
+    # Phase 18: SOFTSEGUROS daily sync scheduler (registered after init_db).
+    try:
+        from softseguros.scheduler import setup_scheduler as setup_softseguros_scheduler
+        await setup_softseguros_scheduler(app)
+    except Exception:  # noqa: BLE001 — scheduler must never block app startup
+        logging.exception("Failed to start SOFTSEGUROS scheduler")
+
     print("Isomorph Office started!")
     yield
     shutdown_scheduler()
+    try:
+        from softseguros.scheduler import shutdown_scheduler as shutdown_softseguros_scheduler
+        shutdown_softseguros_scheduler(app)
+    except Exception:  # noqa: BLE001
+        pass
     print("Shutting down...")
 
 
