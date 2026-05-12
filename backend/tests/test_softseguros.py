@@ -210,20 +210,33 @@ async def test_softseg_04_retry_on_429_with_backoff(monkeypatch):
 
 # ── SOFTSEG-05: Classification ────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-05 not implemented yet")
-async def test_softseg_05_classify_ya_vencidos(async_client):
+async def test_softseg_05_classify_ya_vencidos():
     """classify_pagopoliza returns 'ya_vencidos' when fecha_pago < today AND comisionada=false."""
-    raise NotImplementedError(
-        "SOFTSEG-05: classify_pagopoliza must return 'ya_vencidos' for past-due unpaid cuotas"
-    )
+    from datetime import date, timedelta
+    from softseguros.classifier import classify_pagopoliza
+
+    today = date(2026, 5, 12)
+    # Past-due unpaid → ya_vencidos
+    assert classify_pagopoliza(today - timedelta(days=1), False, today) == "ya_vencidos"
+    assert classify_pagopoliza(today - timedelta(days=90), False, today) == "ya_vencidos"
+    # Past-due but comisionada=true → pagado wins
+    assert classify_pagopoliza(today - timedelta(days=1), True, today) == "pagado"
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-05 not implemented yet")
-async def test_softseg_05_classify_proximos_a_vencer(async_client):
+async def test_softseg_05_classify_proximos_a_vencer():
     """classify_pagopoliza returns 'proximos_a_vencer' when fecha_pago in [today, today+30] AND comisionada=false."""
-    raise NotImplementedError(
-        "SOFTSEG-05: classify_pagopoliza must return 'proximos_a_vencer' for cuotas in the next 30 days"
-    )
+    from datetime import date, timedelta
+    from softseguros.classifier import classify_pagopoliza
+
+    today = date(2026, 5, 12)
+    # In window
+    assert classify_pagopoliza(today, False, today) == "proximos_a_vencer"
+    assert classify_pagopoliza(today + timedelta(days=15), False, today) == "proximos_a_vencer"
+    assert classify_pagopoliza(today + timedelta(days=30), False, today) == "proximos_a_vencer"
+    # Beyond window → futuro
+    assert classify_pagopoliza(today + timedelta(days=31), False, today) == "futuro"
+    # In-window but comisionada=true → pagado
+    assert classify_pagopoliza(today + timedelta(days=5), True, today) == "pagado"
 
 
 # ── SOFTSEG-06: Three sync modes (onboarding, manual rate-limited) ────────────
