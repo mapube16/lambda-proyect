@@ -1,7 +1,7 @@
 """
 routes/debtors.py — REST API for SOFTSEGUROS-backed debtors (Phase 18, Plan 04).
 
-Prefix: /api/debtors. All endpoints require JWT (Depends(get_current_user)) except
+Prefix: /api/debtors. All endpoints require JWT (Depends(require_softseguros_enabled)) except
 GET /api/debtors/health. Every query on the `debtors` collection is tenant-scoped
 by user_id.
 
@@ -30,6 +30,25 @@ from database import get_db
 logger = logging.getLogger("routes.debtors")
 
 router = APIRouter(prefix="/api/debtors", tags=["debtors"])
+
+
+# ── Service authorization gate ────────────────────────────────────────────────
+# No service is enabled by default. Landa staff must explicitly authorize the
+# SOFTSEGUROS integration per client (sets company_voice.softseguros_enabled=True).
+# Mirrors the cobranza_enabled pattern in main.py.
+
+async def require_softseguros_enabled(current_user: dict = Depends(get_current_user)) -> dict:
+    """Reject with 403 unless this user's company_voice has softseguros_enabled=True."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    cv = await db.company_voice.find_one({"user_id": user_id}, {"softseguros_enabled": 1, "_id": 0})
+    if not cv or not cv.get("softseguros_enabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La integración SOFTSEGUROS no está habilitada para esta cuenta. Contacta a Landa.",
+        )
+    return current_user
+
 
 _RATE_LIMIT_SECONDS = 5 * 60
 _SYNCING_WINDOW = timedelta(minutes=45)
@@ -82,7 +101,7 @@ async def debtors_health():
 async def configure_softseguros(
     body: ConfigureSoftsegurosBody,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_softseguros_enabled),
 ):
     """Validate SOFTSEGUROS credentials, store them encrypted, and kick off an onboarding sync."""
     user_id = str(current_user["user_id"])
@@ -113,7 +132,7 @@ async def configure_softseguros(
 
 
 @router.get("/configure-softseguros")
-async def get_configure_softseguros(current_user: dict = Depends(get_current_user)):
+async def get_configure_softseguros(current_user: dict = Depends(require_softseguros_enabled)):
     """Return whether SOFTSEGUROS is configured. NEVER returns the password."""
     user_id = str(current_user["user_id"])
     db = get_db()
@@ -133,7 +152,7 @@ async def list_debtors(
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_softseguros_enabled),
 ):
     """Paginated list of this user's active SOFTSEGUROS debtors, optionally filtered by status."""
     user_id = str(current_user["user_id"])
@@ -162,7 +181,7 @@ async def list_debtors(
 # ── Sync status & logs ────────────────────────────────────────────────────────
 
 @router.get("/sync-status")
-async def sync_status(current_user: dict = Depends(get_current_user)):
+async def sync_status(current_user: dict = Depends(require_softseguros_enabled)):
     """Report the most recent sync, the next scheduled cron run, and whether a sync is running now."""
     user_id = str(current_user["user_id"])
     db = get_db()
@@ -221,7 +240,7 @@ async def sync_status(current_user: dict = Depends(get_current_user)):
 @router.get("/sync-logs")
 async def sync_logs(
     limit: int = Query(20, ge=1, le=100),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_softseguros_enabled),
 ):
     """Most recent SOFTSEGUROS sync logs for the current user."""
     user_id = str(current_user["user_id"])
@@ -237,7 +256,7 @@ async def sync_logs(
 async def sync_now(
     background_tasks: BackgroundTasks,
     response: Response,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_softseguros_enabled),
 ):
     """Trigger a manual delta sync. Rate-limited to 1 per 5 minutes per user (429 + Retry-After)."""
     user_id = str(current_user["user_id"])
@@ -267,7 +286,7 @@ async def sync_now(
 # ── Single debtor ─────────────────────────────────────────────────────────────
 
 @router.get("/{debtor_id}")
-async def get_debtor(debtor_id: str, current_user: dict = Depends(get_current_user)):
+async def get_debtor(debtor_id: str, current_user: dict = Depends(require_softseguros_enabled)):
     """Return a single debtor doc. 404 if it doesn't exist or belongs to another user."""
     user_id = str(current_user["user_id"])
     db = get_db()
@@ -284,7 +303,7 @@ async def get_debtor(debtor_id: str, current_user: dict = Depends(get_current_us
 # ── Pre-call freshness check ──────────────────────────────────────────────────
 
 @router.get("/{debtor_id}/verify-fresh")
-async def verify_fresh(debtor_id: str, current_user: dict = Depends(get_current_user)):
+async def verify_fresh(debtor_id: str, current_user: dict = Depends(require_softseguros_enabled)):
     """Pre-call freshness check for a SOFTSEGUROS debtor. Fail-open on provider errors."""
     user_id = str(current_user["user_id"])
     db = get_db()
