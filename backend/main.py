@@ -3480,6 +3480,50 @@ async def staff_disable_cobranza(
     )
     return {"ok": True, "client_id": client_id, "cobranza_enabled": False}
 
+
+@app.post("/api/staff/clients/{client_id}/softseguros/enable", status_code=200)
+async def staff_enable_softseguros(
+    client_id: str,
+    _staff=Depends(require_staff),
+):
+    """
+    POST /api/staff/clients/{client_id}/softseguros/enable
+    Staff-only (Landa): authorize the SOFTSEGUROS integration for a client.
+    Sets softseguros_enabled=True on the client's company_voice document.
+    No service is enabled by default — this is the only way to turn it on.
+    """
+    db = get_db()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    await db.company_voice.update_one(
+        {"user_id": client_id},
+        {
+            "$set": {
+                "softseguros_enabled": True,
+                "softseguros_enabled_at": now,
+                "updated_at": now,
+            },
+            "$setOnInsert": {"user_id": client_id, "created_at": now},
+        },
+        upsert=True,
+    )
+    return {"ok": True, "client_id": client_id, "softseguros_enabled": True}
+
+
+@app.post("/api/staff/clients/{client_id}/softseguros/disable", status_code=200)
+async def staff_disable_softseguros(
+    client_id: str,
+    _staff=Depends(require_staff),
+):
+    db = get_db()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    await db.company_voice.update_one(
+        {"user_id": client_id},
+        {"$set": {"softseguros_enabled": False, "updated_at": now}},
+    )
+    return {"ok": True, "client_id": client_id, "softseguros_enabled": False}
+
 # Servir archivos estáticos del frontend (build de Vite) — al final para no interceptar rutas API
 import pathlib
 frontend_dist = pathlib.Path(__file__).parent.parent / "frontend" / "dist"

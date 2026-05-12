@@ -41,11 +41,19 @@ async def async_client():
         yield client
 
 
-async def _register_and_login(client, email, password="testpass123"):
+async def _register_and_login(client, email, password="testpass123", enable_softseguros=True):
     resp = await client.post("/auth/register", json={"email": email, "password": password})
     assert resp.status_code in (200, 201), f"Register failed: {resp.text}"
     user = await database.get_user_by_email(email)
     assert user is not None
+    if enable_softseguros:
+        # No service is enabled by default — Landa staff authorizes it. The /api/debtors/*
+        # endpoints are gated by company_voice.softseguros_enabled.
+        await database.get_db().company_voice.update_one(
+            {"user_id": str(user["id"])},
+            {"$set": {"softseguros_enabled": True}, "$setOnInsert": {"user_id": str(user["id"])}},
+            upsert=True,
+        )
     from auth import create_access_token
     token = create_access_token(data={"sub": str(user["id"]), "role": user.get("role", "client")})
     return {"Authorization": f"Bearer {token}"}, str(user["id"])

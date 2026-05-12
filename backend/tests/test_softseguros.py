@@ -39,11 +39,20 @@ async def async_client():
 # which httpx won't persist over http://test — so we register, then mint a token
 # directly via auth.create_access_token (same as the app does).
 
-async def _register_and_login(client, email, password="testpass123"):
+async def _register_and_login(client, email, password="testpass123", enable_softseguros=True):
     resp = await client.post("/auth/register", json={"email": email, "password": password})
     assert resp.status_code in (200, 201), f"Register failed: {resp.text}"
     user = await database.get_user_by_email(email)
     assert user is not None
+    if enable_softseguros:
+        # No service is enabled by default — Landa staff authorizes it. Tests that
+        # exercise /api/debtors/* need the flag set; pass enable_softseguros=False
+        # to test the 403 gate.
+        await database.get_db().company_voice.update_one(
+            {"user_id": str(user["id"])},
+            {"$set": {"softseguros_enabled": True}, "$setOnInsert": {"user_id": str(user["id"])}},
+            upsert=True,
+        )
     from auth import create_access_token
     token = create_access_token(data={"sub": str(user["id"]), "role": user.get("role", "client")})
     return {"Authorization": f"Bearer {token}"}
@@ -745,3 +754,63 @@ async def test_softseg_health_no_auth(async_client):
     resp = await async_client.get("/api/debtors/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+# ── Service authorization gate (no service enabled by default) ────────────────
+
+async def test_softseguros_gate_blocks_when_not_enabled(async_client):
+    """A user WITHOUT company_voice.softseguros_enabled gets 403 on /api/debtors/*."""
+    headers = await _register_and_login(async_client, "unauthorized@e.com", enable_softseguros=False)
+    for method, path in [
+        ("GET", "/api/debtors"),
+        ("GET", "/api/debtors/configure-softseguros"),
+        ("GET", "/api/debtors/sync-status"),
+        ("POST", "/api/debtors/sync-now"),
+    ]:
+        resp = await async_client.request(method, path, headers=headers)
+        assert resp.status_code == 403, f"{method} {path} → {resp.status_code} (expected 403)"
+        assert "SOFTSEGUROS" in resp.json()["detail"]
+    # /health is exempt
+    h = await async_client.get("/api/debtors/health")
+    assert h.status_code == 200
+
+
+async def test_softseguros_gate_allows_when_enabled(async_client):
+    """Once the flag is set, the same endpoints respond normally (no 403)."""
+    headers = await _register_and_login(async_client, "authorized@e.com", enable_softseguros=True)
+    resp = await async_client.get("/api/debtors/configure-softseguros", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"configured": False, "configured_at": None}
+
+
+async def test_staff_can_enable_and_disable_softseguros(async_client):
+    """Landa staff toggles softseguros_enabled on a client's company_voice; gate follows."""
+    from auth import create_access_token
+    # client user (no flag yet)
+    client_headers = await _register_and_login(async_client, "client-x@e.com", enable_softseguros=False)
+    client_id = await _user_id_for_email("client-x@e.com")
+    # client is blocked
+    assert (await async_client.get("/api/debtors/configure-softseguros", headers=client_headers)).status_code == 403
+    # staff user
+    await async_client.post("/auth/register", json={"email": "staff@e.com", "password": "testpass123"})
+    staff_user = await database.get_user_by_email("staff@e.com")
+    staff_token = create_access_token(data={"sub": str(staff_user["id"]), "role": "staff"})
+    staff_headers = {"Authorization": f"Bearer {staff_token}"}
+    # staff enables
+    r = await async_client.post(f"/api/staff/clients/{client_id}/softseguros/enable", headers=staff_headers)
+    assert r.status_code == 200 and r.json()["softseguros_enabled"] is True
+    # client now allowed
+    assert (await async_client.get("/api/debtors/configure-softseguros", headers=client_headers)).status_code == 200
+    # staff disables
+    r = await async_client.post(f"/api/staff/clients/{client_id}/softseguros/disable", headers=staff_headers)
+    assert r.status_code == 200 and r.json()["softseguros_enabled"] is False
+    # client blocked again
+    assert (await async_client.get("/api/debtors/configure-softseguros", headers=client_headers)).status_code == 403
+
+
+async def test_non_staff_cannot_enable_softseguros(async_client):
+    """A plain client cannot call the staff enable endpoint (403)."""
+    client_headers = await _register_and_login(async_client, "sneaky@e.com", enable_softseguros=False)
+    sneaky_id = await _user_id_for_email("sneaky@e.com")
+    r = await async_client.post(f"/api/staff/clients/{sneaky_id}/softseguros/enable", headers=client_headers)
+    assert r.status_code == 403
