@@ -34,6 +34,27 @@ async def async_client():
         yield client
 
 
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+# /auth/login returns the JWT only as an httpOnly Secure cookie (not in the body),
+# which httpx won't persist over http://test — so we register, then mint a token
+# directly via auth.create_access_token (same as the app does).
+
+async def _register_and_login(client, email, password="testpass123"):
+    resp = await client.post("/auth/register", json={"email": email, "password": password})
+    assert resp.status_code in (200, 201), f"Register failed: {resp.text}"
+    user = await database.get_user_by_email(email)
+    assert user is not None
+    from auth import create_access_token
+    token = create_access_token(data={"sub": str(user["id"]), "role": user.get("role", "client")})
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _user_id_for_email(email):
+    user = await database.get_user_by_email(email)
+    assert user is not None
+    return str(user["id"])
+
+
 # ── SOFTSEG-01: Token Auth (header `Token`, not Bearer) ───────────────────────
 
 async def test_softseg_01_authenticate_post():
@@ -360,56 +381,223 @@ async def test_softseg_05_classify_proximos_a_vencer():
 
 # ── SOFTSEG-06: Three sync modes (onboarding, manual rate-limited) ────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-06 not implemented yet")
 async def test_softseg_06_configure_triggers_onboarding(async_client):
     """POST /api/debtors/configure-softseguros validates credentials and triggers onboarding sync in background."""
-    raise NotImplementedError(
-        "SOFTSEG-06: configure-softseguros must validate creds and kick off background onboarding sync"
-    )
+    import respx
+    from httpx import Response
+
+    headers = await _register_and_login(async_client, "ss_cfg@example.com")
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "tok-1"}))
+        # Onboarding sync (BackgroundTasks runs after response in ASGITransport): empty listing.
+        mock.get("/api/poliza/").mock(return_value=Response(200, json={
+            "count": 0, "next": None, "previous": None, "results": [],
+        }))
+        resp = await async_client.post(
+            "/api/debtors/configure-softseguros",
+            json={"username": "corredor@e.com", "password": "pw123"},
+            headers=headers,
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sync_started"] is True
+
+    db = database.get_db()
+    cred = await db.softseguros_credentials.find_one({})
+    assert cred is not None
+    assert "password" not in cred  # only password_encrypted
+    # an onboarding sync log should have been written by the background task
+    log = await db.softseguros_sync_logs.find_one({"mode": "onboarding"})
+    assert log is not None
+
+    # Bad creds → 400
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(401, json={"detail": "bad"}))
+        bad = await async_client.post(
+            "/api/debtors/configure-softseguros",
+            json={"username": "x", "password": "y"},
+            headers=headers,
+        )
+    assert bad.status_code == 400
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-06 not implemented yet")
 async def test_softseg_06_sync_now_rate_limit(async_client):
-    """POST /api/debtors/sync-now returns 429 when last manual sync was < 5 minutes ago for that user."""
-    raise NotImplementedError(
-        "SOFTSEG-06: sync-now must enforce 5-min rate limit per user (429 response)"
-    )
+    """POST /api/debtors/sync-now returns 429 with Retry-After when called twice within 5 minutes."""
+    import respx
+    from httpx import Response
+    from softseguros.credentials import save_credentials
+
+    headers = await _register_and_login(async_client, "ss_ratelimit@example.com")
+    user_id = await _user_id_for_email("ss_ratelimit@example.com")
+    db = database.get_db()
+    await save_credentials(db, user_id, "c@e.com", "pw")
+
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/").mock(return_value=Response(200, json={
+            "count": 0, "next": None, "previous": None, "results": [],
+        }))
+        r1 = await async_client.post("/api/debtors/sync-now", headers=headers)
+        assert r1.status_code == 200, r1.text
+        r2 = await async_client.post("/api/debtors/sync-now", headers=headers)
+    assert r2.status_code == 429
+    assert "Retry-After" in r2.headers
 
 
 # ── SOFTSEG-07: Pre-call freshness check with fail-open ───────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-07 not implemented yet")
 async def test_softseg_07_verify_fresh_already_paid(async_client):
-    """verify-fresh returns should_call=false + reason='already_paid' when comisionada=true; updates local status='pagado', is_active=false."""
-    raise NotImplementedError(
-        "SOFTSEG-07: verify-fresh must cancel call and mark pagado when SOFTSEGUROS comisionada=true"
-    )
+    """verify-fresh returns should_call=false + reason='already_paid' when estado_cartera='Pagada'; marks local pagado+inactive."""
+    import respx
+    from httpx import Response
+    from softseguros.credentials import save_credentials
+    from cobranza.debtor_crud import upsert_debtor_by_softseguros_poliza_id
+
+    headers = await _register_and_login(async_client, "ss_vp@example.com")
+    user_id = await _user_id_for_email("ss_vp@example.com")
+    db = database.get_db()
+    await save_credentials(db, user_id, "c@e.com", "pw")
+
+    await upsert_debtor_by_softseguros_poliza_id(db, user_id, 701, {
+        "nombre": "Ana", "telefono": "+5731070100", "monto": 50.0,
+        "vencimiento": "2020-01-01", "estado_cartera": "Pendiente por pagar",
+        "fecha_fin": "2020-01-01", "estado_poliza_nombre": "Vigente",
+        "status_softseguros": "ya_vencidos", "is_active": True, "total": 50.0,
+    })
+    debtor = await db.debtors.find_one({"user_id": user_id, "softseguros_poliza_id": 701})
+    debtor_id = str(debtor["_id"])
+
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/701").mock(return_value=Response(200, json={
+            "id": 701, "estado_cartera": "Pagada", "recaudado": True,
+            "fecha_fin": "2020-01-01", "total": 50.0, "estado_poliza_nombre": "Vigente",
+        }))
+        resp = await async_client.get(f"/api/debtors/{debtor_id}/verify-fresh", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["should_call"] is False
+    assert body["reason"] == "already_paid"
+
+    updated = await db.debtors.find_one({"user_id": user_id, "softseguros_poliza_id": 701})
+    assert updated["is_active"] is False
+    assert updated["status_softseguros"] == "pagado"
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-07 not implemented yet")
-async def test_softseg_07_verify_fresh_fail_open(async_client):
-    """verify-fresh returns should_call=true with warning when SOFTSEGUROS times out (fail-open)."""
-    raise NotImplementedError(
-        "SOFTSEG-07: verify-fresh must fail-open (should_call=true) on SOFTSEGUROS timeout/5xx"
-    )
+async def test_softseg_07_verify_fresh_fail_open(async_client, monkeypatch):
+    """verify-fresh returns should_call=true + warning when SOFTSEGUROS times out; local doc unchanged."""
+    import asyncio as _asyncio
+    import httpx
+    import respx
+    from httpx import Response
+    from softseguros.credentials import save_credentials
+    from cobranza.debtor_crud import upsert_debtor_by_softseguros_poliza_id
+
+    # Speed up tenacity exponential backoff between retries.
+    import tenacity.nap as _nap
+    monkeypatch.setattr(_nap, "sleep", lambda s: None)
+
+    async def _no_sleep(_s):
+        return None
+    monkeypatch.setattr("softseguros.adapter.asyncio.sleep", _no_sleep)
+
+    headers = await _register_and_login(async_client, "ss_fo@example.com")
+    user_id = await _user_id_for_email("ss_fo@example.com")
+    db = database.get_db()
+    await save_credentials(db, user_id, "c@e.com", "pw")
+
+    await upsert_debtor_by_softseguros_poliza_id(db, user_id, 702, {
+        "nombre": "Bob", "telefono": "+5731070200", "monto": 99.0,
+        "vencimiento": "2020-01-01", "estado_cartera": "Pendiente por pagar",
+        "fecha_fin": "2020-01-01", "estado_poliza_nombre": "Vigente",
+        "status_softseguros": "ya_vencidos", "is_active": True, "total": 99.0,
+    })
+    debtor = await db.debtors.find_one({"user_id": user_id, "softseguros_poliza_id": 702})
+    debtor_id = str(debtor["_id"])
+    before = dict(debtor)
+
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/702").mock(side_effect=httpx.TimeoutException("timeout"))
+        resp = await async_client.get(f"/api/debtors/{debtor_id}/verify-fresh", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["should_call"] is True
+    assert body.get("warning") == "verification_unavailable"
+
+    after = await db.debtors.find_one({"user_id": user_id, "softseguros_poliza_id": 702})
+    assert after["is_active"] == before["is_active"]
+    assert after["status_softseguros"] == before["status_softseguros"]
+    assert "last_verified" not in after
 
 
 # ── SOFTSEG-08: Filtered REST API + multi-tenant ──────────────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-08 not implemented yet")
 async def test_softseg_08_list_filtered_by_status(async_client):
-    """GET /api/debtors?status=ya_vencidos returns only docs where status_softseguros='ya_vencidos', is_active=true, scoped to current user_id."""
-    raise NotImplementedError(
-        "SOFTSEG-08: GET /api/debtors must filter by status_softseguros and current user_id"
-    )
+    """GET /api/debtors?status=ya_vencidos returns only docs where status_softseguros='ya_vencidos', is_active=true, scoped to user."""
+    from cobranza.debtor_crud import upsert_debtor_by_softseguros_poliza_id
+
+    headers = await _register_and_login(async_client, "ss_list@example.com")
+    user_id = await _user_id_for_email("ss_list@example.com")
+    db = database.get_db()
+
+    def _doc(pid, status, active=True, tel=None):
+        return {
+            "nombre": f"D{pid}", "telefono": tel or f"+57318{pid:05d}", "monto": 10.0,
+            "vencimiento": "2020-01-01", "status_softseguros": status, "is_active": active,
+            "total": 10.0, "estado_cartera": "Pendiente por pagar", "fecha_fin": "2020-01-01",
+            "estado_poliza_nombre": "Vigente",
+        }
+    await upsert_debtor_by_softseguros_poliza_id(db, user_id, 801, _doc(801, "ya_vencidos"))
+    await upsert_debtor_by_softseguros_poliza_id(db, user_id, 802, _doc(802, "ya_vencidos"))
+    await upsert_debtor_by_softseguros_poliza_id(db, user_id, 803, _doc(803, "proximos_a_vencer"))
+    await upsert_debtor_by_softseguros_poliza_id(db, user_id, 804, _doc(804, "ya_vencidos", active=False))
+
+    resp = await async_client.get("/api/debtors?status=ya_vencidos", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    statuses = {it["status_softseguros"] for it in body["items"]}
+    assert statuses == {"ya_vencidos"}
+    assert all(it["is_active"] for it in body["items"])
+    assert body["total"] == 2
+
+    resp2 = await async_client.get("/api/debtors?status=proximos_a_vencer", headers=headers)
+    assert resp2.status_code == 200
+    assert resp2.json()["total"] == 1
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-08 not implemented yet")
 async def test_softseg_08_tenant_isolation(async_client):
-    """GET /api/debtors/{id} returns 404 when the debtor belongs to a different user_id."""
-    raise NotImplementedError(
-        "SOFTSEG-08: GET /api/debtors/{id} must enforce tenant isolation (404 on cross-user access)"
-    )
+    """GET /api/debtors and /api/debtors/{id} never expose another user's data."""
+    from cobranza.debtor_crud import upsert_debtor_by_softseguros_poliza_id
+
+    headers_a = await _register_and_login(async_client, "ss_tenant_a@example.com")
+    headers_b = await _register_and_login(async_client, "ss_tenant_b@example.com")
+    uid_b = await _user_id_for_email("ss_tenant_b@example.com")
+    db = database.get_db()
+
+    await upsert_debtor_by_softseguros_poliza_id(db, uid_b, 901, {
+        "nombre": "B-only", "telefono": "+5731890101", "monto": 5.0, "vencimiento": "2020-01-01",
+        "status_softseguros": "ya_vencidos", "is_active": True, "total": 5.0,
+        "estado_cartera": "Pendiente por pagar", "fecha_fin": "2020-01-01", "estado_poliza_nombre": "Vigente",
+    })
+    b_debtor = await db.debtors.find_one({"user_id": uid_b, "softseguros_poliza_id": 901})
+    b_id = str(b_debtor["_id"])
+
+    # A lists → empty
+    resp = await async_client.get("/api/debtors", headers=headers_a)
+    assert resp.status_code == 200
+    assert resp.json()["items"] == []
+
+    # A tries to fetch B's debtor → 404
+    detail = await async_client.get(f"/api/debtors/{b_id}", headers=headers_a)
+    assert detail.status_code == 404
+
+    # B can see it
+    ok = await async_client.get(f"/api/debtors/{b_id}", headers=headers_b)
+    assert ok.status_code == 200
 
 
 # ── SOFTSEG-09: Soft-delete + idempotency ─────────────────────────────────────
@@ -498,17 +686,62 @@ async def test_softseg_09_sync_is_idempotent(async_client):
 
 # ── SOFTSEG-10: Sync status + onboarding state endpoints ──────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-10 not implemented yet")
 async def test_softseg_10_sync_status_endpoint(async_client):
-    """GET /api/debtors/sync-status returns last_sync_at, last_sync_mode, debtors_created/updated counts from softseguros_sync_logs."""
-    raise NotImplementedError(
-        "SOFTSEG-10: GET /api/debtors/sync-status must report last sync metadata from sync_logs"
-    )
+    """GET /api/debtors/sync-status returns last sync metadata from softseguros_sync_logs."""
+    from datetime import datetime, timezone
+
+    headers = await _register_and_login(async_client, "ss_status@example.com")
+    user_id = await _user_id_for_email("ss_status@example.com")
+    db = database.get_db()
+
+    # No sync yet → null fields, not syncing
+    empty = await async_client.get("/api/debtors/sync-status", headers=headers)
+    assert empty.status_code == 200
+    assert empty.json()["last_sync_at"] is None
+    assert empty.json()["is_syncing_now"] is False
+
+    now = datetime.now(timezone.utc)
+    await db.softseguros_sync_logs.insert_one({
+        "user_id": user_id, "mode": "manual", "started_at": now, "completed_at": now,
+        "status": "success", "debtors_created": 3, "debtors_updated": 1,
+        "debtors_marked_paid": 0, "debtors_marked_deleted": 0, "total_requests": 5,
+    })
+    resp = await async_client.get("/api/debtors/sync-status", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["last_sync_mode"] == "manual"
+    assert body["last_sync_status"] == "success"
+    assert body["debtors_created"] == 3
+    assert body["debtors_updated"] == 1
+    assert body["is_syncing_now"] is False
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-10 not implemented yet")
 async def test_softseg_10_configure_never_returns_password(async_client):
-    """GET /api/debtors/configure-softseguros returns {configured: bool, configured_at: datetime|null}; never returns password field."""
-    raise NotImplementedError(
-        "SOFTSEG-10: GET configure-softseguros must NEVER return the password field"
-    )
+    """GET /api/debtors/configure-softseguros returns {configured, configured_at}; never returns password."""
+    from softseguros.credentials import save_credentials
+
+    headers = await _register_and_login(async_client, "ss_nopw@example.com")
+    user_id = await _user_id_for_email("ss_nopw@example.com")
+    db = database.get_db()
+
+    # Before configuring
+    pre = await async_client.get("/api/debtors/configure-softseguros", headers=headers)
+    assert pre.status_code == 200
+    assert pre.json() == {"configured": False, "configured_at": None}
+
+    await save_credentials(db, user_id, "corredor@e.com", "topsecret")
+    resp = await async_client.get("/api/debtors/configure-softseguros", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["configured"] is True
+    assert body["configured_at"] is not None
+    assert "password" not in body
+    assert "password_encrypted" not in body
+    assert "topsecret" not in str(body)
+
+
+# /api/debtors/health works without auth.
+async def test_softseg_health_no_auth(async_client):
+    resp = await async_client.get("/api/debtors/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}

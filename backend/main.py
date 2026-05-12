@@ -3431,6 +3431,10 @@ app.include_router(_vapi_router)
 from cobranza.voice_router import router as voice_router
 app.include_router(voice_router)
 
+# ── Phase 18: SOFTSEGUROS debtors REST routes ────────────────────────────────
+from routes.debtors import router as debtors_router
+app.include_router(debtors_router)
+
 
 # ── Phase 17: Staff endpoint to enable cobranza for a client ─────────────────
 
