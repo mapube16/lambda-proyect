@@ -61,6 +61,15 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.debtors.create_index([("user_id", 1), ("telefono", 1)], unique=True)
     # ── Phase 18: SOFTSEGUROS credentials per user ───────────────────────────
     await db.softseguros_credentials.create_index("user_id", unique=True)
+    # ── Phase 18: SOFTSEGUROS sync engine indexes ────────────────────────────
+    # Idempotency: a póliza id maps to exactly one debtor per user.
+    # sparse=True so Phase 17 manual debtors (no softseguros_poliza_id) are unaffected.
+    await db.debtors.create_index(
+        [("user_id", 1), ("softseguros_poliza_id", 1)],
+        unique=True, sparse=True,
+    )
+    await db.softseguros_sync_state.create_index("user_id", unique=True)
+    await db.softseguros_sync_logs.create_index([("user_id", 1), ("completed_at", -1)])
     # ── Email OAuth + Events ──────────────────────────────────────────────────
     await db.email_events.create_index([("user_id", 1), ("timestamp", -1)])
     await db.email_events.create_index("message_id")
