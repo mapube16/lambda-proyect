@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: milestone
 status: planning
-stopped_at: Completed 18-01-PLAN.md
-last_updated: "2026-05-12T16:10:58.759Z"
-last_activity: "2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11"
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-05-12T17:00:00.000Z"
+last_activity: "2026-05-12 — Phase 18 Plan 02 complete: SoftSegurosAdapter + Fernet credentials (5 stubs PASS, 15 stay XFAIL)"
 progress:
   total_phases: 18
   completed_phases: 6
   total_plans: 48
-  completed_plans: 40
-  percent: 44
+  completed_plans: 41
+  percent: 45
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-17)
 ## Current Position
 
 Phase: 18 of 18 (SOFTSEGUROS Deudores Sync)
-Plan: 02 of 05
-Status: Executing (18-01 complete, 18-02 next)
-Last activity: 2026-05-12 — Phase 18 Plan 01 complete: 20 xfail stubs for SOFTSEG-01..10
+Plan: 03 of 05
+Status: Executing (18-02 complete, 18-03 next)
+Last activity: 2026-05-12 — Phase 18 Plan 02 complete: SoftSegurosAdapter + Fernet credentials
 
-Progress: [████░░░░░░] 44%
+Progress: [████░░░░░░] 45%
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [████░░░░░░] 44%
 | Phase 17-voice-cobranza-agent P07 | 9min | 2 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P08 | 8min | 3 tasks | 4 files |
 | Phase 18-softseguros-sync P01 | 3min | 1 tasks | 1 files |
+| Phase 18-softseguros-sync P02 | ~12min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -151,6 +152,12 @@ Recent decisions affecting current work:
 - [Phase 17-07]: CustomEvent bridge (cobr:debtor_update) preferred over store coupling — CobranzaTab is self-contained with no store mutations
 - [Phase 17-07]: Section switcher uses display:none for leads panel when cobranza active — avoids remount and preserves leads scroll position
 - [Phase 18-softseguros-sync]: strict=False xfail markers + lazy main import + self-contained reset_db fixture — mirrors Phase 16/17 scaffold pattern
+- [Phase 18-02]: credentials.py fails-fast at module import if SOFTSEGUROS_ENCRYPTION_KEY missing — prevents silent misconfig
+- [Phase 18-02]: SoftSegurosAdapter constructor takes explicit username/password/base_url (no env reads inside) — testable + multi-tenant safe
+- [Phase 18-02]: 401 re-auth handled inside _request body (not via tenacity) — exactly one attempt, no infinite loop risk
+- [Phase 18-02]: 429 handling sleeps Retry-After then raises SoftSegurosRateLimitError to drive tenacity exponential backoff — composed retry strategy
+- [Phase 18-02]: Authorization header is `Token <x>` (Django REST Framework), NEVER Bearer — verified by test_softseg_01_header_uses_token_not_bearer
+- [Phase 18-02]: conftest.py seeds SOFTSEGUROS_ENCRYPTION_KEY via os.environ.setdefault BEFORE any softseguros.* import — only way to satisfy fail-fast contract
 
 ### Pending Todos
 
@@ -163,6 +170,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-12T16:10:57.412Z
-Stopped at: Completed 18-01-PLAN.md
+Last session: 2026-05-12T17:00:00.000Z
+Stopped at: Completed 18-02-PLAN.md
 Resume file: None
