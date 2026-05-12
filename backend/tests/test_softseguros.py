@@ -127,30 +127,149 @@ async def test_softseg_02_get_credentials_decrypts(async_client):
 
 # ── SOFTSEG-03: Fetch + enrich pagopoliza with cliente ────────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-03 not implemented yet")
-async def test_softseg_03_list_pagopoliza_paginates(async_client):
-    """adapter.list_pagopoliza(page=1) hits ?page=N and returns dict with 'results' array."""
-    raise NotImplementedError(
-        "SOFTSEG-03: list_pagopoliza must paginate with ?page=N (10/page fixed) and return results array"
-    )
+# NOTE: /api/pagopoliza/ returned 504 in the live smoke test — the real model is
+# /api/poliza/, which already embeds all cliente_* fields (no separate cliente fetch).
+async def test_softseg_03_list_polizas_paginates(async_client):
+    """adapter.list_polizas(page=N) hits /api/poliza/?page=N and returns the paginated dict."""
+    import respx
+    from httpx import Response
+    from softseguros.adapter import SoftSegurosAdapter
+
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+
+        def _side_effect(request):
+            page = request.url.params.get("page", "1")
+            if page == "1":
+                return Response(200, json={
+                    "count": 12, "next": "page=2", "previous": None,
+                    "results": [{"id": i} for i in range(1, 11)],
+                })
+            return Response(200, json={
+                "count": 12, "next": None, "previous": "page=1",
+                "results": [{"id": 11}, {"id": 12}],
+            })
+
+        mock.get("/api/poliza/").mock(side_effect=_side_effect)
+
+        adapter = SoftSegurosAdapter("u", "p", base_url=base)
+        try:
+            p1 = await adapter.list_polizas(page=1)
+            assert isinstance(p1, dict)
+            assert isinstance(p1["results"], list) and len(p1["results"]) == 10
+            assert adapter.parse_next_page(p1["next"]) == 2
+            p2 = await adapter.list_polizas(page=2)
+            assert len(p2["results"]) == 2
+            assert adapter.parse_next_page(p2["next"]) is None
+        finally:
+            await adapter.close()
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-03 not implemented yet")
 async def test_softseg_03_enrich_with_cliente(async_client):
-    """Sync engine enriches each pagopoliza with cliente data via /api/poliza/{id} → /api/cliente/{id}."""
-    raise NotImplementedError(
-        "SOFTSEG-03: sync must enrich pagopoliza by following poliza → cliente"
-    )
+    """Each póliza already embeds cliente_* fields; run_sync maps them onto the debtor doc."""
+    import respx
+    from httpx import Response
+    import database
+    from softseguros.credentials import save_credentials
+    from softseguros.sync import run_sync
+
+    db = database.get_db()
+    await save_credentials(db, user_id="u1", username="c@e.com", password="pw")
+
+    poliza = {
+        "id": 501, "numero_poliza": "POL-501", "cliente": 99,
+        "cliente_numero_documento": "123456", "cliente_nombres": "Ana", "cliente_apellidos": "Pérez",
+        "cliente_celular": "+573001112233", "cliente_email": "ana@cli.com",
+        "aseguradora_nit": "900123", "ramo_nombre": "Autos", "ramo_global_nombre": "Vehículos",
+        "vendedores_nombre": "Vendor X", "estado_poliza_nombre": "Vigente",
+        "estado_cartera": "Pendiente por pagar", "prima": 100.0, "total": 120.0, "total_pagado": None,
+        "recaudado": False, "fecha_inicio": "2026-01-01", "fecha_fin": "2020-01-01",
+        "fecha_limite_pago": None, "periodicidad": "Anual", "comicionada": False,
+    }
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/").mock(return_value=Response(200, json={
+            "count": 1, "next": None, "previous": None, "results": [poliza],
+        }))
+        await run_sync(db, "u1", mode="onboarding")
+
+    doc = await db.debtors.find_one({"user_id": "u1", "softseguros_poliza_id": 501})
+    assert doc is not None
+    assert doc["nombre"] == "Ana Pérez"
+    assert doc["telefono"] == "+573001112233"
+    assert doc["cliente_email"] == "ana@cli.com"
+    assert doc["cliente_documento"] == "123456"
+    assert doc["numero_poliza"] == "POL-501"
+    assert doc["softseguros_cliente_id"] == 99
+    assert doc["status_softseguros"] == "ya_vencidos"
+    assert doc["source"] == "softseguros"
+    # Phase 17 invariants seeded.
+    assert doc["estado"] == "pendiente" and doc["intentos"] == 0
 
 
 # ── SOFTSEG-04: Concurrency control + retry resilience ────────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-04 not implemented yet")
-async def test_softseg_04_semaphore_limits_concurrency(async_client):
-    """Sync respects asyncio.Semaphore(5) — never more than 5 concurrent SOFTSEGUROS requests."""
-    raise NotImplementedError(
-        "SOFTSEG-04: sync must cap concurrency at 5 via asyncio.Semaphore"
-    )
+async def test_softseg_04_semaphore_limits_concurrency(async_client, monkeypatch):
+    """run_sync never has more than 5 SOFTSEGUROS HTTP requests in flight at once."""
+    import asyncio as _asyncio
+    import respx
+    from httpx import Response
+    import database
+    from softseguros.credentials import save_credentials
+    from softseguros.sync import run_sync
+
+    db = database.get_db()
+    await save_credentials(db, user_id="u1", username="c@e.com", password="pw")
+
+    # 30 pólizas / 10 per page = 3 pages. Make each /api/poliza/ response slow so
+    # concurrent requests overlap, and record the high-water mark of in-flight calls.
+    in_flight = {"now": 0, "max": 0}
+    lock = _asyncio.Lock()
+
+    async def _enter():
+        async with lock:
+            in_flight["now"] += 1
+            in_flight["max"] = max(in_flight["max"], in_flight["now"])
+
+    async def _exit():
+        async with lock:
+            in_flight["now"] -= 1
+
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+
+        # respx side_effect can be a coroutine function.
+        async def _poliza_side_effect(request):
+            await _enter()
+            try:
+                await _asyncio.sleep(0.02)
+            finally:
+                await _exit()
+            page = int(request.url.params.get("page", "1"))
+            results = [{
+                "id": (page - 1) * 10 + i,
+                "estado_cartera": "Pendiente por pagar",
+                "fecha_fin": "2020-01-01", "fecha_limite_pago": None,
+                "recaudado": False, "total": 50.0,
+                "cliente_celular": f"+5731{(page - 1) * 10 + i:05d}",
+                "cliente_nombres": "X", "cliente_apellidos": "Y",
+            } for i in range(1, 11)]
+            return Response(200, json={
+                "count": 30,
+                "next": ("page=%d" % (page + 1)) if page < 3 else None,
+                "previous": None, "results": results,
+            })
+
+        mock.get("/api/poliza/").mock(side_effect=_poliza_side_effect)
+        await run_sync(db, "u1", mode="onboarding")
+
+    assert in_flight["max"] <= 5, f"concurrency exceeded 5: peak={in_flight['max']}"
+    assert in_flight["max"] >= 1
+    # All 30 pólizas persisted.
+    assert await db.debtors.count_documents({"user_id": "u1", "source": "softseguros"}) == 30
 
 
 async def test_softseg_04_retry_on_429_with_backoff(monkeypatch):
@@ -295,20 +414,86 @@ async def test_softseg_08_tenant_isolation(async_client):
 
 # ── SOFTSEG-09: Soft-delete + idempotency ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-09 not implemented yet")
+def _vencido_poliza(pid: int, **over) -> dict:
+    base = {
+        "id": pid, "numero_poliza": f"POL-{pid}", "cliente": pid * 10,
+        "cliente_numero_documento": str(pid), "cliente_nombres": "N", "cliente_apellidos": "A",
+        "cliente_celular": f"+5730000{pid:04d}", "cliente_email": "n@a.com", "aseguradora_nit": "900",
+        "ramo_nombre": "R", "ramo_global_nombre": "RG", "vendedores_nombre": "V",
+        "estado_poliza_nombre": "Vigente", "estado_cartera": "Pendiente por pagar",
+        "prima": 10.0, "total": 50.0, "total_pagado": None, "recaudado": False,
+        "fecha_inicio": "2026-01-01", "fecha_fin": "2020-01-01", "fecha_limite_pago": None,
+        "periodicidad": "Anual", "comicionada": False,
+    }
+    base.update(over)
+    return base
+
+
 async def test_softseg_09_soft_delete_on_404(async_client):
-    """When pagopoliza disappears from listing, sync verifies via single GET; on 404 marks local is_active=false, status_softseguros='eliminado' (never hard-delete)."""
-    raise NotImplementedError(
-        "SOFTSEG-09: missing pagopoliza must be soft-deleted (is_active=false, status='eliminado'), never hard-deleted"
-    )
+    """A cron_daily sync: a póliza now returning 404 (or 'Pagada') soft-deletes the local debtor — never hard-delete."""
+    import respx
+    from httpx import Response
+    import database
+    from softseguros.credentials import save_credentials
+    from softseguros.sync import run_sync
+
+    db = database.get_db()
+    await save_credentials(db, user_id="u1", username="c@e.com", password="pw")
+
+    base = "https://app.softseguros.com"
+    # First (onboarding) sync: two pólizas 301 & 302 → two active debtors.
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/").mock(return_value=Response(200, json={
+            "count": 2, "next": None, "previous": None,
+            "results": [_vencido_poliza(301), _vencido_poliza(302)],
+        }))
+        await run_sync(db, "u1", mode="onboarding")
+    assert await db.debtors.count_documents({"user_id": "u1", "is_active": True}) == 2
+
+    # Second (cron_daily) sync: listing now only returns 301; 302 → 404 on GET /api/poliza/302.
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/", params={"page": "1"}).mock(return_value=Response(200, json={
+            "count": 2, "next": None, "previous": None, "results": [_vencido_poliza(301)],
+        }))
+        mock.get("/api/poliza/302").mock(return_value=Response(404, json={"detail": "not found"}))
+        await run_sync(db, "u1", mode="cron_daily")
+
+    doc302 = await db.debtors.find_one({"user_id": "u1", "softseguros_poliza_id": 302})
+    assert doc302 is not None, "soft-delete must NOT hard-delete the document"
+    assert doc302["is_active"] is False
+    assert doc302["status_softseguros"] == "eliminado"
+    doc301 = await db.debtors.find_one({"user_id": "u1", "softseguros_poliza_id": 301})
+    assert doc301["is_active"] is True
 
 
-@pytest.mark.xfail(strict=False, reason="SOFTSEG-09 not implemented yet")
 async def test_softseg_09_sync_is_idempotent(async_client):
-    """Multiple syncs for the same pagopoliza_id are idempotent — unique index (user_id, softseguros_pagopoliza_id) prevents duplicates."""
-    raise NotImplementedError(
-        "SOFTSEG-09: sync must be idempotent — unique (user_id, softseguros_pagopoliza_id) index"
-    )
+    """Running run_sync twice over the same data yields exactly one debtor doc per poliza_id."""
+    import respx
+    from httpx import Response
+    import database
+    from softseguros.credentials import save_credentials
+    from softseguros.sync import run_sync
+
+    db = database.get_db()
+    await save_credentials(db, user_id="u1", username="c@e.com", password="pw")
+
+    base = "https://app.softseguros.com"
+    polizas = [_vencido_poliza(401), _vencido_poliza(402)]
+
+    def _run_once():
+        return {"count": 2, "next": None, "previous": None, "results": polizas}
+
+    for _ in range(2):
+        with respx.mock(base_url=base, assert_all_called=False) as mock:
+            mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+            mock.get("/api/poliza/").mock(return_value=Response(200, json=_run_once()))
+            await run_sync(db, "u1", mode="onboarding")
+
+    assert await db.debtors.count_documents({"user_id": "u1", "softseguros_poliza_id": 401}) == 1
+    assert await db.debtors.count_documents({"user_id": "u1", "softseguros_poliza_id": 402}) == 1
+    assert await db.debtors.count_documents({"user_id": "u1", "source": "softseguros"}) == 2
 
 
 # ── SOFTSEG-10: Sync status + onboarding state endpoints ──────────────────────
