@@ -143,9 +143,14 @@ type TabKey = 'proximos' | 'vencidos';
 
 export function DebtorsSoftSegurosTab() {
   const hook = useSoftSegurosDebtors();
-  const { setup, debtors, syncStatus, loading, error, triggerSync, refetch } = hook;
+  const { setup, debtors, syncStatus, loading, error, triggerSync, reimport, refetch } = hook;
   const [tab, setTab] = useState<TabKey>('proximos');
   const [now, setNow] = useState(Date.now());
+  // Re-import panel state
+  const [showReimport, setShowReimport] = useState(false);
+  const [riVencidos, setRiVencidos] = useState(true);
+  const [riProximos, setRiProximos] = useState(true);
+  const [riSubmitting, setRiSubmitting] = useState(false);
 
   // Re-render every second while rate-limited so the countdown updates.
   useEffect(() => {
@@ -160,6 +165,14 @@ export function DebtorsSoftSegurosTab() {
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [refetch]);
+
+  // Open the re-import panel pre-filled with the current filters.
+  useEffect(() => {
+    if (showReimport) {
+      setRiVencidos(setup.importFilters.include_vencidos);
+      setRiProximos(setup.importFilters.include_proximos);
+    }
+  }, [showReimport, setup.importFilters]);
 
   // Track when the rate-limit error first appeared to compute the countdown.
   const [rateLimitStart, setRateLimitStart] = useState<number | null>(null);
@@ -209,12 +222,24 @@ export function DebtorsSoftSegurosTab() {
 
   const syncing = !!syncStatus?.is_syncing_now;
   const syncDisabled = syncing || countdown > 0;
+  const { include_vencidos: hasVencidos, include_proximos: hasProximos } = setup.importFilters;
+  const riNoneSelected = !riVencidos && !riProximos;
 
-  const tabs: { key: TabKey; label: string; list: SoftSegurosDebtor[]; empty: string }[] = [
-    { key: 'proximos', label: `Próximos a vencer (${debtors.proximosAVencer.length})`, list: debtors.proximosAVencer, empty: 'No hay deudores próximos a vencer.' },
-    { key: 'vencidos', label: `Ya vencidos (${debtors.yaVencidos.length})`, list: debtors.yaVencidos, empty: 'No hay deudores vencidos.' },
+  const allTabs: { key: TabKey; label: string; list: SoftSegurosDebtor[]; empty: string; imported: boolean }[] = [
+    { key: 'proximos', label: `Próximos a vencer (${debtors.proximosAVencer.length})`, list: debtors.proximosAVencer, empty: 'No hay deudores próximos a vencer.', imported: hasProximos },
+    { key: 'vencidos', label: `Ya vencidos (${debtors.yaVencidos.length})`, list: debtors.yaVencidos, empty: 'No hay deudores vencidos.', imported: hasVencidos },
   ];
-  const active = tabs.find(t => t.key === tab) ?? tabs[0];
+  const tabs = allTabs.filter(t => t.imported);
+  // If the currently-selected tab isn't imported, fall back to the first imported one.
+  const active = tabs.find(t => t.key === tab) ?? tabs[0] ?? allTabs[0];
+
+  const doReimport = async () => {
+    if (riNoneSelected) return;
+    setRiSubmitting(true);
+    const ok = await reimport({ include_vencidos: riVencidos, include_proximos: riProximos });
+    setRiSubmitting(false);
+    if (ok) setShowReimport(false);
+  };
 
   return (
     <div style={{ background: C.s1, border: `1px solid ${C.cyanBdr}`, padding: '16px 18px' }}>
@@ -228,6 +253,19 @@ export function DebtorsSoftSegurosTab() {
           {error && error.code !== 'rate_limited' && (
             <span style={{ fontFamily: C.IN, fontSize: 11.5, color: C.pink }}>{error.message}</span>
           )}
+          <button
+            onClick={() => setShowReimport(v => !v)}
+            disabled={syncing}
+            title="Re-importar la cartera con otros filtros"
+            style={{
+              height: 30, padding: '0 14px', border: `1px solid rgba(255,255,255,0.1)`,
+              background: 'transparent', color: syncing ? C.muted : C.muted,
+              cursor: syncing ? 'not-allowed' : 'pointer',
+              fontFamily: C.SG, fontWeight: 600, fontSize: 11.5, letterSpacing: '0.05em',
+            }}
+          >
+            Re-importar…
+          </button>
           <button
             onClick={() => { void triggerSync(); }}
             disabled={syncDisabled}
@@ -244,23 +282,83 @@ export function DebtorsSoftSegurosTab() {
         </div>
       </div>
 
+      {/* Re-import panel */}
+      {showReimport && (
+        <div style={{ background: C.s2, border: `1px solid ${C.cyanBdr}`, padding: '14px 16px', marginBottom: 14 }}>
+          <div style={{ ...lbl(C.muted, 9), marginBottom: 8 }}>RE-IMPORTAR CON OTROS FILTROS</div>
+          <p style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted, margin: '0 0 10px' }}>
+            Vuelve a escanear toda la cartera (puede tardar varios minutos). El historial de
+            llamadas de los deudores actuales se conserva — los que ya no coincidan con los
+            filtros se ocultan pero no se borran.
+          </p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: C.IN, fontSize: 12.5, color: C.text, cursor: 'pointer', marginBottom: 6 }}>
+            <input type="checkbox" checked={riVencidos} disabled={riSubmitting} onChange={e => setRiVencidos(e.target.checked)} />
+            Ya vencidos (deuda en mora)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: C.IN, fontSize: 12.5, color: C.text, cursor: 'pointer', marginBottom: 10 }}>
+            <input type="checkbox" checked={riProximos} disabled={riSubmitting} onChange={e => setRiProximos(e.target.checked)} />
+            Próximos a vencer (próximos 30 días)
+          </label>
+          {riNoneSelected && (
+            <div style={{ fontFamily: C.IN, fontSize: 11.5, color: C.orange, marginBottom: 8 }}>
+              Selecciona al menos un tipo de deudor.
+            </div>
+          )}
+          {error?.code === 'rate_limited' && (
+            <div style={{ fontFamily: C.IN, fontSize: 11.5, color: C.orange, marginBottom: 8 }}>
+              {countdown > 0 ? `Espera ${countdown}s antes de re-importar.` : error.message}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => { void doReimport(); }}
+              disabled={riSubmitting || riNoneSelected || countdown > 0}
+              style={{
+                height: 30, padding: '0 16px', border: 'none',
+                background: riSubmitting || riNoneSelected || countdown > 0 ? C.s3 : C.cyan,
+                color: C.bg, fontFamily: C.SG, fontWeight: 700, fontSize: 11.5, letterSpacing: '0.05em',
+                cursor: riSubmitting || riNoneSelected || countdown > 0 ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {riSubmitting ? 'Iniciando…' : 'Re-importar ahora'}
+            </button>
+            <button
+              onClick={() => setShowReimport(false)}
+              disabled={riSubmitting}
+              style={{
+                height: 30, padding: '0 14px', border: `1px solid rgba(255,255,255,0.1)`,
+                background: 'transparent', color: C.muted, fontFamily: C.SG, fontWeight: 600, fontSize: 11.5,
+                cursor: riSubmitting ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        {tabs.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            style={{
-              padding: '7px 14px', border: `1px solid ${t.key === tab ? C.cyanBdr : 'rgba(255,255,255,0.06)'}`,
-              background: t.key === tab ? C.cyanBg : 'transparent',
-              color: t.key === tab ? C.cyan : C.muted,
-              fontFamily: C.SG, fontWeight: 600, fontSize: 11.5, cursor: 'pointer',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {tabs.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+          {tabs.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              style={{
+                padding: '7px 14px', border: `1px solid ${t.key === active.key ? C.cyanBdr : 'rgba(255,255,255,0.06)'}`,
+                background: t.key === active.key ? C.cyanBg : 'transparent',
+                color: t.key === active.key ? C.cyan : C.muted,
+                fontFamily: C.SG, fontWeight: 600, fontSize: 11.5, cursor: 'pointer',
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {tabs.length === 1 && (
+        <div style={{ ...lbl(C.muted, 9), marginBottom: 10 }}>{active.label}</div>
+      )}
 
       {/* List */}
       {loading

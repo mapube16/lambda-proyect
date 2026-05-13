@@ -70,19 +70,31 @@ def _serialize(doc: Optional[dict]) -> Optional[dict]:
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
+class ImportFilters(BaseModel):
+    """Which kinds of debtor the user wants imported. At least one must be True
+    (the sync engine falls back to both if neither is)."""
+    include_vencidos: bool = True
+    include_proximos: bool = True
+
+
 class ConfigureSoftsegurosBody(BaseModel):
     username: str
     password: str
+    import_filters: Optional[ImportFilters] = None
+
+
+class ReimportBody(BaseModel):
+    import_filters: ImportFilters
 
 
 # ── Background-safe sync runner ───────────────────────────────────────────────
 
-async def _safe_run_sync(user_id: str, mode: str) -> None:
+async def _safe_run_sync(user_id: str, mode: str, import_filters: Optional[dict] = None) -> None:
     """Run run_sync, swallowing & logging all exceptions (BackgroundTasks doesn't surface them)."""
     try:
         from softseguros.sync import run_sync
         db = get_db()
-        await run_sync(db, user_id, mode=mode)
+        await run_sync(db, user_id, mode=mode, import_filters=import_filters)
     except Exception:  # noqa: BLE001
         logger.exception("background softseguros sync failed user_id=%s mode=%s", user_id, mode)
 
@@ -127,21 +139,33 @@ async def configure_softseguros(
             pass
 
     await save_credentials(db, user_id, body.username, body.password)
-    background_tasks.add_task(_safe_run_sync, user_id, "onboarding")
+    filters = body.import_filters.model_dump() if body.import_filters is not None else None
+    background_tasks.add_task(_safe_run_sync, user_id, "onboarding", filters)
     return {"sync_started": True}
+
+
+_DEFAULT_FILTERS = {"include_vencidos": True, "include_proximos": True}
 
 
 @router.get("/configure-softseguros")
 async def get_configure_softseguros(current_user: dict = Depends(require_softseguros_enabled)):
-    """Return whether SOFTSEGUROS is configured. NEVER returns the password."""
+    """Return whether SOFTSEGUROS is configured + the active import filters. NEVER returns the password."""
     user_id = str(current_user["user_id"])
     db = get_db()
     doc = await db.softseguros_credentials.find_one(
         {"user_id": user_id}, {"configured_at": 1, "_id": 0}
     )
+    state = await db.softseguros_sync_state.find_one(
+        {"user_id": user_id}, {"import_filters": 1, "_id": 0}
+    )
+    import_filters = (state or {}).get("import_filters") or dict(_DEFAULT_FILTERS)
     if not doc:
-        return {"configured": False, "configured_at": None}
-    return {"configured": True, "configured_at": doc.get("configured_at")}
+        return {"configured": False, "configured_at": None, "import_filters": import_filters}
+    return {
+        "configured": True,
+        "configured_at": doc.get("configured_at"),
+        "import_filters": import_filters,
+    }
 
 
 # ── List debtors ──────────────────────────────────────────────────────────────
@@ -281,6 +305,51 @@ async def sync_now(
 
     background_tasks.add_task(_safe_run_sync, user_id, "manual")
     return {"sync_started": True}
+
+
+# ── Re-import with new filters ────────────────────────────────────────────────
+
+@router.post("/reimport")
+async def reimport(
+    body: ReimportBody,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_softseguros_enabled),
+):
+    """
+    Re-import the SOFTSEGUROS cartera with new filters. Full re-scan, but it does
+    NOT delete anything: existing debtor docs (and their Phase-17 call history) are
+    upserted; pólizas that no longer match the new filters keep their doc but get
+    is_active=False. Rate-limited like a manual sync (1 per 5 min).
+    """
+    user_id = str(current_user["user_id"])
+    db = get_db()
+
+    # Must have credentials configured.
+    creds_doc = await db.softseguros_credentials.find_one({"user_id": user_id}, {"_id": 1})
+    if not creds_doc:
+        raise HTTPException(status_code=400, detail="SOFTSEGUROS no configurado para esta cuenta")
+
+    # Rate-limit (share the manual-sync window — both are heavy).
+    last_heavy = await db.softseguros_sync_logs.find_one(
+        {"user_id": user_id, "mode": {"$in": ["manual", "reimport"]}}, sort=[("started_at", -1)]
+    )
+    if last_heavy:
+        started_at = last_heavy.get("started_at")
+        if started_at is not None:
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            elapsed = (_utcnow() - started_at).total_seconds()
+            if elapsed < _RATE_LIMIT_SECONDS:
+                retry_after = int(_RATE_LIMIT_SECONDS - elapsed) + 1
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Re-importación demasiado frecuente, intente más tarde",
+                    headers={"Retry-After": str(retry_after)},
+                )
+
+    filters = body.import_filters.model_dump()
+    background_tasks.add_task(_safe_run_sync, user_id, "reimport", filters)
+    return {"sync_started": True, "import_filters": filters}
 
 
 # ── Single debtor ─────────────────────────────────────────────────────────────

@@ -24,12 +24,19 @@ export interface SoftSegurosDebtor {
   is_active?: boolean;
 }
 
+export interface SoftSegurosImportFilters {
+  include_vencidos: boolean;
+  include_proximos: boolean;
+}
+
 export interface SoftSegurosSetupState {
   /** Whether Landa has authorized the SOFTSEGUROS integration for this account.
    *  null = not yet known. false = 403 from the gate (service not enabled). */
   authorized: boolean | null;
   configured: boolean;
   configuredAt: string | null;
+  /** The import filters in effect (what kinds of debtor were imported). */
+  importFilters: SoftSegurosImportFilters;
 }
 
 export interface SoftSegurosSyncStatus {
@@ -54,15 +61,20 @@ export interface UseSoftSegurosDebtorsResult {
   syncStatus: SoftSegurosSyncStatus | null;
   loading: boolean;
   error: SoftSegurosError | null;
-  configure: (username: string, password: string) => Promise<boolean>;
+  configure: (username: string, password: string, filters?: SoftSegurosImportFilters) => Promise<boolean>;
   triggerSync: () => Promise<void>;
+  reimport: (filters: SoftSegurosImportFilters) => Promise<boolean>;
   refetch: () => Promise<void>;
 }
+
+const DEFAULT_FILTERS: SoftSegurosImportFilters = { include_vencidos: true, include_proximos: true };
 
 const POLL_MS = 3000;
 
 export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
-  const [setup, setSetup] = useState<SoftSegurosSetupState>({ authorized: null, configured: false, configuredAt: null });
+  const [setup, setSetup] = useState<SoftSegurosSetupState>({
+    authorized: null, configured: false, configuredAt: null, importFilters: { ...DEFAULT_FILTERS },
+  });
   const [proximosAVencer, setProximosAVencer] = useState<SoftSegurosDebtor[]>([]);
   const [yaVencidos, setYaVencidos] = useState<SoftSegurosDebtor[]>([]);
   const [syncStatus, setSyncStatus] = useState<SoftSegurosSyncStatus | null>(null);
@@ -84,21 +96,30 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     try {
       const r = await apiFetch('/api/debtors/configure-softseguros');
       if (r.status === 403) {
-        const s = { authorized: false, configured: false, configuredAt: null };
+        const s: SoftSegurosSetupState = { authorized: false, configured: false, configuredAt: null, importFilters: { ...DEFAULT_FILTERS } };
         if (mountedRef.current) setSetup(s);
         return s;
       }
       if (!r.ok) {
-        const s = { authorized: true, configured: false, configuredAt: null };
+        const s: SoftSegurosSetupState = { authorized: true, configured: false, configuredAt: null, importFilters: { ...DEFAULT_FILTERS } };
         if (mountedRef.current) setSetup(s);
         return s;
       }
       const d = await r.json();
-      const s = { authorized: true, configured: !!d.configured, configuredAt: d.configured_at ?? null };
+      const f = d.import_filters as Partial<SoftSegurosImportFilters> | undefined;
+      const s: SoftSegurosSetupState = {
+        authorized: true,
+        configured: !!d.configured,
+        configuredAt: d.configured_at ?? null,
+        importFilters: {
+          include_vencidos: f?.include_vencidos ?? true,
+          include_proximos: f?.include_proximos ?? true,
+        },
+      };
       if (mountedRef.current) setSetup(s);
       return s;
     } catch {
-      return { authorized: null, configured: false, configuredAt: null };
+      return { authorized: null, configured: false, configuredAt: null, importFilters: { ...DEFAULT_FILTERS } };
     }
   }, []);
 
@@ -163,13 +184,15 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     }, POLL_MS);
   }, [fetchSyncStatus, fetchSetup, fetchDebtorsList]);
 
-  const configure = useCallback(async (username: string, password: string): Promise<boolean> => {
+  const configure = useCallback(async (username: string, password: string, filters?: SoftSegurosImportFilters): Promise<boolean> => {
     setError(null);
     try {
+      const body: Record<string, unknown> = { username, password };
+      if (filters) body.import_filters = filters;
       const r = await apiFetch('/api/debtors/configure-softseguros', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(body),
       });
       if (r.status === 400) {
         const d = await r.json().catch(() => ({}));
@@ -221,6 +244,44 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     }
   }, [fetchSyncStatus, startPolling]);
 
+  const reimport = useCallback(async (filters: SoftSegurosImportFilters): Promise<boolean> => {
+    setError(null);
+    try {
+      const r = await apiFetch('/api/debtors/reimport', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ import_filters: filters }),
+      });
+      if (r.status === 429) {
+        const ra = parseInt(r.headers.get('Retry-After') || '0', 10);
+        const d = await r.json().catch(() => ({}));
+        setError({
+          message: (d as { detail?: string }).detail || 'Re-importación demasiado frecuente',
+          code: 'rate_limited',
+          retryAfter: Number.isFinite(ra) && ra > 0 ? ra : 300,
+        });
+        return false;
+      }
+      if (r.status === 400) {
+        const d = await r.json().catch(() => ({}));
+        setError({ message: (d as { detail?: string }).detail || 'SOFTSEGUROS no configurado', code: 'unknown' });
+        return false;
+      }
+      if (!r.ok) {
+        setError({ message: `Error ${r.status}`, code: 'unknown' });
+        return false;
+      }
+      // Optimistically reflect the new filters; the poll will refetch real state.
+      if (mountedRef.current) setSetup(prev => ({ ...prev, importFilters: { ...filters } }));
+      await fetchSyncStatus();
+      startPolling();
+      return true;
+    } catch {
+      setError({ message: 'Error de conexión', code: 'unknown' });
+      return false;
+    }
+  }, [fetchSyncStatus, startPolling]);
+
   return {
     setup,
     debtors: { proximosAVencer, yaVencidos },
@@ -229,6 +290,7 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     error,
     configure,
     triggerSync,
+    reimport,
     refetch,
   };
 }

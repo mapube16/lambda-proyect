@@ -736,7 +736,7 @@ async def test_softseg_10_configure_never_returns_password(async_client):
     # Before configuring
     pre = await async_client.get("/api/debtors/configure-softseguros", headers=headers)
     assert pre.status_code == 200
-    assert pre.json() == {"configured": False, "configured_at": None}
+    _b = pre.json(); assert _b["configured"] is False and _b["configured_at"] is None
 
     await save_credentials(db, user_id, "corredor@e.com", "topsecret")
     resp = await async_client.get("/api/debtors/configure-softseguros", headers=headers)
@@ -780,7 +780,7 @@ async def test_softseguros_gate_allows_when_enabled(async_client):
     headers = await _register_and_login(async_client, "authorized@e.com", enable_softseguros=True)
     resp = await async_client.get("/api/debtors/configure-softseguros", headers=headers)
     assert resp.status_code == 200
-    assert resp.json() == {"configured": False, "configured_at": None}
+    _b = resp.json(); assert _b["configured"] is False and _b["configured_at"] is None
 
 
 async def test_staff_can_enable_and_disable_softseguros(async_client):
@@ -814,3 +814,104 @@ async def test_non_staff_cannot_enable_softseguros(async_client):
     sneaky_id = await _user_id_for_email("sneaky@e.com")
     r = await async_client.post(f"/api/staff/clients/{sneaky_id}/softseguros/enable", headers=client_headers)
     assert r.status_code == 403
+
+
+# ── Import filters (choose which debtors to import) ──────────────────────────
+
+async def test_softseg_run_sync_respects_import_filters(async_client):
+    """run_sync(onboarding, import_filters={include_vencidos:True, include_proximos:False})
+    persists only vencidos as active; proximos are stored but is_active=False."""
+    import respx
+    from httpx import Response
+    from datetime import date, timedelta
+    from softseguros.credentials import save_credentials
+    from softseguros.sync import run_sync
+
+    db = database.get_db()
+    uid = "filt-user-1"
+    await save_credentials(db, uid, "u", "p")
+    today = date.today()
+    base = "https://app.softseguros.com"
+    venc_date = (today - timedelta(days=10)).isoformat()
+    prox_date = (today + timedelta(days=10)).isoformat()
+    polizas = [
+        {"id": 1001, "numero_poliza": "P1", "cliente": 1, "cliente_nombres": "Ana", "cliente_apellidos": "Vencida",
+         "cliente_celular": "300", "estado_cartera": "Pendiente por pagar", "estado_poliza_nombre": "Devengada",
+         "fecha_fin": venc_date, "fecha_limite_pago": None, "recaudado": False, "total": "100", "comicionada": False},
+        {"id": 1002, "numero_poliza": "P2", "cliente": 2, "cliente_nombres": "Beto", "cliente_apellidos": "Proxima",
+         "cliente_celular": "301", "estado_cartera": "Pendiente por pagar", "estado_poliza_nombre": "Devengada",
+         "fecha_fin": prox_date, "fecha_limite_pago": None, "recaudado": False, "total": "200", "comicionada": False},
+    ]
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/").mock(return_value=Response(200, json={"count": 2, "next": None, "results": polizas}))
+        await run_sync(db, uid, mode="onboarding", import_filters={"include_vencidos": True, "include_proximos": False})
+
+    # The vencido is active; the proximo is stored but inactive.
+    venc = await db.debtors.find_one({"user_id": uid, "softseguros_poliza_id": 1001})
+    prox = await db.debtors.find_one({"user_id": uid, "softseguros_poliza_id": 1002})
+    assert venc is not None and venc["is_active"] is True and venc["status_softseguros"] == "ya_vencidos"
+    assert prox is not None and prox["is_active"] is False and prox["status_softseguros"] == "proximos_a_vencer"
+    # sync_state remembers the filters.
+    st = await db.softseguros_sync_state.find_one({"user_id": uid})
+    assert st["import_filters"] == {"include_vencidos": True, "include_proximos": False}
+
+
+async def test_softseg_configure_accepts_import_filters(async_client):
+    """POST /api/debtors/configure-softseguros with import_filters runs onboarding
+    that respects them; GET reflects the stored filters."""
+    import respx
+    from httpx import Response
+    headers = await _register_and_login(async_client, "filt-cfg@e.com")
+    base = "https://app.softseguros.com"
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/").mock(return_value=Response(200, json={"count": 0, "next": None, "results": []}))
+        r = await async_client.post("/api/debtors/configure-softseguros", headers=headers, json={
+            "username": "u", "password": "p",
+            "import_filters": {"include_vencidos": True, "include_proximos": False},
+        })
+        assert r.status_code == 200, r.text
+    g = await async_client.get("/api/debtors/configure-softseguros", headers=headers)
+    body = g.json()
+    assert body["configured"] is True
+    assert body["import_filters"] == {"include_vencidos": True, "include_proximos": False}
+
+
+async def test_softseg_reimport_preserves_history(async_client):
+    """POST /api/debtors/reimport with new filters re-scans without deleting; a debtor
+    that no longer matches keeps its doc (is_active=False)."""
+    import respx
+    from httpx import Response
+    from datetime import date, timedelta
+    headers = await _register_and_login(async_client, "reimp@e.com")
+    uid = await _user_id_for_email("reimp@e.com")
+    db = database.get_db()
+    today = date.today()
+    base = "https://app.softseguros.com"
+    prox_date = (today + timedelta(days=10)).isoformat()
+    polizas = [{"id": 2001, "numero_poliza": "PX", "cliente": 1, "cliente_nombres": "C", "cliente_apellidos": "X",
+                "cliente_celular": "300", "estado_cartera": "Pendiente por pagar", "estado_poliza_nombre": "Devengada",
+                "fecha_fin": prox_date, "fecha_limite_pago": None, "recaudado": False, "total": "100", "comicionada": False}]
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/").mock(return_value=Response(200, json={"count": 1, "next": None, "results": polizas}))
+        # initial config: import both kinds
+        r = await async_client.post("/api/debtors/configure-softseguros", headers=headers, json={"username": "u", "password": "p"})
+        assert r.status_code == 200
+    # the proximo debtor is active
+    d = await db.debtors.find_one({"user_id": uid, "softseguros_poliza_id": 2001})
+    assert d is not None and d["is_active"] is True
+    # simulate it had call history
+    await db.debtors.update_one({"_id": d["_id"]}, {"$set": {"historial_llamadas": [{"resultado": "promesa"}], "intentos": 2}})
+    # reimport with only vencidos → the proximo should become inactive but keep history
+    with respx.mock(base_url=base, assert_all_called=False) as mock:
+        mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
+        mock.get("/api/poliza/").mock(return_value=Response(200, json={"count": 1, "next": None, "results": polizas}))
+        r = await async_client.post("/api/debtors/reimport", headers=headers, json={"import_filters": {"include_vencidos": True, "include_proximos": False}})
+        assert r.status_code == 200, r.text
+    d2 = await db.debtors.find_one({"user_id": uid, "softseguros_poliza_id": 2001})
+    assert d2 is not None
+    assert d2["is_active"] is False           # no longer matches filters
+    assert d2["intentos"] == 2                # history preserved
+    assert d2["historial_llamadas"] == [{"resultado": "promesa"}]

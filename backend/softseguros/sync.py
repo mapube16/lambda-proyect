@@ -40,10 +40,36 @@ logger = logging.getLogger(__name__)
 PAGE_SIZE = 10  # SOFTSEGUROS /api/poliza/ — fixed, server-controlled.
 MAX_CONCURRENCY = 5
 
-# Buckets that get persisted as active debtors.
-_ACTIVE_BUCKETS = {"ya_vencidos", "proximos_a_vencer"}
+# All cobrable buckets the classifier can produce (besides "pagado"/"futuro").
+_COBRABLE_BUCKETS = {"ya_vencidos", "proximos_a_vencer"}
 # Cartera states considered "paid" (mirrors classifier).
 _PAID_CARTERA = {"pagada", "comisionada"}
+
+# Default import filters: import both kinds of debtor.
+_DEFAULT_IMPORT_FILTERS = {"include_vencidos": True, "include_proximos": True}
+
+
+def _normalize_import_filters(f: Optional[dict]) -> dict:
+    """Coerce a raw filters dict to {include_vencidos: bool, include_proximos: bool}.
+    Falls back to the default (both True). Guarantees at least one is True."""
+    if not isinstance(f, dict):
+        return dict(_DEFAULT_IMPORT_FILTERS)
+    iv = bool(f.get("include_vencidos", True))
+    ip = bool(f.get("include_proximos", True))
+    if not iv and not ip:
+        # Refuse to import nothing — fall back to both.
+        return dict(_DEFAULT_IMPORT_FILTERS)
+    return {"include_vencidos": iv, "include_proximos": ip}
+
+
+def _allowed_buckets(filters: dict) -> set:
+    """The classifier buckets that should be persisted as ACTIVE debtors, given filters."""
+    allowed = set()
+    if filters.get("include_vencidos"):
+        allowed.add("ya_vencidos")
+    if filters.get("include_proximos"):
+        allowed.add("proximos_a_vencer")
+    return allowed
 
 
 class NoCredentialsError(Exception):
@@ -126,22 +152,35 @@ class _Caller:
 
 # ── main entry point ──────────────────────────────────────────────────────────
 
-async def run_sync(db, user_id: str, mode: str) -> dict:
+async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] = None) -> dict:
     """
     Run a SOFTSEGUROS sync for `user_id` in the given `mode`
-    ("onboarding" | "cron_daily" | "manual").
+    ("onboarding" | "cron_daily" | "manual" | "reimport").
+
+    `import_filters` ({include_vencidos: bool, include_proximos: bool}):
+      - On "onboarding"/"reimport": if given, it's persisted to sync_state and used.
+        If not given, defaults to both True.
+      - On "cron_daily"/"manual": ignored as an argument — the filters stored in
+        sync_state from the last onboarding/reimport are used (default both True).
+
+    "reimport" behaves like "onboarding" (full scan) but, since prior debtor docs
+    may carry Phase-17 call history, it does NOT delete anything: it upserts every
+    cobrable póliza and flips is_active per the (possibly new) filters. Pólizas that
+    no longer match the filters keep their doc + history but get is_active=False.
 
     Returns the sync_log dict (with str _id). Raises NoCredentialsError if the user
     has no credentials configured. Other exceptions are recorded in the sync_log
     (status="failed") and then re-raised.
     """
-    if mode not in ("onboarding", "cron_daily", "manual"):
+    if mode not in ("onboarding", "cron_daily", "manual", "reimport"):
         raise ValueError(f"unsupported sync mode: {mode!r}")
 
     creds = await _credentials.get_credentials(db, user_id)
     if not creds:
         raise NoCredentialsError(f"no SOFTSEGUROS credentials for user_id={user_id}")
     username, password = creds
+
+    is_full_scan = mode in ("onboarding", "reimport")
 
     started_at = _utcnow()
     log_doc = {
@@ -158,6 +197,7 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
         "debtors_updated": 0,
         "debtors_marked_paid": 0,
         "debtors_marked_deleted": 0,
+        "debtors_excluded_by_filter": 0,
         "total_requests": 0,
         "duration_seconds": None,
     }
@@ -169,6 +209,17 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
     today = _today()
     adapter = SoftSegurosAdapter(username, password)
 
+    # Resolve the import filters: on a full scan, the argument wins (or default);
+    # on a delta, read whatever was persisted (or default).
+    _state_for_filters = await db.softseguros_sync_state.find_one({"user_id": user_id}) or {}
+    if is_full_scan:
+        active_filters = _normalize_import_filters(
+            import_filters if import_filters is not None else _state_for_filters.get("import_filters")
+        )
+    else:
+        active_filters = _normalize_import_filters(_state_for_filters.get("import_filters"))
+    allowed_buckets = _allowed_buckets(active_filters)
+
     counters = {
         "polizas_scanned": 0,
         "total_count": 0,
@@ -177,6 +228,7 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
         "debtors_updated": 0,
         "debtors_marked_paid": 0,
         "debtors_marked_deleted": 0,
+        "debtors_excluded_by_filter": 0,
     }
 
     async def _persist_poliza(p: dict):
@@ -187,13 +239,22 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
         if counters["max_poliza_id_seen"] is None or pid > counters["max_poliza_id_seen"]:
             counters["max_poliza_id_seen"] = pid
         bucket = _classify(p, today)
-        if bucket in _ACTIVE_BUCKETS:
-            doc = _poliza_to_debtor_doc(p, bucket)
-            res = await debtor_crud.upsert_debtor_by_softseguros_poliza_id(db, user_id, pid, doc)
-            if res["created"]:
-                counters["debtors_created"] += 1
+        if bucket in _COBRABLE_BUCKETS:
+            if bucket in allowed_buckets:
+                doc = _poliza_to_debtor_doc(p, bucket)  # is_active=True
+                res = await debtor_crud.upsert_debtor_by_softseguros_poliza_id(db, user_id, pid, doc)
+                if res["created"]:
+                    counters["debtors_created"] += 1
+                else:
+                    counters["debtors_updated"] += 1
             else:
-                counters["debtors_updated"] += 1
+                # Cobrable, but the user didn't import this kind. Keep/refresh the doc
+                # (preserving Phase-17 call history) but mark it inactive so it stays
+                # out of the lists and the voice-agent queue.
+                doc = _poliza_to_debtor_doc(p, bucket)
+                doc["is_active"] = False
+                await debtor_crud.upsert_debtor_by_softseguros_poliza_id(db, user_id, pid, doc)
+                counters["debtors_excluded_by_filter"] += 1
         elif bucket == "pagado":
             # If we already track it locally, retire it.
             await debtor_crud.mark_debtor_paid_by_softseguros_poliza_id(db, user_id, pid)
@@ -213,7 +274,7 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
 
         state = await db.softseguros_sync_state.find_one({"user_id": user_id})
 
-        if mode == "onboarding" or not state:
+        if is_full_scan or not state:
             pages_to_fetch = list(range(1, last_page + 1))
         else:
             last_count = int(state.get("last_total_count") or 0)
@@ -252,8 +313,9 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
         if remaining:
             await asyncio.gather(*(_fetch_and_handle(pg) for pg in remaining))
 
-        # ── Phase C: soft-delete sweep (skip on onboarding — no prior state) ──
-        if mode != "onboarding" and state:
+        # ── Phase C: soft-delete sweep (skip on full scans — no prior state OR
+        #    reimport preserves everything via upsert in Phase B) ──────────────
+        if not is_full_scan and state:
             existing = await debtor_crud.list_active_softseguros_poliza_ids(db, user_id)
             missing = existing - seen_ids
             for pid in missing:
@@ -270,12 +332,14 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
                     if await debtor_crud.mark_debtor_paid_by_softseguros_poliza_id(db, user_id, pid):
                         counters["debtors_marked_paid"] += 1
                 else:
-                    # Still cobrable but fell off our page window — re-classify & upsert.
+                    # Still cobrable but fell off our page window — re-classify, then
+                    # upsert respecting the active import filters.
                     bucket = _classify(p, today)
-                    if bucket in _ACTIVE_BUCKETS:
-                        await debtor_crud.upsert_debtor_by_softseguros_poliza_id(
-                            db, user_id, pid, _poliza_to_debtor_doc(p, bucket)
-                        )
+                    if bucket in _COBRABLE_BUCKETS:
+                        doc = _poliza_to_debtor_doc(p, bucket)
+                        if bucket not in allowed_buckets:
+                            doc["is_active"] = False
+                        await debtor_crud.upsert_debtor_by_softseguros_poliza_id(db, user_id, pid, doc)
 
         # ── Phase D: update checkpoint state ─────────────────────────────────
         now = _utcnow()
@@ -288,8 +352,9 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
             # Never regress the high-water mark.
             prev_max = (state or {}).get("last_max_poliza_id") or 0
             state_set["last_max_poliza_id"] = max(prev_max, counters["max_poliza_id_seen"])
-        if mode == "onboarding":
+        if is_full_scan:
             state_set["last_full_scan_at"] = now
+            state_set["import_filters"] = active_filters
         await db.softseguros_sync_state.update_one(
             {"user_id": user_id},
             {"$set": state_set, "$setOnInsert": {"last_weekly_rescan_at": None}},
@@ -324,6 +389,7 @@ async def run_sync(db, user_id: str, mode: str) -> dict:
         "debtors_updated": counters["debtors_updated"],
         "debtors_marked_paid": counters["debtors_marked_paid"],
         "debtors_marked_deleted": counters["debtors_marked_deleted"],
+        "debtors_excluded_by_filter": counters["debtors_excluded_by_filter"],
         "total_requests": call.total_requests,
         "duration_seconds": (completed_at - started_at).total_seconds(),
     }

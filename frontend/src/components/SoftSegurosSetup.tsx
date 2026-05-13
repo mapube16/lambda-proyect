@@ -33,6 +33,8 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
   const { configure, error, syncStatus, setup } = hook;
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [includeVencidos, setIncludeVencidos] = useState(true);
+  const [includeProximos, setIncludeProximos] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
@@ -45,11 +47,16 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
     }
   }, [submitted, setup.configured, syncStatus, onComplete]);
 
+  const noKindSelected = !includeVencidos && !includeProximos;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim() || !password) return;
+    if (!username.trim() || !password || noKindSelected) return;
     setSubmitting(true);
-    const ok = await configure(username.trim(), password);
+    const ok = await configure(username.trim(), password, {
+      include_vencidos: includeVencidos,
+      include_proximos: includeProximos,
+    });
     setSubmitting(false);
     if (ok) setSubmitted(true);
   };
@@ -119,6 +126,23 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
               autoComplete="current-password"
             />
           </div>
+          {/* ── Which kinds of debtor to import ── */}
+          <div>
+            <div style={{ ...lbl, marginBottom: 6 }}>¿QUÉ DEUDORES IMPORTAR?</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: C.IN, fontSize: 12.5, color: C.text, cursor: 'pointer', marginBottom: 6 }}>
+              <input type="checkbox" checked={includeVencidos} disabled={submitting} onChange={e => setIncludeVencidos(e.target.checked)} />
+              Ya vencidos (deuda en mora)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: C.IN, fontSize: 12.5, color: C.text, cursor: 'pointer' }}>
+              <input type="checkbox" checked={includeProximos} disabled={submitting} onChange={e => setIncludeProximos(e.target.checked)} />
+              Próximos a vencer (próximos 30 días)
+            </label>
+            {noKindSelected && (
+              <div style={{ fontFamily: C.IN, fontSize: 11.5, color: C.orange, marginTop: 6 }}>
+                Selecciona al menos un tipo de deudor para importar.
+              </div>
+            )}
+          </div>
           {error && (
             <div style={{ padding: '8px 12px', background: C.pinkBg, color: C.pink, fontFamily: C.IN, fontSize: 12 }}>
               {error.code === 'bad_credentials' ? 'Credenciales inválidas' : error.message}
@@ -126,13 +150,13 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
           )}
           <button
             type="submit"
-            disabled={submitting || !username.trim() || !password}
+            disabled={submitting || !username.trim() || !password || noKindSelected}
             style={{
               alignSelf: 'flex-start', padding: '10px 18px', border: 'none',
-              background: submitting || !username.trim() || !password ? C.s3 : C.cyan,
+              background: submitting || !username.trim() || !password || noKindSelected ? C.s3 : C.cyan,
               color: C.bg, fontFamily: C.SG, fontWeight: 700, fontSize: 12,
               letterSpacing: '0.05em',
-              cursor: submitting || !username.trim() || !password ? 'not-allowed' : 'pointer',
+              cursor: submitting || !username.trim() || !password || noKindSelected ? 'not-allowed' : 'pointer',
             }}
           >
             {submitting ? 'Validando…' : 'Conectar SOFTSEGUROS'}
