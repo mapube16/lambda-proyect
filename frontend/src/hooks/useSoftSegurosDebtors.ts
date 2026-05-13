@@ -25,6 +25,9 @@ export interface SoftSegurosDebtor {
 }
 
 export interface SoftSegurosSetupState {
+  /** Whether Landa has authorized the SOFTSEGUROS integration for this account.
+   *  null = not yet known. false = 403 from the gate (service not enabled). */
+  authorized: boolean | null;
   configured: boolean;
   configuredAt: string | null;
 }
@@ -59,7 +62,7 @@ export interface UseSoftSegurosDebtorsResult {
 const POLL_MS = 3000;
 
 export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
-  const [setup, setSetup] = useState<SoftSegurosSetupState>({ configured: false, configuredAt: null });
+  const [setup, setSetup] = useState<SoftSegurosSetupState>({ authorized: null, configured: false, configuredAt: null });
   const [proximosAVencer, setProximosAVencer] = useState<SoftSegurosDebtor[]>([]);
   const [yaVencidos, setYaVencidos] = useState<SoftSegurosDebtor[]>([]);
   const [syncStatus, setSyncStatus] = useState<SoftSegurosSyncStatus | null>(null);
@@ -80,13 +83,22 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
   const fetchSetup = useCallback(async (): Promise<SoftSegurosSetupState> => {
     try {
       const r = await apiFetch('/api/debtors/configure-softseguros');
-      if (!r.ok) return { configured: false, configuredAt: null };
+      if (r.status === 403) {
+        const s = { authorized: false, configured: false, configuredAt: null };
+        if (mountedRef.current) setSetup(s);
+        return s;
+      }
+      if (!r.ok) {
+        const s = { authorized: true, configured: false, configuredAt: null };
+        if (mountedRef.current) setSetup(s);
+        return s;
+      }
       const d = await r.json();
-      const s = { configured: !!d.configured, configuredAt: d.configured_at ?? null };
+      const s = { authorized: true, configured: !!d.configured, configuredAt: d.configured_at ?? null };
       if (mountedRef.current) setSetup(s);
       return s;
     } catch {
-      return { configured: false, configuredAt: null };
+      return { authorized: null, configured: false, configuredAt: null };
     }
   }, []);
 
@@ -124,6 +136,11 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
   const refetch = useCallback(async () => {
     setLoading(true);
     const s = await fetchSetup();
+    if (s.authorized === false) {
+      // Service not enabled by Landa — nothing else to fetch.
+      if (mountedRef.current) setLoading(false);
+      return;
+    }
     await fetchSyncStatus();
     if (s.configured) await fetchDebtorsList();
     if (mountedRef.current) setLoading(false);
