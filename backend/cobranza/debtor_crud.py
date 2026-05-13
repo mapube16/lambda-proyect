@@ -33,6 +33,7 @@ async def create_debtor(db, user_id: str, data: dict) -> dict:
     now = _utcnow()
     doc = {
         "user_id": user_id,
+        "source": "manual",
         "nombre": data.get("nombre", ""),
         "telefono": data["telefono"],
         "monto": float(data.get("monto", 0)),
@@ -68,6 +69,7 @@ async def bulk_create_debtors(db, user_id: str, debtors: list[dict]) -> dict:
     for data in debtors:
         docs.append({
             "user_id": user_id,
+            "source": "manual",
             "nombre": data.get("nombre", ""),
             "telefono": data["telefono"],
             "monto": float(data.get("monto", 0)),
@@ -126,6 +128,7 @@ async def bulk_upsert_debtors(db, user_id: str, debtors: list[dict]) -> dict:
         }
         on_insert = {
             "user_id": user_id,
+            "source": "manual",
             "telefono": data["telefono"],
             "estado": "pendiente",
             "vapi_call_id": None,

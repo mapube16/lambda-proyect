@@ -45,21 +45,53 @@ _COBRABLE_BUCKETS = {"ya_vencidos", "proximos_a_vencer"}
 # Cartera states considered "paid" (mirrors classifier).
 _PAID_CARTERA = {"pagada", "comisionada"}
 
-# Default import filters: import both kinds of debtor.
-_DEFAULT_IMPORT_FILTERS = {"include_vencidos": True, "include_proximos": True}
+# Default import filters: import both kinds of debtor, only real debt, last 12 months.
+# - include_vencidos / include_proximos: which buckets are persisted as is_active.
+# - cartera_states: which estado_cartera values count as "cobrable" at all.
+# - max_age_months: discard pólizas whose fecha_fin is older than (today - N months).
+#                   None = no age limit.
+_DEFAULT_IMPORT_FILTERS = {
+    "include_vencidos": True,
+    "include_proximos": True,
+    "cartera_states": ["Pendiente por pagar"],
+    "max_age_months": 12,
+}
+_VALID_CARTERA_STATES = {"Pendiente por pagar", "Sin pagos Asignados"}
 
 
 def _normalize_import_filters(f: Optional[dict]) -> dict:
-    """Coerce a raw filters dict to {include_vencidos: bool, include_proximos: bool}.
-    Falls back to the default (both True). Guarantees at least one is True."""
+    """Coerce a raw filters dict. Falls back to defaults. Guarantees:
+    - at least one of include_vencidos / include_proximos is True
+    - cartera_states is a non-empty subset of _VALID_CARTERA_STATES
+    - max_age_months is None or a positive int."""
     if not isinstance(f, dict):
         return dict(_DEFAULT_IMPORT_FILTERS)
     iv = bool(f.get("include_vencidos", True))
     ip = bool(f.get("include_proximos", True))
     if not iv and not ip:
-        # Refuse to import nothing — fall back to both.
-        return dict(_DEFAULT_IMPORT_FILTERS)
-    return {"include_vencidos": iv, "include_proximos": ip}
+        iv, ip = True, True
+    raw_states = f.get("cartera_states")
+    if isinstance(raw_states, list) and raw_states:
+        cartera_states = [s for s in raw_states if s in _VALID_CARTERA_STATES]
+        if not cartera_states:
+            cartera_states = list(_DEFAULT_IMPORT_FILTERS["cartera_states"])
+    else:
+        cartera_states = list(_DEFAULT_IMPORT_FILTERS["cartera_states"])
+    max_age = f.get("max_age_months", _DEFAULT_IMPORT_FILTERS["max_age_months"])
+    if max_age is None:
+        max_age_months = None
+    else:
+        try:
+            mm = int(max_age)
+            max_age_months = mm if mm > 0 else None
+        except (TypeError, ValueError):
+            max_age_months = _DEFAULT_IMPORT_FILTERS["max_age_months"]
+    return {
+        "include_vencidos": iv,
+        "include_proximos": ip,
+        "cartera_states": cartera_states,
+        "max_age_months": max_age_months,
+    }
 
 
 def _allowed_buckets(filters: dict) -> set:
@@ -74,6 +106,33 @@ def _allowed_buckets(filters: dict) -> set:
 
 class NoCredentialsError(Exception):
     """Raised when run_sync is called for a user with no SOFTSEGUROS credentials configured."""
+
+
+class SyncCancelledError(Exception):
+    """Raised when the user requested cancellation of a running sync."""
+
+
+def _humanize_error(exc: Exception) -> str:
+    """Convert a backend exception into a short user-readable message.
+    Strips PyMongo / httpx noise; preserves the human signal."""
+    cls = type(exc).__name__
+    msg = str(exc)
+    low = msg.lower()
+    if "e11000 duplicate key" in low:
+        return "Conflicto de datos en la base de datos al guardar deudores. Reintentá; si persiste, contacta a Landa."
+    if "timeout" in low or "timed out" in low:
+        return "SOFTSEGUROS tardó demasiado en responder. La importación se reintentará automáticamente en el próximo sync."
+    if "connection" in low and ("refused" in low or "reset" in low):
+        return "No se pudo conectar a SOFTSEGUROS. Verificá tu conexión e intentá más tarde."
+    if cls in ("SoftSegurosAuthError",) or "401" in msg or "unauthorized" in low:
+        return "Credenciales SOFTSEGUROS inválidas o token expirado. Reconectá tu cuenta."
+    if "504" in msg or "502" in msg or "503" in msg:
+        return "SOFTSEGUROS no está disponible en este momento. Reintentá más tarde."
+    if "429" in msg:
+        return "SOFTSEGUROS está limitando peticiones (rate limit). La importación se reintentará."
+    # Fallback: first line only, capped.
+    first = msg.split("\n")[0].strip()[:240]
+    return f"{cls}: {first}" if first else cls
 
 
 def _utcnow() -> datetime:
@@ -231,6 +290,30 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
         "debtors_excluded_by_filter": 0,
     }
 
+    # Pre-compute filter cut-offs.
+    allowed_cartera_states = {s.strip().lower() for s in active_filters.get("cartera_states", [])}
+    max_age_months = active_filters.get("max_age_months")
+    if max_age_months:
+        # Approx: 30 days per month is fine here (filter is a heuristic).
+        from datetime import timedelta as _td
+        oldest_allowed = today - _td(days=int(max_age_months) * 30)
+    else:
+        oldest_allowed = None
+
+    def _passes_user_filters(p: dict) -> bool:
+        """Return False if the póliza fails the user's cartera_states / max_age filter."""
+        # cartera_states filter
+        ec = (p.get("estado_cartera") or "").strip().lower()
+        if allowed_cartera_states and ec not in allowed_cartera_states:
+            return False
+        # max_age_months filter (fecha de referencia)
+        if oldest_allowed is not None:
+            from .classifier import _to_date as _to_date_fn  # noqa: PLC0415
+            fref = _to_date_fn(p.get("fecha_limite_pago")) or _to_date_fn(p.get("fecha_fin"))
+            if fref is not None and fref < oldest_allowed:
+                return False
+        return True
+
     async def _persist_poliza(p: dict):
         pid = p.get("id")
         if pid is None:
@@ -239,6 +322,14 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
         if counters["max_poliza_id_seen"] is None or pid > counters["max_poliza_id_seen"]:
             counters["max_poliza_id_seen"] = pid
         bucket = _classify(p, today)
+        # Apply USER filters first. If the póliza fails, treat it like "futuro"
+        # (not persisted) unless we already have a local doc, in which case mark inactive.
+        if bucket in _COBRABLE_BUCKETS and not _passes_user_filters(p):
+            doc = _poliza_to_debtor_doc(p, bucket)
+            doc["is_active"] = False
+            await debtor_crud.upsert_debtor_by_softseguros_poliza_id(db, user_id, pid, doc)
+            counters["debtors_excluded_by_filter"] += 1
+            return
         if bucket in _COBRABLE_BUCKETS:
             if bucket in allowed_buckets:
                 doc = _poliza_to_debtor_doc(p, bucket)  # is_active=True
@@ -262,6 +353,30 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
 
     async def _fetch_page(page: int) -> dict:
         return await call(lambda: adapter.list_polizas(page=page))
+
+    # Flush counters to the sync_log doc so the UI can poll live progress.
+    async def _flush_progress():
+        await db.softseguros_sync_logs.update_one(
+            {"_id": log_id},
+            {"$set": {
+                "polizas_scanned": counters["polizas_scanned"],
+                "total_count": counters["total_count"],
+                "debtors_created": counters["debtors_created"],
+                "debtors_updated": counters["debtors_updated"],
+                "debtors_excluded_by_filter": counters["debtors_excluded_by_filter"],
+                "debtors_marked_paid": counters["debtors_marked_paid"],
+                "debtors_marked_deleted": counters["debtors_marked_deleted"],
+            }}
+        )
+
+    async def _check_cancelled():
+        st = await db.softseguros_sync_state.find_one({"user_id": user_id}, {"cancel_requested": 1})
+        if st and st.get("cancel_requested"):
+            # Clear the flag so a subsequent sync doesn't get instantly cancelled.
+            await db.softseguros_sync_state.update_one(
+                {"user_id": user_id}, {"$set": {"cancel_requested": False}}
+            )
+            raise SyncCancelledError("sync cancelled by user")
 
     try:
         await call(lambda: adapter.authenticate())
@@ -305,13 +420,22 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
         else:
             remaining = list(pages_to_fetch)
 
-        # Fetch the rest concurrently (semaphore caps in-flight at 5).
+        # Fetch the rest concurrently in chunks, flushing progress + checking
+        # cancellation every CHUNK_SIZE pages so the UI sees live updates.
+        CHUNK_SIZE = 20
+
         async def _fetch_and_handle(pg: int):
             payload = await _fetch_page(pg)
             await _handle_page_payload(payload)
 
+        await _flush_progress()  # initial flush right after page 1
+
         if remaining:
-            await asyncio.gather(*(_fetch_and_handle(pg) for pg in remaining))
+            for i in range(0, len(remaining), CHUNK_SIZE):
+                await _check_cancelled()
+                chunk = remaining[i : i + CHUNK_SIZE]
+                await asyncio.gather(*(_fetch_and_handle(pg) for pg in chunk))
+                await _flush_progress()
 
         # ── Phase C: soft-delete sweep (skip on full scans — no prior state OR
         #    reimport preserves everything via upsert in Phase B) ──────────────
@@ -366,9 +490,13 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
 
     except NoCredentialsError:
         raise
+    except SyncCancelledError:
+        status = "cancelled"
+        error_message = None
+        logger.info("softseguros run_sync cancelled by user user_id=%s mode=%s", user_id, mode)
     except Exception as exc:  # noqa: BLE001 — record & re-raise
         status = "failed"
-        error_message = str(exc)
+        error_message = _humanize_error(exc)
         logger.exception("softseguros run_sync failed user_id=%s mode=%s", user_id, mode)
         # Fall through to finalize, then re-raise.
     finally:

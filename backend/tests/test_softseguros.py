@@ -223,7 +223,7 @@ async def test_softseg_03_enrich_with_cliente(async_client):
         mock.get("/api/poliza/").mock(return_value=Response(200, json={
             "count": 1, "next": None, "previous": None, "results": [poliza],
         }))
-        await run_sync(db, "u1", mode="onboarding")
+        await run_sync(db, "u1", mode="onboarding", import_filters={"include_vencidos": True, "include_proximos": True, "cartera_states": ["Pendiente por pagar"], "max_age_months": None})
 
     doc = await db.debtors.find_one({"user_id": "u1", "softseguros_poliza_id": 501})
     assert doc is not None
@@ -294,7 +294,7 @@ async def test_softseg_04_semaphore_limits_concurrency(async_client, monkeypatch
             })
 
         mock.get("/api/poliza/").mock(side_effect=_poliza_side_effect)
-        await run_sync(db, "u1", mode="onboarding")
+        await run_sync(db, "u1", mode="onboarding", import_filters={"include_vencidos": True, "include_proximos": True, "cartera_states": ["Pendiente por pagar"], "max_age_months": None})
 
     assert in_flight["max"] <= 5, f"concurrency exceeded 5: peak={in_flight['max']}"
     assert in_flight["max"] >= 1
@@ -645,7 +645,7 @@ async def test_softseg_09_soft_delete_on_404(async_client):
             "count": 2, "next": None, "previous": None,
             "results": [_vencido_poliza(301), _vencido_poliza(302)],
         }))
-        await run_sync(db, "u1", mode="onboarding")
+        await run_sync(db, "u1", mode="onboarding", import_filters={"include_vencidos": True, "include_proximos": True, "cartera_states": ["Pendiente por pagar"], "max_age_months": None})
     assert await db.debtors.count_documents({"user_id": "u1", "is_active": True}) == 2
 
     # Second (cron_daily) sync: listing now only returns 301; 302 → 404 on GET /api/poliza/302.
@@ -686,7 +686,7 @@ async def test_softseg_09_sync_is_idempotent(async_client):
         with respx.mock(base_url=base, assert_all_called=False) as mock:
             mock.post("/api-token-auth/").mock(return_value=Response(200, json={"token": "t"}))
             mock.get("/api/poliza/").mock(return_value=Response(200, json=_run_once()))
-            await run_sync(db, "u1", mode="onboarding")
+            await run_sync(db, "u1", mode="onboarding", import_filters={"include_vencidos": True, "include_proximos": True, "cartera_states": ["Pendiente por pagar"], "max_age_months": None})
 
     assert await db.debtors.count_documents({"user_id": "u1", "softseguros_poliza_id": 401}) == 1
     assert await db.debtors.count_documents({"user_id": "u1", "softseguros_poliza_id": 402}) == 1
@@ -854,7 +854,8 @@ async def test_softseg_run_sync_respects_import_filters(async_client):
     assert prox is not None and prox["is_active"] is False and prox["status_softseguros"] == "proximos_a_vencer"
     # sync_state remembers the filters.
     st = await db.softseguros_sync_state.find_one({"user_id": uid})
-    assert st["import_filters"] == {"include_vencidos": True, "include_proximos": False}
+    assert st["import_filters"]["include_vencidos"] is True
+    assert st["import_filters"]["include_proximos"] is False
 
 
 async def test_softseg_configure_accepts_import_filters(async_client):
@@ -875,7 +876,8 @@ async def test_softseg_configure_accepts_import_filters(async_client):
     g = await async_client.get("/api/debtors/configure-softseguros", headers=headers)
     body = g.json()
     assert body["configured"] is True
-    assert body["import_filters"] == {"include_vencidos": True, "include_proximos": False}
+    assert body["import_filters"]["include_vencidos"] is True
+    assert body["import_filters"]["include_proximos"] is False
 
 
 async def test_softseg_reimport_preserves_history(async_client):

@@ -71,10 +71,16 @@ def _serialize(doc: Optional[dict]) -> Optional[dict]:
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class ImportFilters(BaseModel):
-    """Which kinds of debtor the user wants imported. At least one must be True
-    (the sync engine falls back to both if neither is)."""
+    """Onboarding/reimport filters chosen by the user.
+    - include_vencidos / include_proximos: which buckets are persisted active.
+    - cartera_states: which estado_cartera values count as "cobrable" at all.
+      Allowed: "Pendiente por pagar", "Sin pagos Asignados".
+    - max_age_months: discard pólizas whose fecha_fin is older than this many months.
+      None = no age limit."""
     include_vencidos: bool = True
     include_proximos: bool = True
+    cartera_states: Optional[list[str]] = None
+    max_age_months: Optional[int] = 12
 
 
 class ConfigureSoftsegurosBody(BaseModel):
@@ -237,25 +243,38 @@ async def sync_status(current_user: dict = Depends(require_softseguros_enabled))
     except Exception:  # pragma: no cover
         next_sync_at = None
 
-    if not last:
+    # If a sync is in progress right now, report on THAT one's live counters
+    # (in_progress doc), not on the last completed sync.
+    live = in_progress if in_progress is not None else last
+    if not last and not in_progress:
         return {
             "last_sync_at": None,
             "last_sync_mode": None,
             "last_sync_status": None,
+            "started_at": None,
+            "polizas_scanned": 0,
+            "total_count": 0,
             "debtors_created": 0,
             "debtors_updated": 0,
+            "debtors_excluded_by_filter": 0,
+            "error_message": None,
             "next_sync_at": next_sync_at,
-            "is_syncing_now": in_progress is not None,
+            "is_syncing_now": False,
         }
 
     return {
-        "last_sync_at": last.get("completed_at") or last.get("started_at"),
-        "last_sync_mode": last.get("mode"),
-        "last_sync_status": last.get("status"),
-        "debtors_created": last.get("debtors_created", 0),
-        "debtors_updated": last.get("debtors_updated", 0),
-        "debtors_marked_paid": last.get("debtors_marked_paid", 0),
-        "debtors_marked_deleted": last.get("debtors_marked_deleted", 0),
+        "last_sync_at": (last or {}).get("completed_at") or (last or {}).get("started_at"),
+        "last_sync_mode": live.get("mode"),
+        "last_sync_status": live.get("status"),
+        "started_at": live.get("started_at"),
+        "polizas_scanned": live.get("polizas_scanned", 0),
+        "total_count": live.get("total_count", 0),
+        "debtors_created": live.get("debtors_created", 0),
+        "debtors_updated": live.get("debtors_updated", 0),
+        "debtors_marked_paid": live.get("debtors_marked_paid", 0),
+        "debtors_marked_deleted": live.get("debtors_marked_deleted", 0),
+        "debtors_excluded_by_filter": live.get("debtors_excluded_by_filter", 0),
+        "error_message": (last or {}).get("error_message") if not in_progress else None,
         "next_sync_at": next_sync_at,
         "is_syncing_now": in_progress is not None,
     }
@@ -305,6 +324,21 @@ async def sync_now(
 
     background_tasks.add_task(_safe_run_sync, user_id, "manual")
     return {"sync_started": True}
+
+
+# ── Cancel a running sync ─────────────────────────────────────────────────────
+
+@router.post("/sync-cancel")
+async def sync_cancel(current_user: dict = Depends(require_softseguros_enabled)):
+    """Signal a running sync to stop at the next chunk boundary. Idempotent."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    await db.softseguros_sync_state.update_one(
+        {"user_id": user_id},
+        {"$set": {"cancel_requested": True}, "$setOnInsert": {"user_id": user_id}},
+        upsert=True,
+    )
+    return {"cancel_requested": True}
 
 
 # ── Re-import with new filters ────────────────────────────────────────────────

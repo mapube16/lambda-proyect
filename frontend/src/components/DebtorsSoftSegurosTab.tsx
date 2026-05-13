@@ -78,10 +78,13 @@ function relativeTime(iso: string | null): string {
 
 function SyncStatusBadge({ status }: { status: SoftSegurosSyncStatus | null }) {
   if (status?.is_syncing_now) {
+    const scanned = status.polizas_scanned ?? 0;
+    const total = status.total_count ?? 0;
+    const pct = total > 0 ? Math.round((scanned / total) * 100) : null;
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: C.SG, fontSize: 11, color: C.cyan }}>
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.cyan, animation: 'cobr-pulse 1.2s ease-in-out infinite' }} />
-        Sincronizando…
+        Sincronizando{pct !== null ? ` · ${pct}%` : '…'}
       </span>
     );
   }
@@ -89,7 +92,70 @@ function SyncStatusBadge({ status }: { status: SoftSegurosSyncStatus | null }) {
     <span style={{ fontFamily: C.SG, fontSize: 11, color: C.muted }}>
       Última sync: {relativeTime(status?.last_sync_at ?? null)}
       {status?.last_sync_status === 'failed' && <span style={{ color: C.pink }}> · falló</span>}
+      {status?.last_sync_status === 'cancelled' && <span style={{ color: C.orange }}> · cancelada</span>}
     </span>
+  );
+}
+
+function formatNumberCO(n: number): string {
+  try { return new Intl.NumberFormat('es-CO').format(n); } catch { return String(n); }
+}
+
+function SyncRunningBanner({ status }: { status: SoftSegurosSyncStatus }) {
+  const scanned = status.polizas_scanned ?? 0;
+  const total = status.total_count ?? 0;
+  const pct = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
+  const found = status.debtors_created ?? 0;
+  return (
+    <div role="status" aria-live="polite" style={{
+      padding: '12px 16px', background: C.cyanBg, border: `1px solid ${C.cyanBdr}`,
+      marginBottom: 14, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+    }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.cyan,
+        animation: 'cobr-pulse 1.2s ease-in-out infinite', flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontFamily: C.SG, fontSize: 13, color: C.cyan, marginBottom: 4 }}>
+          Importando cartera desde SOFTSEGUROS · {pct}%
+        </div>
+        <div style={{ height: 4, background: C.s3, borderRadius: 2, overflow: 'hidden', marginBottom: 6 }}>
+          <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg, ${C.cyan}, ${C.green})`, transition: 'width 0.4s ease' }} />
+        </div>
+        <div style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted }}>
+          {formatNumberCO(scanned)} de {formatNumberCO(total)} pólizas escaneadas
+          {' · '}<span style={{ color: C.green }}>{formatNumberCO(found)} deudores encontrados</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SyncFailedBanner({ status, onRetry }: { status: SoftSegurosSyncStatus; onRetry: () => void }) {
+  return (
+    <div role="alert" style={{
+      padding: '12px 16px', background: C.pinkBg, border: `1px solid rgba(255,97,136,0.3)`,
+      marginBottom: 14,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 13, color: C.pink, marginBottom: 4 }}>
+            La última importación falló
+          </div>
+          <div style={{ fontFamily: C.IN, fontSize: 12, color: C.text, lineHeight: 1.5 }}>
+            {status.error_message || 'No hay detalles disponibles.'}
+          </div>
+        </div>
+        <button
+          onClick={onRetry}
+          style={{
+            height: 30, padding: '0 14px', border: `1px solid ${C.cyanBdr}`,
+            background: C.cyanBg, color: C.cyan, cursor: 'pointer',
+            fontFamily: C.SG, fontWeight: 600, fontSize: 11.5, letterSpacing: '0.05em',
+          }}
+        >
+          Reintentar
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -241,8 +307,20 @@ export function DebtorsSoftSegurosTab() {
     if (ok) setShowReimport(false);
   };
 
+  const showFailedBanner = !syncing
+    && syncStatus?.last_sync_status === 'failed'
+    && !!syncStatus.error_message;
+
   return (
     <div style={{ background: C.s1, border: `1px solid ${C.cyanBdr}`, padding: '16px 18px' }}>
+      {/* Live sync banner (when a sync is running on the server) */}
+      {syncing && syncStatus && <SyncRunningBanner status={syncStatus} />}
+
+      {/* Last-sync-failed banner (dismissed by retrying) */}
+      {showFailedBanner && syncStatus && (
+        <SyncFailedBanner status={syncStatus} onRetry={() => { void triggerSync(); }} />
+      )}
+
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
