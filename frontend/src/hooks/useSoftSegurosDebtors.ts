@@ -24,9 +24,15 @@ export interface SoftSegurosDebtor {
   is_active?: boolean;
 }
 
+export type CarteraState = 'Pendiente por pagar' | 'Sin pagos Asignados';
+
 export interface SoftSegurosImportFilters {
   include_vencidos: boolean;
   include_proximos: boolean;
+  /** Which estado_cartera values count as cobrable. Default: ["Pendiente por pagar"]. */
+  cartera_states?: CarteraState[];
+  /** Max age (months) of fecha_fin to import. null = no limit. Default: 12. */
+  max_age_months?: number | null;
 }
 
 export interface SoftSegurosSetupState {
@@ -43,8 +49,15 @@ export interface SoftSegurosSyncStatus {
   last_sync_at: string | null;
   last_sync_mode: string | null;
   last_sync_status: string | null;
+  started_at: string | null;
+  polizas_scanned: number;
+  total_count: number;
   debtors_created: number;
   debtors_updated: number;
+  debtors_marked_paid?: number;
+  debtors_marked_deleted?: number;
+  debtors_excluded_by_filter?: number;
+  error_message: string | null;
   next_sync_at: string | null;
   is_syncing_now: boolean;
 }
@@ -64,10 +77,16 @@ export interface UseSoftSegurosDebtorsResult {
   configure: (username: string, password: string, filters?: SoftSegurosImportFilters) => Promise<boolean>;
   triggerSync: () => Promise<void>;
   reimport: (filters: SoftSegurosImportFilters) => Promise<boolean>;
+  cancelSync: () => Promise<boolean>;
   refetch: () => Promise<void>;
 }
 
-const DEFAULT_FILTERS: SoftSegurosImportFilters = { include_vencidos: true, include_proximos: true };
+const DEFAULT_FILTERS: SoftSegurosImportFilters = {
+  include_vencidos: true,
+  include_proximos: true,
+  cartera_states: ['Pendiente por pagar'],
+  max_age_months: 12,
+};
 
 const POLL_MS = 3000;
 
@@ -114,6 +133,8 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
         importFilters: {
           include_vencidos: f?.include_vencidos ?? true,
           include_proximos: f?.include_proximos ?? true,
+          cartera_states: f?.cartera_states ?? DEFAULT_FILTERS.cartera_states,
+          max_age_months: f?.max_age_months ?? DEFAULT_FILTERS.max_age_months,
         },
       };
       if (mountedRef.current) setSetup(s);
@@ -154,23 +175,6 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     }
   }, []);
 
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    const s = await fetchSetup();
-    if (s.authorized === false) {
-      // Service not enabled by Landa — nothing else to fetch.
-      if (mountedRef.current) setLoading(false);
-      return;
-    }
-    await fetchSyncStatus();
-    if (s.configured) await fetchDebtorsList();
-    if (mountedRef.current) setLoading(false);
-  }, [fetchSetup, fetchSyncStatus, fetchDebtorsList]);
-
-  useEffect(() => {
-    void refetch();
-  }, [refetch]);
-
   // Poll sync-status until no sync is running; refetch lists + setup on completion.
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
@@ -183,6 +187,26 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
       }
     }, POLL_MS);
   }, [fetchSyncStatus, fetchSetup, fetchDebtorsList]);
+
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    const s = await fetchSetup();
+    if (s.authorized === false) {
+      // Service not enabled by Landa — nothing else to fetch.
+      if (mountedRef.current) setLoading(false);
+      return;
+    }
+    const st = await fetchSyncStatus();
+    if (s.configured) await fetchDebtorsList();
+    if (mountedRef.current) setLoading(false);
+    // If a sync is already running on the server (e.g., user closed and came
+    // back), resume polling so the UI keeps updating live.
+    if (st?.is_syncing_now) startPolling();
+  }, [fetchSetup, fetchSyncStatus, fetchDebtorsList, startPolling]);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
 
   const configure = useCallback(async (username: string, password: string, filters?: SoftSegurosImportFilters): Promise<boolean> => {
     setError(null);
@@ -282,6 +306,21 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     }
   }, [fetchSyncStatus, startPolling]);
 
+  const cancelSync = useCallback(async (): Promise<boolean> => {
+    try {
+      const r = await apiFetch('/api/debtors/sync-cancel', { method: 'POST' });
+      if (!r.ok) {
+        setError({ message: `Error ${r.status} al cancelar`, code: 'unknown' });
+        return false;
+      }
+      await fetchSyncStatus();
+      return true;
+    } catch {
+      setError({ message: 'Error de conexión', code: 'unknown' });
+      return false;
+    }
+  }, [fetchSyncStatus]);
+
   return {
     setup,
     debtors: { proximosAVencer, yaVencidos },
@@ -291,6 +330,7 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     configure,
     triggerSync,
     reimport,
+    cancelSync,
     refetch,
   };
 }

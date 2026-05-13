@@ -58,7 +58,29 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.debtors.create_index([("user_id", 1), ("estado", 1)])
     await db.debtors.create_index([("user_id", 1), ("created_at", -1)])
     await db.debtors.create_index("vapi_call_id", sparse=True)
-    await db.debtors.create_index([("user_id", 1), ("telefono", 1)], unique=True)
+    # The legacy unique (user_id, telefono) index applied to ALL debtors but
+    # SOFTSEGUROS represents each póliza of a client as its own debtor doc — a
+    # single client/teléfono can legitimately appear N times. The unique index
+    # now applies ONLY to manual cobranza debtors (source=="manual"); SOFTSEGUROS
+    # ones are de-duplicated by the (user_id, softseguros_poliza_id) index below.
+    # NOTE: this requires Phase 17 cobranza inserts to set source="manual" explicitly.
+    try:
+        await db.debtors.drop_index("user_id_1_telefono_1")
+    except Exception:
+        pass  # not yet created, or already partial
+    # Backfill: existing manual debtors don't have `source` set. Tag them so the
+    # new partial index matches and they keep their uniqueness guarantee.
+    try:
+        await db.debtors.update_many(
+            {"source": {"$exists": False}}, {"$set": {"source": "manual"}}
+        )
+    except Exception:  # pragma: no cover
+        pass
+    await db.debtors.create_index(
+        [("user_id", 1), ("telefono", 1)],
+        unique=True,
+        partialFilterExpression={"source": "manual"},
+    )
     # ── Phase 18: SOFTSEGUROS credentials per user ───────────────────────────
     await db.softseguros_credentials.create_index("user_id", unique=True)
     # ── Phase 18: SOFTSEGUROS sync engine indexes ────────────────────────────

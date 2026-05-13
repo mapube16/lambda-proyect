@@ -138,7 +138,14 @@ async def test_softseguros_end_to_end(async_client):
         mock.get("/api/poliza/").mock(side_effect=_list_side_effect)
         resp = await async_client.post(
             "/api/debtors/configure-softseguros",
-            json={"username": "cartera.dpg", "password": "secret"},
+            json={
+                "username": "cartera.dpg", "password": "secret",
+                "import_filters": {
+                    "include_vencidos": True, "include_proximos": True,
+                    "cartera_states": ["Pendiente por pagar", "Sin pagos Asignados"],
+                    "max_age_months": None,
+                },
+            },
             headers=headers,
         )
         assert resp.status_code == 200, resp.text
