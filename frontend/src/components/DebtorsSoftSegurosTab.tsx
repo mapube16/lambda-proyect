@@ -176,6 +176,33 @@ export function DebtorsSoftSegurosTab() {
     return Math.max(0, error.retryAfter - elapsed);
   }, [rateLimitStart, error, now]);
 
+  // Service not authorized by Landa for this account.
+  if (setup.authorized === false) {
+    return (
+      <div style={{ background: C.s1, border: `1px solid ${C.faint}`, padding: '20px 22px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span style={lbl(C.muted, 9)}>SOFTSEGUROS</span>
+          <span style={{ fontFamily: C.SG, fontSize: 11, color: C.muted }}>No habilitado</span>
+        </div>
+        <p style={{ fontFamily: C.IN, fontSize: 13, color: C.text, margin: '0 0 4px' }}>
+          La integración con SOFTSEGUROS no está habilitada para esta cuenta.
+        </p>
+        <p style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, margin: 0 }}>
+          Contacta a Landa para activar este servicio.
+        </p>
+      </div>
+    );
+  }
+
+  // Still checking authorization / setup.
+  if (setup.authorized === null && loading) {
+    return (
+      <div style={{ background: C.s1, border: `1px solid ${C.faint}`, padding: '20px 22px', fontFamily: C.IN, fontSize: 12.5, color: C.muted }}>
+        Cargando…
+      </div>
+    );
+  }
+
   if (!setup.configured) {
     return <SoftSegurosSetup hook={hook} onComplete={() => { void refetch(); }} />;
   }

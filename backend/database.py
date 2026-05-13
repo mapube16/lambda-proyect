@@ -63,10 +63,18 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.softseguros_credentials.create_index("user_id", unique=True)
     # ── Phase 18: SOFTSEGUROS sync engine indexes ────────────────────────────
     # Idempotency: a póliza id maps to exactly one debtor per user.
-    # sparse=True so Phase 17 manual debtors (no softseguros_poliza_id) are unaffected.
+    # partialFilterExpression (not sparse) so the uniqueness only applies to
+    # docs with source=="softseguros" — Phase 17 manual debtors (which may carry
+    # softseguros_poliza_id=null) are excluded entirely. A prior boot may have
+    # created this index with sparse=True; drop the stale one before recreating.
+    try:
+        await db.debtors.drop_index("user_id_1_softseguros_poliza_id_1")
+    except Exception:
+        pass  # index doesn't exist yet, or has a different name — fine
     await db.debtors.create_index(
         [("user_id", 1), ("softseguros_poliza_id", 1)],
-        unique=True, sparse=True,
+        unique=True,
+        partialFilterExpression={"source": "softseguros"},
     )
     await db.softseguros_sync_state.create_index("user_id", unique=True)
     await db.softseguros_sync_logs.create_index([("user_id", 1), ("completed_at", -1)])
