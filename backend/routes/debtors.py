@@ -76,11 +76,14 @@ class ImportFilters(BaseModel):
     - cartera_states: which estado_cartera values count as "cobrable" at all.
       Allowed: "Pendiente por pagar", "Sin pagos Asignados".
     - max_age_months: discard pólizas whose fecha_fin is older than this many months.
-      None = no age limit."""
+      None = no age limit.
+    - include_cancelled: when False (default) only Vigente/Devengada pólizas are
+      imported; cancelled / not-renewed ones are skipped even with open debt."""
     include_vencidos: bool = True
     include_proximos: bool = True
     cartera_states: Optional[list[str]] = None
     max_age_months: Optional[int] = 12
+    include_cancelled: bool = False
 
 
 class ConfigureSoftsegurosBody(BaseModel):

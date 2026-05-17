@@ -279,6 +279,85 @@ async def upsert_debtor_by_softseguros_poliza_id(
     return {"created": created, "updated": not created}
 
 
+def build_softseguros_upsert_op(user_id: str, softseguros_poliza_id: int, doc: dict) -> dict:
+    """
+    Build the (filter, update) pair for the same upsert as
+    upsert_debtor_by_softseguros_poliza_id, WITHOUT executing it. Returned as a
+    plain dict so the caller can batch many of them and turn them into a single
+    bulk_write (one Atlas round-trip per chunk instead of one per póliza).
+
+    Returns {"filter": {...}, "update": {...}}.
+    """
+    now = _utcnow()
+    set_payload = {k: doc[k] for k in _SOFTSEGUROS_SET_FIELDS if k in doc}
+    set_payload["last_synced"] = now
+    set_payload["updated_at"] = now
+
+    on_insert = {
+        "user_id": user_id,
+        "source": "softseguros",
+        "softseguros_poliza_id": softseguros_poliza_id,
+        "estado": "pendiente",
+        "intentos": 0,
+        "max_intentos": int(doc.get("max_intentos", 5)),
+        "historial_llamadas": [],
+        "escalado": False,
+        "vapi_call_id": None,
+        "ultimo_contacto_fecha": None,
+        "created_at": now,
+    }
+    for k in list(set_payload):
+        if k in on_insert:
+            on_insert.pop(k, None)
+
+    return {
+        "filter": {"user_id": user_id, "softseguros_poliza_id": softseguros_poliza_id},
+        "update": {"$set": set_payload, "$setOnInsert": on_insert},
+    }
+
+
+async def bulk_write_debtor_ops(db, ops: list) -> dict:
+    """
+    Execute a list of {"filter","update"} upsert specs.
+
+    Fast path: one Mongo bulk_write per call (the whole point of this — turns
+    ~5k Atlas round-trips into a few hundred). Falls back to per-op update_one
+    only if the driver/mock can't do bulk_write (e.g. mongomock-motor with a
+    newer pymongo that injects a 'sort' kwarg the mock doesn't accept). The
+    fallback path is correctness-preserving; production always uses the fast path.
+
+    Returns {"created": <upserted>, "updated": <modified>}.
+    """
+    if not ops:
+        return {"created": 0, "updated": 0}
+
+    from pymongo import UpdateOne
+
+    update_ones = [
+        UpdateOne(o["filter"], o["update"], upsert=True) for o in ops
+    ]
+    try:
+        res = await db.debtors.bulk_write(update_ones, ordered=False)
+        return {"created": res.upserted_count, "updated": res.modified_count}
+    except BulkWriteError as bwe:
+        details = bwe.details or {}
+        return {
+            "created": details.get("nUpserted", 0),
+            "updated": details.get("nModified", 0),
+        }
+    except TypeError:
+        # bulk_write unsupported by this driver/mock — degrade to update_one.
+        created = 0
+        updated = 0
+        for o in ops:
+            r = await db.debtors.update_one(o["filter"], o["update"], upsert=True)
+            if r.upserted_id is not None:
+                created += 1
+            else:
+                updated += 1
+        return {"created": created, "updated": updated}
+
+
 async def mark_debtor_paid_by_softseguros_poliza_id(
     db, user_id: str, softseguros_poliza_id: int,
 ) -> bool:

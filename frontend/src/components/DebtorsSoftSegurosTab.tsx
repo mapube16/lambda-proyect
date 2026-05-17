@@ -338,7 +338,13 @@ export function DebtorsSoftSegurosTab() {
   const doReimport = async () => {
     if (riNoneSelected) return;
     setRiSubmitting(true);
-    const ok = await reimport({ include_vencidos: riVencidos, include_proximos: riProximos });
+    // Preserve the user's original cartera_states / max_age / cancelled choices;
+    // the re-import panel only re-asks the vencidos/próximos buckets.
+    const ok = await reimport({
+      ...setup.importFilters,
+      include_vencidos: riVencidos,
+      include_proximos: riProximos,
+    });
     setRiSubmitting(false);
     if (ok) setShowReimport(false);
   };

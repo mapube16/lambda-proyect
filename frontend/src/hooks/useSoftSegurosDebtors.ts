@@ -33,6 +33,8 @@ export interface SoftSegurosImportFilters {
   cartera_states?: CarteraState[];
   /** Max age (months) of fecha_fin to import. null = no limit. Default: 12. */
   max_age_months?: number | null;
+  /** Include cancelled / not-renewed pólizas. Default: false (only active). */
+  include_cancelled?: boolean;
 }
 
 export interface SoftSegurosSetupState {
@@ -93,6 +95,7 @@ const DEFAULT_FILTERS: SoftSegurosImportFilters = {
   include_proximos: true,
   cartera_states: ['Pendiente por pagar'],
   max_age_months: 12,
+  include_cancelled: false,
 };
 
 const POLL_MS = 3000;
@@ -142,6 +145,7 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
           include_proximos: f?.include_proximos ?? true,
           cartera_states: f?.cartera_states ?? DEFAULT_FILTERS.cartera_states,
           max_age_months: f?.max_age_months ?? DEFAULT_FILTERS.max_age_months,
+          include_cancelled: f?.include_cancelled ?? DEFAULT_FILTERS.include_cancelled,
         },
       };
       if (mountedRef.current) setSetup(s);
