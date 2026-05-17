@@ -55,8 +55,14 @@ _DEFAULT_IMPORT_FILTERS = {
     "include_proximos": True,
     "cartera_states": ["Pendiente por pagar"],
     "max_age_months": 12,
+    # When False (default) only Vigente/Devengada pólizas count; cancelled or
+    # not-renewed pólizas are excluded even if they have outstanding debt.
+    "include_cancelled": False,
 }
 _VALID_CARTERA_STATES = {"Pendiente por pagar", "Sin pagos Asignados"}
+# Póliza estados considered "active" (still in force). Anything else
+# (Cancelada, No renovada, …) is only imported when include_cancelled=True.
+_ACTIVE_POLIZA_STATES = {"vigente", "devengada"}
 
 
 def _normalize_import_filters(f: Optional[dict]) -> dict:
@@ -91,6 +97,7 @@ def _normalize_import_filters(f: Optional[dict]) -> dict:
         "include_proximos": ip,
         "cartera_states": cartera_states,
         "max_age_months": max_age_months,
+        "include_cancelled": bool(f.get("include_cancelled", False)),
     }
 
 
@@ -300,12 +307,20 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
     else:
         oldest_allowed = None
 
+    include_cancelled = bool(active_filters.get("include_cancelled", False))
+
     def _passes_user_filters(p: dict) -> bool:
-        """Return False if the póliza fails the user's cartera_states / max_age filter."""
+        """Return False if the póliza fails the user's cartera_states / max_age /
+        estado_poliza (cancelled) filter."""
         # cartera_states filter
         ec = (p.get("estado_cartera") or "").strip().lower()
         if allowed_cartera_states and ec not in allowed_cartera_states:
             return False
+        # estado_poliza filter: unless include_cancelled, keep only active pólizas.
+        if not include_cancelled:
+            ep = (p.get("estado_poliza_nombre") or "").strip().lower()
+            if ep not in _ACTIVE_POLIZA_STATES:
+                return False
         # max_age_months filter (fecha de referencia)
         if oldest_allowed is not None:
             from .classifier import _to_date as _to_date_fn  # noqa: PLC0415
@@ -314,7 +329,15 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
                 return False
         return True
 
-    async def _persist_poliza(p: dict):
+    # Write buffer — pólizas are turned into pymongo UpdateOne ops and flushed
+    # to Mongo in one bulk_write per chunk (instead of one round-trip per póliza,
+    # which dominated the sync wall-clock on Atlas).
+    write_buffer: list = []
+    # pids that need a "pagado" soft-mark (separate op shape).
+    paid_pids: list = []
+
+    def _persist_poliza(p: dict):
+        """Classify + filter a póliza and queue its write op (no I/O here)."""
         pid = p.get("id")
         if pid is None:
             return
@@ -322,37 +345,92 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
         if counters["max_poliza_id_seen"] is None or pid > counters["max_poliza_id_seen"]:
             counters["max_poliza_id_seen"] = pid
         bucket = _classify(p, today)
-        # Apply USER filters first. If the póliza fails, treat it like "futuro"
-        # (not persisted) unless we already have a local doc, in which case mark inactive.
+
         if bucket in _COBRABLE_BUCKETS and not _passes_user_filters(p):
             doc = _poliza_to_debtor_doc(p, bucket)
             doc["is_active"] = False
-            await debtor_crud.upsert_debtor_by_softseguros_poliza_id(db, user_id, pid, doc)
+            write_buffer.append(debtor_crud.build_softseguros_upsert_op(user_id, pid, doc))
             counters["debtors_excluded_by_filter"] += 1
             return
         if bucket in _COBRABLE_BUCKETS:
             if bucket in allowed_buckets:
                 doc = _poliza_to_debtor_doc(p, bucket)  # is_active=True
-                res = await debtor_crud.upsert_debtor_by_softseguros_poliza_id(db, user_id, pid, doc)
-                if res["created"]:
-                    counters["debtors_created"] += 1
-                else:
-                    counters["debtors_updated"] += 1
             else:
-                # Cobrable, but the user didn't import this kind. Keep/refresh the doc
-                # (preserving Phase-17 call history) but mark it inactive so it stays
-                # out of the lists and the voice-agent queue.
+                # Cobrable but the user didn't import this kind: keep the doc
+                # (preserving Phase-17 call history) but inactive.
                 doc = _poliza_to_debtor_doc(p, bucket)
                 doc["is_active"] = False
-                await debtor_crud.upsert_debtor_by_softseguros_poliza_id(db, user_id, pid, doc)
                 counters["debtors_excluded_by_filter"] += 1
+            write_buffer.append(debtor_crud.build_softseguros_upsert_op(user_id, pid, doc))
         elif bucket == "pagado":
-            # If we already track it locally, retire it.
-            await debtor_crud.mark_debtor_paid_by_softseguros_poliza_id(db, user_id, pid)
+            paid_pids.append(pid)
         # "futuro" → not persisted in v1.
+
+    async def _flush_writes():
+        """Execute buffered upserts in one bulk_write, then the paid soft-marks."""
+        if write_buffer:
+            ops = list(write_buffer)
+            write_buffer.clear()
+            res = await debtor_crud.bulk_write_debtor_ops(db, ops)
+            counters["debtors_created"] += res["created"]
+            counters["debtors_updated"] += res["updated"]
+        if paid_pids:
+            pids = list(paid_pids)
+            paid_pids.clear()
+            for pid in pids:
+                await debtor_crud.mark_debtor_paid_by_softseguros_poliza_id(db, user_id, pid)
 
     async def _fetch_page(page: int) -> dict:
         return await call(lambda: adapter.list_polizas(page=page))
+
+    def _page_max_fecha(payload: dict):
+        """Latest fecha_fin/fecha_limite_pago on a page, as a date (or None)."""
+        from .classifier import _to_date as _to_date_fn  # noqa: PLC0415
+        best = None
+        for p in payload.get("results", []):
+            d = _to_date_fn(p.get("fecha_limite_pago")) or _to_date_fn(p.get("fecha_fin"))
+            if d is not None and (best is None or d > best):
+                best = d
+        return best
+
+    async def _probe_start_page(last_pg: int, oldest_allowed_date) -> int:
+        """
+        Binary-search for the first page whose pólizas fall inside the age window.
+
+        SAFE ONLY because we verified that for this account fecha_fin grows
+        ~monotonically with the page number (id ascending). We bias the result
+        a few pages earlier as a safety margin against minor non-monotonicity,
+        and cap the probe at ~12 requests. Returns 1 if anything is uncertain
+        (i.e. degrade to a full scan rather than risk skipping real debt).
+        """
+        if oldest_allowed_date is None or last_pg <= 40:
+            return 1
+        lo, hi = 1, last_pg
+        probes = 0
+        candidate = 1
+        while lo <= hi and probes < 12:
+            mid = (lo + hi) // 2
+            probes += 1
+            try:
+                payload = await _fetch_page(mid)
+            except Exception:  # noqa: BLE001 — any probe failure → full scan
+                return 1
+            page_max = _page_max_fecha(payload)
+            if page_max is None:
+                # Can't tell — search lower half to stay safe.
+                hi = mid - 1
+                continue
+            if page_max < oldest_allowed_date:
+                # This page is entirely too old → recent data is further ahead.
+                lo = mid + 1
+            else:
+                # This page reaches into the window → start at/below here.
+                candidate = mid
+                hi = mid - 1
+        # Safety margin: back off ~20 pages (≈200 pólizas) so a slightly
+        # out-of-order old póliza near the boundary is still caught.
+        start = max(1, candidate - 20)
+        return start
 
     # Flush counters to the sync_log doc so the UI can poll live progress.
     async def _flush_progress():
@@ -366,6 +444,7 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
                 "debtors_excluded_by_filter": counters["debtors_excluded_by_filter"],
                 "debtors_marked_paid": counters["debtors_marked_paid"],
                 "debtors_marked_deleted": counters["debtors_marked_deleted"],
+                "total_requests": call.total_requests,
             }}
         )
 
@@ -389,8 +468,23 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
 
         state = await db.softseguros_sync_state.find_one({"user_id": user_id})
 
+        early_cutoff_used = False
         if is_full_scan or not state:
-            pages_to_fetch = list(range(1, last_page + 1))
+            # Early-cutoff: when the user asked for a short age window
+            # (max_age_months <= 12) and the listing is large, binary-probe for
+            # the first in-window page and skip the (verified-older) prefix.
+            # Falls back to a full scan if the probe is uncertain.
+            start_page = 1
+            if (
+                is_full_scan
+                and oldest_allowed is not None
+                and max_age_months is not None
+                and max_age_months <= 12
+                and last_page > 200
+            ):
+                start_page = await _probe_start_page(last_page, oldest_allowed)
+                early_cutoff_used = start_page > 1
+            pages_to_fetch = list(range(start_page, last_page + 1))
         else:
             last_count = int(state.get("last_total_count") or 0)
             if total_count > last_count and last_count > 0:
@@ -405,36 +499,38 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
         # Process page 1 results first (already fetched).
         seen_ids: set = set()
 
-        async def _handle_page_payload(payload: dict):
+        def _handle_page_payload(payload: dict):
+            # Pure CPU: classify + queue write ops into the buffer. No I/O —
+            # the actual Mongo write happens once per chunk in _flush_writes().
             for p in payload.get("results", []):
                 if p.get("id") is not None:
                     seen_ids.add(p["id"])
-            # Persist sequentially within a page to keep upsert counters deterministic;
-            # pages themselves are fetched concurrently under the semaphore.
-            await asyncio.gather(*(_persist_poliza(p) for p in payload.get("results", [])))
+                _persist_poliza(p)
 
         # Page 1
         if 1 in pages_to_fetch:
-            await _handle_page_payload(first)
+            _handle_page_payload(first)
             remaining = [pg for pg in pages_to_fetch if pg != 1]
         else:
             remaining = list(pages_to_fetch)
 
-        # Fetch the rest concurrently in chunks, flushing progress + checking
-        # cancellation every CHUNK_SIZE pages so the UI sees live updates.
+        # Fetch the rest concurrently in chunks. After each chunk: flush the
+        # write buffer (one bulk_write), flush progress, check cancellation.
         CHUNK_SIZE = 20
 
         async def _fetch_and_handle(pg: int):
             payload = await _fetch_page(pg)
-            await _handle_page_payload(payload)
+            _handle_page_payload(payload)
 
-        await _flush_progress()  # initial flush right after page 1
+        await _flush_writes()     # persist page 1
+        await _flush_progress()   # initial flush right after page 1
 
         if remaining:
             for i in range(0, len(remaining), CHUNK_SIZE):
                 await _check_cancelled()
                 chunk = remaining[i : i + CHUNK_SIZE]
                 await asyncio.gather(*(_fetch_and_handle(pg) for pg in chunk))
+                await _flush_writes()
                 await _flush_progress()
 
         # ── Phase C: soft-delete sweep (skip on full scans — no prior state OR
@@ -519,6 +615,7 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
         "debtors_marked_deleted": counters["debtors_marked_deleted"],
         "debtors_excluded_by_filter": counters["debtors_excluded_by_filter"],
         "total_requests": call.total_requests,
+        "early_cutoff_used": locals().get("early_cutoff_used", False),
         "duration_seconds": (completed_at - started_at).total_seconds(),
     }
     await db.softseguros_sync_logs.update_one({"_id": log_id}, {"$set": final})

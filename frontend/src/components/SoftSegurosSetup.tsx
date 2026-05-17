@@ -46,6 +46,7 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
   const [statePendiente, setStatePendiente] = useState(true);    // estado_cartera "Pendiente por pagar"
   const [stateSinPagos, setStateSinPagos] = useState(false);     // estado_cartera "Sin pagos Asignados"
   const [maxAgeMonths, setMaxAgeMonths] = useState<number | null>(12); // 6 | 12 | 24 | null=sin límite
+  const [includeCancelled, setIncludeCancelled] = useState(false); // cancelled/no-renewed pólizas
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
@@ -103,6 +104,7 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
       include_proximos: includeProximos,
       cartera_states,
       max_age_months: maxAgeMonths,
+      include_cancelled: includeCancelled,
     });
     setSubmitting(false);
     if (ok) setSubmitted(true);
@@ -366,6 +368,26 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
                 Seleccioná al menos un estado de cartera.
               </div>
             )}
+          </fieldset>
+
+          <fieldset style={{ border: `1px solid rgba(255,255,255,0.08)`, padding: '12px 14px', margin: 0 }}>
+            <legend style={{ ...lbl, padding: '0 6px' }}>ESTADO DE LA PÓLIZA</legend>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontFamily: C.IN, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+              <input
+                className="ss-checkbox"
+                type="checkbox"
+                checked={includeCancelled}
+                disabled={submitting}
+                onChange={e => setIncludeCancelled(e.target.checked)}
+                aria-describedby="ss-help-cancelled"
+              />
+              <span>
+                Incluir pólizas canceladas / no renovadas
+                <span id="ss-help-cancelled" style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted, marginLeft: 6 }}>
+                  · por defecto solo se importan pólizas vigentes o devengadas
+                </span>
+              </span>
+            </label>
           </fieldset>
 
           <fieldset style={{ border: `1px solid rgba(255,255,255,0.08)`, padding: '12px 14px', margin: 0 }}>
