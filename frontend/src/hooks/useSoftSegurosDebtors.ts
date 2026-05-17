@@ -68,6 +68,11 @@ export interface SoftSegurosError {
   retryAfter?: number;
 }
 
+export interface SoftSegurosDisconnectImpact {
+  debtors_to_delete: number;
+  call_history_to_delete: number;
+}
+
 export interface UseSoftSegurosDebtorsResult {
   setup: SoftSegurosSetupState;
   debtors: { proximosAVencer: SoftSegurosDebtor[]; yaVencidos: SoftSegurosDebtor[] };
@@ -78,6 +83,8 @@ export interface UseSoftSegurosDebtorsResult {
   triggerSync: () => Promise<void>;
   reimport: (filters: SoftSegurosImportFilters) => Promise<boolean>;
   cancelSync: () => Promise<boolean>;
+  fetchDisconnectImpact: () => Promise<SoftSegurosDisconnectImpact | null>;
+  disconnect: (confirmWord: string) => Promise<boolean>;
   refetch: () => Promise<void>;
 }
 
@@ -306,6 +313,45 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     }
   }, [fetchSyncStatus, startPolling]);
 
+  const fetchDisconnectImpact = useCallback(async (): Promise<SoftSegurosDisconnectImpact | null> => {
+    try {
+      const r = await apiFetch('/api/debtors/disconnect-softseguros/impact');
+      if (!r.ok) return null;
+      return (await r.json()) as SoftSegurosDisconnectImpact;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const disconnect = useCallback(async (confirmWord: string): Promise<boolean> => {
+    setError(null);
+    try {
+      const r = await apiFetch('/api/debtors/disconnect-softseguros', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: confirmWord }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setError({ message: (d as { detail?: string }).detail || `Error ${r.status}`, code: 'unknown' });
+        return false;
+      }
+      // Wipe local state. The component will re-render and fall back to the setup form
+      // (setup.configured=false). fetchSetup also re-runs via the refetch wrapper below.
+      if (mountedRef.current) {
+        setProximosAVencer([]);
+        setYaVencidos([]);
+        setSyncStatus(null);
+        setSetup(prev => ({ ...prev, configured: false, configuredAt: null }));
+      }
+      void fetchSetup();
+      return true;
+    } catch {
+      setError({ message: 'Error de conexión', code: 'unknown' });
+      return false;
+    }
+  }, [fetchSetup]);
+
   const cancelSync = useCallback(async (): Promise<boolean> => {
     try {
       const r = await apiFetch('/api/debtors/sync-cancel', { method: 'POST' });
@@ -331,6 +377,8 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     triggerSync,
     reimport,
     cancelSync,
+    fetchDisconnectImpact,
+    disconnect,
     refetch,
   };
 }

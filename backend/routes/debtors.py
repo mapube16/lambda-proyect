@@ -93,6 +93,11 @@ class ReimportBody(BaseModel):
     import_filters: ImportFilters
 
 
+class DisconnectBody(BaseModel):
+    """User must type 'BORRAR' to confirm. Anything else is rejected."""
+    confirm: str
+
+
 # ── Background-safe sync runner ───────────────────────────────────────────────
 
 async def _safe_run_sync(user_id: str, mode: str, import_filters: Optional[dict] = None) -> None:
@@ -384,6 +389,89 @@ async def reimport(
     filters = body.import_filters.model_dump()
     background_tasks.add_task(_safe_run_sync, user_id, "reimport", filters)
     return {"sync_started": True, "import_filters": filters}
+
+
+# ── Disconnect SOFTSEGUROS (delete credentials + all imported debtors) ────────
+
+# Lightweight count endpoint so the modal can show impact before confirming.
+@router.get("/disconnect-softseguros/impact")
+async def disconnect_impact(current_user: dict = Depends(require_softseguros_enabled)):
+    """How many docs will be removed by a disconnect. Used by the confirm modal."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    debtors_total = await db.debtors.count_documents({"user_id": user_id, "source": "softseguros"})
+    # Count total call-history entries across all softseguros debtors (approx via $size).
+    pipeline = [
+        {"$match": {"user_id": user_id, "source": "softseguros"}},
+        {"$project": {"n": {"$size": {"$ifNull": ["$historial_llamadas", []]}}}},
+        {"$group": {"_id": None, "total": {"$sum": "$n"}}},
+    ]
+    agg = await db.debtors.aggregate(pipeline).to_list(length=1)
+    calls_total = agg[0]["total"] if agg else 0
+    return {
+        "debtors_to_delete": debtors_total,
+        "call_history_to_delete": calls_total,
+        "credentials_will_be_deleted": True,
+        "sync_logs_preserved": True,
+    }
+
+
+@router.post("/disconnect-softseguros")
+async def disconnect_softseguros(
+    body: DisconnectBody,
+    current_user: dict = Depends(require_softseguros_enabled),
+):
+    """
+    Disconnect SOFTSEGUROS for this user. Deletes:
+      - softseguros_credentials doc for user_id
+      - all debtors with source="softseguros" for user_id (including their
+        Phase-17 call history, which lives inside each debtor doc)
+      - softseguros_sync_state doc (resets the high-water mark)
+    Preserves:
+      - softseguros_sync_logs (audit trail — kept for Landa's records)
+
+    Requires confirm == "BORRAR" exactly (case-sensitive) to prevent accidental
+    triggers.
+    """
+    if body.confirm != "BORRAR":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Para desconectar, escribí exactamente 'BORRAR' en el campo de confirmación.",
+        )
+
+    user_id = str(current_user["user_id"])
+    db = get_db()
+
+    # If a sync is running, refuse — the user must cancel it first to avoid races.
+    cutoff = _utcnow() - _SYNCING_WINDOW
+    running = await db.softseguros_sync_logs.find_one({
+        "user_id": user_id,
+        "status": "in_progress",
+        "started_at": {"$gte": cutoff},
+        "mode": {"$ne": "pre_call_check"},
+    })
+    if running is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Hay una sincronización en curso. Cancelala primero desde 'Cancelar importación'.",
+        )
+
+    # Delete in this order: credentials (stop future syncs) → debtors → sync_state
+    cred_deleted = await db.softseguros_credentials.delete_one({"user_id": user_id})
+    debtors_deleted = await db.debtors.delete_many({"user_id": user_id, "source": "softseguros"})
+    state_deleted = await db.softseguros_sync_state.delete_one({"user_id": user_id})
+
+    logger.info(
+        "softseguros disconnect user_id=%s credentials=%d debtors=%d state=%d",
+        user_id, cred_deleted.deleted_count, debtors_deleted.deleted_count, state_deleted.deleted_count,
+    )
+
+    return {
+        "disconnected": True,
+        "credentials_deleted": cred_deleted.deleted_count,
+        "debtors_deleted": debtors_deleted.deleted_count,
+        "sync_state_deleted": state_deleted.deleted_count,
+    }
 
 
 # ── Single debtor ─────────────────────────────────────────────────────────────
