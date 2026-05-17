@@ -209,7 +209,7 @@ type TabKey = 'proximos' | 'vencidos';
 
 export function DebtorsSoftSegurosTab() {
   const hook = useSoftSegurosDebtors();
-  const { setup, debtors, syncStatus, loading, error, triggerSync, reimport, refetch } = hook;
+  const { setup, debtors, syncStatus, loading, error, triggerSync, reimport, refetch, fetchDisconnectImpact, disconnect } = hook;
   const [tab, setTab] = useState<TabKey>('proximos');
   const [now, setNow] = useState(Date.now());
   // Re-import panel state
@@ -217,6 +217,13 @@ export function DebtorsSoftSegurosTab() {
   const [riVencidos, setRiVencidos] = useState(true);
   const [riProximos, setRiProximos] = useState(true);
   const [riSubmitting, setRiSubmitting] = useState(false);
+
+  // Disconnect modal state
+  const [showDisconnect, setShowDisconnect] = useState(false);
+  const [discConfirm, setDiscConfirm] = useState('');
+  const [discImpact, setDiscImpact] = useState<{ debtors_to_delete: number; call_history_to_delete: number } | null>(null);
+  const [discSubmitting, setDiscSubmitting] = useState(false);
+  const [discError, setDiscError] = useState<string | null>(null);
 
   // Re-render every second while rate-limited so the countdown updates.
   useEffect(() => {
@@ -239,6 +246,35 @@ export function DebtorsSoftSegurosTab() {
       setRiProximos(setup.importFilters.include_proximos);
     }
   }, [showReimport, setup.importFilters]);
+
+  // When the disconnect modal opens, fetch the impact count.
+  useEffect(() => {
+    if (!showDisconnect) return;
+    setDiscConfirm('');
+    setDiscError(null);
+    setDiscImpact(null);
+    let alive = true;
+    fetchDisconnectImpact().then(d => {
+      if (alive && d) setDiscImpact({ debtors_to_delete: d.debtors_to_delete, call_history_to_delete: d.call_history_to_delete });
+    });
+    return () => { alive = false; };
+  }, [showDisconnect, fetchDisconnectImpact]);
+
+  const doDisconnect = async () => {
+    if (discConfirm !== 'BORRAR') {
+      setDiscError('Escribí exactamente la palabra BORRAR para confirmar.');
+      return;
+    }
+    setDiscSubmitting(true);
+    setDiscError(null);
+    const ok = await disconnect('BORRAR');
+    setDiscSubmitting(false);
+    if (ok) {
+      setShowDisconnect(false);
+    } else {
+      setDiscError(error?.message || 'No se pudo desconectar. Intentá de nuevo.');
+    }
+  };
 
   // Track when the rate-limit error first appeared to compute the countdown.
   const [rateLimitStart, setRateLimitStart] = useState<number | null>(null);
@@ -331,6 +367,19 @@ export function DebtorsSoftSegurosTab() {
           {error && error.code !== 'rate_limited' && (
             <span style={{ fontFamily: C.IN, fontSize: 11.5, color: C.pink }}>{error.message}</span>
           )}
+          <button
+            onClick={() => setShowDisconnect(true)}
+            disabled={syncing}
+            title="Desconectar SOFTSEGUROS y borrar la cartera importada"
+            style={{
+              height: 30, padding: '0 12px', border: `1px solid rgba(255,97,136,0.25)`,
+              background: 'transparent', color: syncing ? C.muted : C.pink,
+              cursor: syncing ? 'not-allowed' : 'pointer',
+              fontFamily: C.SG, fontWeight: 600, fontSize: 11.5, letterSpacing: '0.05em',
+            }}
+          >
+            Desconectar
+          </button>
           <button
             onClick={() => setShowReimport(v => !v)}
             disabled={syncing}
@@ -442,6 +491,107 @@ export function DebtorsSoftSegurosTab() {
       {loading
         ? <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: C.IN, fontSize: 12.5, color: C.muted }}>Cargando…</div>
         : <DebtorList debtors={active.list} emptyText={active.empty} />}
+
+      {/* Disconnect modal */}
+      {showDisconnect && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ss-disconnect-title"
+          onClick={() => !discSubmitting && setShowDisconnect(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000, padding: 20,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: C.s1, border: `1px solid rgba(255,97,136,0.35)`,
+              padding: '24px 26px', maxWidth: 520, width: '100%',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+            }}
+          >
+            <div style={lbl(C.pink, 9)}>ACCIÓN IRREVERSIBLE</div>
+            <h3 id="ss-disconnect-title" style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 18, color: C.text, margin: '6px 0 10px' }}>
+              Desconectar SOFTSEGUROS
+            </h3>
+            <p style={{ fontFamily: C.IN, fontSize: 13, color: C.text, lineHeight: 1.55, margin: '0 0 12px' }}>
+              Vamos a borrar permanentemente:
+            </p>
+            <ul style={{ fontFamily: C.IN, fontSize: 12.5, color: C.muted, lineHeight: 1.65, paddingLeft: 20, margin: '0 0 14px' }}>
+              <li>Tus credenciales SOFTSEGUROS guardadas.</li>
+              <li>
+                <strong style={{ color: C.text }}>
+                  {discImpact ? new Intl.NumberFormat('es-CO').format(discImpact.debtors_to_delete) : '…'} deudores
+                </strong>{' '}
+                importados de SOFTSEGUROS.
+              </li>
+              <li>
+                <strong style={{ color: C.text }}>
+                  {discImpact ? new Intl.NumberFormat('es-CO').format(discImpact.call_history_to_delete) : '…'} registros
+                </strong>{' '}
+                de historial de llamadas asociadas a esos deudores.
+              </li>
+            </ul>
+            <p style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, lineHeight: 1.55, margin: '0 0 14px' }}>
+              Los <strong style={{ color: C.text }}>deudores manuales y CSV</strong> que hayas creado
+              en cobranza NO se borran. Tampoco se borran los registros de auditoría de sincronización
+              (los guarda Landa).
+            </p>
+            <p style={{ fontFamily: C.IN, fontSize: 12.5, color: C.text, margin: '0 0 6px' }}>
+              Para confirmar, escribí <strong style={{ color: C.pink, fontFamily: C.SG, letterSpacing: '0.06em' }}>BORRAR</strong> abajo:
+            </p>
+            <input
+              type="text"
+              value={discConfirm}
+              onChange={e => { setDiscConfirm(e.target.value); setDiscError(null); }}
+              disabled={discSubmitting}
+              autoFocus
+              placeholder="BORRAR"
+              aria-label="Confirmación de borrado"
+              style={{
+                width: '100%', boxSizing: 'border-box', background: C.s2,
+                border: `1px solid rgba(255,97,136,0.3)`, color: C.text,
+                fontFamily: C.IN, fontSize: 14, padding: '10px 12px', outline: 'none',
+                letterSpacing: '0.04em',
+              }}
+            />
+            {discError && (
+              <div role="alert" style={{ fontFamily: C.IN, fontSize: 11.5, color: C.orange, marginTop: 8 }}>
+                {discError}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+              <button
+                onClick={() => setShowDisconnect(false)}
+                disabled={discSubmitting}
+                style={{
+                  height: 34, padding: '0 16px', border: `1px solid rgba(255,255,255,0.1)`,
+                  background: 'transparent', color: C.muted, fontFamily: C.SG, fontWeight: 600, fontSize: 12,
+                  cursor: discSubmitting ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { void doDisconnect(); }}
+                disabled={discSubmitting || discConfirm !== 'BORRAR'}
+                style={{
+                  height: 34, padding: '0 18px', border: 'none',
+                  background: discSubmitting || discConfirm !== 'BORRAR' ? C.s3 : C.pink,
+                  color: discSubmitting || discConfirm !== 'BORRAR' ? C.muted : '#fff',
+                  fontFamily: C.SG, fontWeight: 700, fontSize: 12, letterSpacing: '0.05em',
+                  cursor: discSubmitting || discConfirm !== 'BORRAR' ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {discSubmitting ? 'Desconectando…' : 'Desconectar y borrar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
