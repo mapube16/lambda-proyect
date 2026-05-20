@@ -10,6 +10,7 @@ export interface SoftSegurosDebtor {
   cliente_apellidos?: string;
   cliente_celular?: string | null;
   cliente_email?: string | null;
+  cliente_documento?: string | null;
   telefono?: string;
   total?: number | null;
   monto?: number | null;
