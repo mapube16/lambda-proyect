@@ -184,15 +184,71 @@ async def get_configure_softseguros(current_user: dict = Depends(require_softseg
 
 # ── List debtors ──────────────────────────────────────────────────────────────
 
+# Valid sort fields → Mongo field + default direction.
+_SORT_MAP = {
+    "vencimiento": ("vencimiento", 1),   # earliest first
+    "monto":       ("monto", -1),         # largest first
+    "nombre":      ("nombre", 1),
+    "dias_vencidos": ("vencimiento", 1),  # earliest = most-days-overdue
+}
+
+
+def _build_aging_filter(bucket: Optional[str]) -> dict:
+    """Translate a UI bucket (1-30 / 31-60 / 61-90 / 90+) into a Mongo $expr range on
+    days-since-vencimiento. `vencimiento` is an ISO date string (we store SOFTSEGUROS's
+    fecha_limite_pago or fecha_fin verbatim). We compute days via $dateDiff over
+    $dateFromString.
+
+    Returns an empty dict if bucket is None or invalid."""
+    if not bucket:
+        return {}
+    ranges = {
+        "1-30":  (1, 30),
+        "31-60": (31, 60),
+        "61-90": (61, 90),
+        "90+":   (91, 100_000),
+    }
+    if bucket not in ranges:
+        return {}
+    lo, hi = ranges[bucket]
+    # days_overdue = days between vencimiento and today (positive when overdue)
+    return {
+        "$expr": {
+            "$let": {
+                "vars": {
+                    "v": {"$dateFromString": {"dateString": "$vencimiento", "onError": None, "onNull": None}},
+                },
+                "in": {
+                    "$and": [
+                        {"$ne": ["$$v", None]},
+                        {"$gte": [{"$dateDiff": {"startDate": "$$v", "endDate": "$$NOW", "unit": "day"}}, lo]},
+                        {"$lte": [{"$dateDiff": {"startDate": "$$v", "endDate": "$$NOW", "unit": "day"}}, hi]},
+                    ]
+                }
+            }
+        }
+    }
+
+
 @router.get("")
 @router.get("/")
 async def list_debtors(
     status_filter: Optional[str] = Query(None, alias="status"),
+    bucket: Optional[str] = Query(None, description="1-30 | 31-60 | 61-90 | 90+"),
+    min_monto: Optional[float] = Query(None, ge=0, alias="min_monto"),
+    max_monto: Optional[float] = Query(None, ge=0, alias="max_monto"),
+    ramo: Optional[list[str]] = Query(None, description="Multi-select ramo_nombre"),
+    sort: str = Query("vencimiento", description="vencimiento | monto | nombre | dias_vencidos"),
+    direction: str = Query("asc", description="asc | desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     current_user: dict = Depends(require_softseguros_enabled),
 ):
-    """Paginated list of this user's active SOFTSEGUROS debtors, optionally filtered by status."""
+    """Paginated, filtered, sorted list of this user's active SOFTSEGUROS debtors.
+
+    Filters are server-side (Mongo). Text search (nombre / póliza / documento) lives
+    on the client and runs over the current page — keeps the API surface small.
+    """
     user_id = str(current_user["user_id"])
     db = get_db()
 
@@ -205,15 +261,130 @@ async def list_debtors(
             )
         query["status_softseguros"] = status_filter
 
+    if ramo:
+        # Accept comma-joined OR repeated query params.
+        flat: list[str] = []
+        for r in ramo:
+            flat.extend([x.strip() for x in r.split(",") if x.strip()])
+        if flat:
+            query["ramo_nombre"] = {"$in": flat}
+
+    if min_monto is not None or max_monto is not None:
+        monto_range: dict = {}
+        if min_monto is not None:
+            monto_range["$gte"] = float(min_monto)
+        if max_monto is not None:
+            monto_range["$lte"] = float(max_monto)
+        query["monto"] = monto_range
+
+    aging_clause = _build_aging_filter(bucket)
+    if aging_clause:
+        # Merge with the existing query (both are top-level conditions).
+        query = {"$and": [query, aging_clause]}
+
+    # Sort
+    sort_field, default_dir = _SORT_MAP.get(sort, _SORT_MAP["vencimiento"])
+    sort_dir = -1 if direction.lower() == "desc" else (1 if direction.lower() == "asc" else default_dir)
+
     total = await db.debtors.count_documents(query)
     cursor = (
         db.debtors.find(query)
-        .sort("vencimiento", 1)
+        .sort(sort_field, sort_dir)
         .skip((page - 1) * page_size)
         .limit(page_size)
     )
     docs = await cursor.to_list(length=page_size)
-    return {"items": [_serialize(d) for d in docs], "page": page, "page_size": page_size, "total": total}
+    return {
+        "items": [_serialize(d) for d in docs],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "sort": sort,
+        "direction": "desc" if sort_dir == -1 else "asc",
+    }
+
+
+# Aging summary: counts + total monto per overdue bucket. Used by the dashboard
+# KPIs strip. Same filters apply (so the KPIs reflect any active ramo/monto filter
+# — but NOT the bucket filter itself, because the KPIs *are* the bucket selectors).
+@router.get("/aging-summary")
+async def aging_summary(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    min_monto: Optional[float] = Query(None, ge=0),
+    max_monto: Optional[float] = Query(None, ge=0),
+    ramo: Optional[list[str]] = Query(None),
+    current_user: dict = Depends(require_softseguros_enabled),
+):
+    user_id = str(current_user["user_id"])
+    db = get_db()
+
+    match: dict = {"user_id": user_id, "source": "softseguros", "is_active": True}
+    if status_filter and status_filter in _VALID_STATUSES:
+        match["status_softseguros"] = status_filter
+    if ramo:
+        flat: list[str] = []
+        for r in ramo:
+            flat.extend([x.strip() for x in r.split(",") if x.strip()])
+        if flat:
+            match["ramo_nombre"] = {"$in": flat}
+    if min_monto is not None or max_monto is not None:
+        rng: dict = {}
+        if min_monto is not None:
+            rng["$gte"] = float(min_monto)
+        if max_monto is not None:
+            rng["$lte"] = float(max_monto)
+        match["monto"] = rng
+
+    pipeline = [
+        {"$match": match},
+        {"$addFields": {
+            "_v": {"$dateFromString": {"dateString": "$vencimiento", "onError": None, "onNull": None}},
+        }},
+        {"$addFields": {
+            "_days": {"$cond": [
+                {"$eq": ["$_v", None]},
+                None,
+                {"$dateDiff": {"startDate": "$_v", "endDate": "$$NOW", "unit": "day"}},
+            ]}
+        }},
+        {"$addFields": {
+            "_bucket": {"$switch": {
+                "branches": [
+                    {"case": {"$eq": ["$_days", None]}, "then": "unknown"},
+                    {"case": {"$lt": ["$_days", 1]},   "then": "future"},
+                    {"case": {"$lte": ["$_days", 30]}, "then": "1-30"},
+                    {"case": {"$lte": ["$_days", 60]}, "then": "31-60"},
+                    {"case": {"$lte": ["$_days", 90]}, "then": "61-90"},
+                ],
+                "default": "90+",
+            }}
+        }},
+        {"$group": {
+            "_id": "$_bucket",
+            "count": {"$sum": 1},
+            "total_monto": {"$sum": {"$ifNull": ["$monto", 0]}},
+        }},
+    ]
+    buckets = {b: {"count": 0, "total_monto": 0.0} for b in ("1-30", "31-60", "61-90", "90+", "future", "unknown")}
+    async for row in db.debtors.aggregate(pipeline):
+        b = row["_id"]
+        if b in buckets:
+            buckets[b] = {"count": int(row["count"]), "total_monto": float(row["total_monto"] or 0)}
+
+    # Collect distinct ramos for the ramo multi-select (for the same user).
+    ramos_raw = await db.debtors.distinct(
+        "ramo_nombre",
+        {"user_id": user_id, "source": "softseguros", "is_active": True},
+    )
+    ramos = [r for r in ramos_raw if r]
+
+    total_count = sum(b["count"] for b in buckets.values())
+    total_monto = sum(b["total_monto"] for b in buckets.values())
+    return {
+        "buckets": buckets,
+        "total": {"count": total_count, "total_monto": total_monto},
+        "ramos": sorted(ramos),
+    }
 
 
 # ── Sync status & logs ────────────────────────────────────────────────────────
