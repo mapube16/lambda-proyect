@@ -90,20 +90,36 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// Default per-request timeout. Without this, a hung connection occupies one of
+// the browser's ~6 connections-per-host slots indefinitely, so subsequent
+// requests queue behind it (this is what produced the 100s "latencies" — the
+// server answered in 0.5s but the request waited in the browser's queue).
+const DEFAULT_TIMEOUT_MS = 20_000;
+
 export function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const existing = (init.headers ?? {}) as Record<string, string>;
   const method = (init.method ?? 'GET').toUpperCase();
   const t0 = performance.now();
+
+  // Wire up an abort timeout unless the caller already passed a signal.
+  const controller = init.signal ? null : new AbortController();
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+    : null;
+
   return fetch(url, {
     ...init,
     credentials: 'include',
     headers: { ...NGROK_BYPASS, ...existing },
+    signal: init.signal ?? controller?.signal,
   })
     .then((res) => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
       _track(method, url, res.status, performance.now() - t0);
       return res;
     })
     .catch((err) => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
       _track(method, url, 'ERR', performance.now() - t0);
       throw err;
     });
