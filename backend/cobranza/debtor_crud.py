@@ -154,10 +154,15 @@ async def bulk_upsert_debtors(db, user_id: str, debtors: list[dict]) -> dict:
 
 async def get_debtors(db, user_id: str, estado: Optional[str] = None) -> list[dict]:
     """
-    Return all debtors for user_id, optionally filtered by estado.
+    Return the user's MANUAL / CSV cobranza debtors, optionally filtered by estado.
     Sorted by created_at descending.
+
+    Excludes SOFTSEGUROS-sourced debtors (source="softseguros"): those live in the
+    dedicated SOFTSEGUROS tab (/api/debtors) which is paginated. Including them here
+    pulled the whole imported cartera (e.g. 16 MB / 12 s for ~900 pólizas) into the
+    un-paginated cobranza list and blocked the browser connection pool.
     """
-    query: dict = {"user_id": user_id}
+    query: dict = {"user_id": user_id, "source": {"$ne": "softseguros"}}
     if estado is not None:
         query["estado"] = estado
 
