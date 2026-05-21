@@ -134,7 +134,23 @@ export function useSoftSegurosDebtorsView(initial?: Partial<DebtorsListFilters>)
       // Any change OTHER than page resets pagination to 1.
       const keys = Object.keys(patch);
       const resetPage = keys.some(k => k !== 'page');
-      return { ...prev, ...patch, ...(resetPage && !('page' in patch) ? { page: 1 } : {}) };
+      const next = { ...prev, ...patch, ...(resetPage && !('page' in patch) ? { page: 1 } : {}) };
+      // IDEMPOTENCY GUARD: if nothing actually changed, return prev so React
+      // bails out of the re-render. Without this, callers that fire the same
+      // patch every render (e.g. an effect syncing status) recreate the filters
+      // object endlessly, which re-triggers the debounced fetch → request loop.
+      const sameArr = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+      const unchanged =
+        next.status === prev.status &&
+        next.bucket === prev.bucket &&
+        next.minMonto === prev.minMonto &&
+        next.maxMonto === prev.maxMonto &&
+        next.sort === prev.sort &&
+        next.direction === prev.direction &&
+        next.page === prev.page &&
+        next.pageSize === prev.pageSize &&
+        sameArr(next.ramos, prev.ramos);
+      return unchanged ? prev : next;
     });
   }, []);
 
