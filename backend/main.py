@@ -358,6 +358,25 @@ async def lifespan(app: FastAPI):
     print("Shutting down...")
 
 
+# ── Auth cookie helper ──────────────────────────────────────────────────────────
+# secure=True means the browser only sends the cookie over HTTPS. On HTTP localhost
+# (dev) that silently drops the cookie → every request is unauthenticated → 401 loop.
+# Gate it on COOKIE_SECURE (default false for dev; set true in production/HTTPS).
+_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in ("1", "true", "yes")
+
+
+def _set_auth_cookie(response, token: str) -> None:
+    response.set_cookie(
+        key="hive_token",
+        value=token,
+        httponly=True,
+        secure=_COOKIE_SECURE,
+        samesite="lax",
+        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60,
+        path="/",
+    )
+
+
 app = FastAPI(
     title="Isomorph Office",
     description="Real-time AI agent visualization backend",
@@ -491,16 +510,8 @@ async def login(user: UserCreate, request: Request):
 
     from fastapi.responses import JSONResponse
     response = JSONResponse(content=response_data, status_code=200)
-    # Set token as httpOnly, Secure (HTTPS), SameSite cookie
-    response.set_cookie(
-        key="hive_token",
-        value=token,
-        httponly=True,
-        secure=True,  # Only send over HTTPS in production
-        samesite="lax",  # "lax" allows cookie on same-site navigations
-        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60,
-        path="/",
-    )
+    # httpOnly cookie (secure flag gated on COOKIE_SECURE for dev/prod parity).
+    _set_auth_cookie(response, token)
     return response
 
 
@@ -572,15 +583,7 @@ async def google_login(data: dict):
             "authenticated": True,
         }
         response = JSONResponse(content=response_data, status_code=200)
-        response.set_cookie(
-            key="hive_token",
-            value=token,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60,
-            path="/",
-        )
+        _set_auth_cookie(response, token)
         return response
     
     except Exception as e:
