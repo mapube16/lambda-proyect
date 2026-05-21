@@ -168,26 +168,10 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
     }
   }, []);
 
-  const fetchDebtorsList = useCallback(async () => {
-    try {
-      const [pr, yr] = await Promise.all([
-        apiFetch('/api/debtors?status=proximos_a_vencer&page=1&page_size=200'),
-        apiFetch('/api/debtors?status=ya_vencidos&page=1&page_size=200'),
-      ]);
-      if (pr.ok) {
-        const d = await pr.json();
-        if (mountedRef.current) setProximosAVencer(Array.isArray(d.items) ? d.items : []);
-      }
-      if (yr.ok) {
-        const d = await yr.json();
-        if (mountedRef.current) setYaVencidos(Array.isArray(d.items) ? d.items : []);
-      }
-    } catch {
-      // leave existing lists
-    }
-  }, []);
-
-  // Poll sync-status until no sync is running; refetch lists + setup on completion.
+  // Poll sync-status until no sync is running; refetch setup on completion.
+  // NOTE: debtor LISTS are owned by useSoftSegurosDebtorsView now — this hook
+  // only tracks setup + sync status, so we no longer fetch lists here (that was
+  // a redundant 2×200-row fetch on every poll tick).
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
     pollRef.current = window.setInterval(async () => {
@@ -195,10 +179,9 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
       if (st && !st.is_syncing_now) {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         await fetchSetup();
-        await fetchDebtorsList();
       }
     }, POLL_MS);
-  }, [fetchSyncStatus, fetchSetup, fetchDebtorsList]);
+  }, [fetchSyncStatus, fetchSetup]);
 
   const refetch = useCallback(async () => {
     setLoading(true);
@@ -209,12 +192,11 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
       return;
     }
     const st = await fetchSyncStatus();
-    if (s.configured) await fetchDebtorsList();
     if (mountedRef.current) setLoading(false);
     // If a sync is already running on the server (e.g., user closed and came
     // back), resume polling so the UI keeps updating live.
     if (st?.is_syncing_now) startPolling();
-  }, [fetchSetup, fetchSyncStatus, fetchDebtorsList, startPolling]);
+  }, [fetchSetup, fetchSyncStatus, startPolling]);
 
   useEffect(() => {
     void refetch();

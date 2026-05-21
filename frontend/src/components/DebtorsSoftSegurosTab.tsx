@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useSoftSegurosDebtors,
   type SoftSegurosDebtor,
@@ -399,12 +399,17 @@ export function DebtorsSoftSegurosTab() {
     return () => { alive = false; };
   }, [showDisconnect, fetchDisconnectImpact]);
 
-  // Refetch view when window regains focus.
+  // Refetch view when the window regains focus. We keep the latest refetch fns
+  // in a ref so the listener is attached ONCE (not re-subscribed every render —
+  // `view` and `refetch` change identity on each render and would otherwise
+  // churn the event listener and risk refetch storms).
+  const refetchRef = useRef<() => void>(() => {});
+  refetchRef.current = () => { void view.refetch(); void refetch(); };
   useEffect(() => {
-    const onFocus = () => { void view.refetch(); void refetch(); };
+    const onFocus = () => refetchRef.current();
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [view, refetch]);
+  }, []);
 
   // All useMemo / derived state MUST live above the early returns below — React
   // requires the same hook order on every render. Earlier versions of this
