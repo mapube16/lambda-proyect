@@ -370,6 +370,25 @@ export function DebtorsSoftSegurosTab() {
   const view = useSoftSegurosDebtorsView({ status: statusTab });
   const [density, setDensity] = useState<'table' | 'cards'>('table');
 
+  // Rate-limit countdown: when triggerSync is throttled (429), the hook sets
+  // error.code='rate_limited' with retryAfter (seconds). Tick it down so the
+  // "Actualizar" button shows the remaining wait and stays disabled meanwhile.
+  const [rateLimitUntil, setRateLimitUntil] = useState<number | null>(null);
+  useEffect(() => {
+    if (error?.code === 'rate_limited' && error.retryAfter) {
+      setRateLimitUntil(Date.now() + error.retryAfter * 1000);
+    }
+  }, [error]);
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => {
+    if (rateLimitUntil === null) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [rateLimitUntil]);
+  const rateLimitLeft = rateLimitUntil ? Math.max(0, Math.ceil((rateLimitUntil - nowTick) / 1000)) : 0;
+  const syncing = !!syncStatus?.is_syncing_now;
+  const syncBlocked = syncing || rateLimitLeft > 0;
+
   // Keep view.filters.status in sync with the tab.
   useEffect(() => { view.setFilters({ status: statusTab }); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [statusTab]);
 
@@ -497,10 +516,14 @@ export function DebtorsSoftSegurosTab() {
           >Re-importar…</button>
           <button
             onClick={() => { void triggerSync(); void view.refetch(); }}
-            disabled={!!syncStatus?.is_syncing_now}
-            title="Actualizar desde SOFTSEGUROS"
-            style={btn('primary', !!syncStatus?.is_syncing_now)}
-          >Actualizar</button>
+            disabled={syncBlocked}
+            title={
+              rateLimitLeft > 0
+                ? `Esperá ${rateLimitLeft}s — solo se permite 1 sincronización cada 5 minutos`
+                : syncing ? 'Sincronización en curso' : 'Actualizar desde SOFTSEGUROS'
+            }
+            style={btn('primary', syncBlocked)}
+          >{rateLimitLeft > 0 ? `Esperá ${rateLimitLeft}s` : 'Actualizar'}</button>
         </div>
       </div>
 
