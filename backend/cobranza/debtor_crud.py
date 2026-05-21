@@ -152,23 +152,55 @@ async def bulk_upsert_debtors(db, user_id: str, debtors: list[dict]) -> dict:
     return {"updated": updated, "created": created}
 
 
-async def get_debtors(db, user_id: str, estado: Optional[str] = None) -> list[dict]:
-    """
-    Return the user's MANUAL / CSV cobranza debtors, optionally filtered by estado.
-    Sorted by created_at descending.
+# Cobranza UI groups the 10+ estados into 4 actionable tabs.
+ESTADO_GROUPS: dict[str, list[str]] = {
+    "atencion":  ["escalado", "agotado", "disputa", "sin_contacto"],
+    "pendientes": ["pendiente", "llamando"],
+    "gestion":   ["contactado", "promesa_de_pago", "reagendado"],
+    "resueltos": ["pagado", "pausado"],
+}
 
-    Excludes SOFTSEGUROS-sourced debtors (source="softseguros"): those live in the
-    dedicated SOFTSEGUROS tab (/api/debtors) which is paginated. Including them here
-    pulled the whole imported cartera (e.g. 16 MB / 12 s for ~900 pólizas) into the
-    un-paginated cobranza list and blocked the browser connection pool.
+
+async def get_debtors(
+    db,
+    user_id: str,
+    estado: Optional[str] = None,
+    group: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
     """
-    query: dict = {"user_id": user_id, "source": {"$ne": "softseguros"}}
+    Paginated cobranza debtors for the bot's operations panel — covers the WHOLE
+    cartera (manual/CSV + SOFTSEGUROS), since those are exactly who the bot calls.
+
+    Filtering:
+      - estado: exact match on a single estado
+      - group:  one of ESTADO_GROUPS (atencion|pendientes|gestion|resueltos)
+    Pagination keeps the payload small (the un-paginated version pulled the whole
+    cartera, ~16 MB for a large SOFTSEGUROS import, and blocked the browser).
+
+    Returns {"items": [...], "page", "page_size", "total"}.
+    """
+    query: dict = {"user_id": user_id}
     if estado is not None:
         query["estado"] = estado
+    elif group is not None and group in ESTADO_GROUPS:
+        query["estado"] = {"$in": ESTADO_GROUPS[group]}
 
-    cursor = db.debtors.find(query).sort("created_at", -1)
-    docs = await cursor.to_list(length=None)
-    return [_serialize(d) for d in docs]
+    total = await db.debtors.count_documents(query)
+    cursor = (
+        db.debtors.find(query)
+        .sort("updated_at", -1)
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    docs = await cursor.to_list(length=page_size)
+    return {
+        "items": [_serialize(d) for d in docs],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
 
 
 async def get_debtor_by_id(db, user_id: str, debtor_id: str) -> Optional[dict]:

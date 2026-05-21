@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useSoftSegurosDebtors,
   type SoftSegurosDebtor,
@@ -261,7 +261,7 @@ interface RowProps {
   density: 'table' | 'cards';
 }
 
-function DebtorRow({ d, monthMonto, density }: RowProps) {
+const DebtorRow = memo(function DebtorRow({ d, monthMonto, density }: RowProps) {
   const due = dueDateISO(d);
   const days = daysFromToday(due);
   const overdue = days !== null && days > 0;
@@ -359,7 +359,7 @@ function DebtorRow({ d, monthMonto, density }: RowProps) {
       </td>
     </tr>
   );
-}
+});
 
 // ── Main component ────────────────────────────────────────────────────────────
 

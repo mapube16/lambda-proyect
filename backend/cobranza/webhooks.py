@@ -26,7 +26,7 @@ logger = logging.getLogger("cobranza.webhooks")
 vapi_router = APIRouter(tags=["vapi-webhooks"])
 
 # Intentos states that are "terminal" — call-ended must not overwrite them
-_TERMINAL_ESTADOS = {"promesa_de_pago", "escalado", "pagado"}
+_TERMINAL_ESTADOS = {"promesa_de_pago", "escalado", "pagado", "reagendado", "disputa"}
 
 
 # ── Tool dispatch helper ───────────────────────────────────────────────────────
@@ -96,6 +96,38 @@ async def dispatch_tool(name: str, params: dict, call_obj: dict) -> str:
                     },
                 )
             return "Escalado a agente humano. Un asesor le contactará pronto."
+
+        elif name == "reagendar_llamada":
+            # The debtor answered but asked to be called back at another time.
+            fecha_reagendada = params.get("fecha_reagendada")  # ISO date/datetime string
+            if debtor_id:
+                await db.debtors.update_one(
+                    {"_id": ObjectId(debtor_id)},
+                    {
+                        "$set": {
+                            "estado": "reagendado",
+                            "fecha_reagendada": fecha_reagendada,
+                            "updated_at": datetime.now(timezone.utc),
+                        }
+                    },
+                )
+            return f"Llamada reagendada para {fecha_reagendada}. Gracias por su tiempo."
+
+        elif name == "registrar_disputa":
+            # The debtor disputes / does not recognize the debt.
+            motivo_disputa = params.get("motivo_disputa", "")
+            if debtor_id:
+                await db.debtors.update_one(
+                    {"_id": ObjectId(debtor_id)},
+                    {
+                        "$set": {
+                            "estado": "disputa",
+                            "motivo_disputa": motivo_disputa,
+                            "updated_at": datetime.now(timezone.utc),
+                        }
+                    },
+                )
+            return "Disputa registrada. Un asesor revisará el caso y le contactará."
 
         else:
             return "Herramienta no reconocida."
