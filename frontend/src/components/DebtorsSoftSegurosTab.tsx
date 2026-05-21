@@ -406,6 +406,19 @@ export function DebtorsSoftSegurosTab() {
     return () => window.removeEventListener('focus', onFocus);
   }, [view, refetch]);
 
+  // All useMemo / derived state MUST live above the early returns below — React
+  // requires the same hook order on every render. Earlier versions of this
+  // component crashed with "Rendered more hooks than during the previous render"
+  // because monthMonto's useMemo ran only when the guards passed.
+  const monthMonto = useMemo(() => {
+    let max = 0;
+    for (const d of view.list.items) {
+      const m = (d as { monto?: number; total?: number }).monto ?? d.total ?? 0;
+      if (Number(m) > max) max = Number(m);
+    }
+    return max;
+  }, [view.list.items]);
+
   // ── Guards ──────────────────────────────────────────────────────────────────
   if (setup.authorized === false) {
     return (
@@ -442,8 +455,6 @@ export function DebtorsSoftSegurosTab() {
     && !!syncStatus.error_message;
 
   const activeFilters = view.filters;
-  const monthMonto = useMaxMonto(view.list.items);
-
   const totalPages = Math.max(1, Math.ceil(view.list.total / view.filters.pageSize));
 
   return (
@@ -848,19 +859,6 @@ function Th({
       )}
     </th>
   );
-}
-
-// ── Sub: hook for monthMonto baseline (max monto in current page) ─────────────
-
-function useMaxMonto(items: SoftSegurosDebtor[]): number {
-  return useMemo(() => {
-    let max = 0;
-    for (const d of items) {
-      const m = (d as { monto?: number; total?: number }).monto ?? d.total ?? 0;
-      if (Number(m) > max) max = Number(m);
-    }
-    return max;
-  }, [items]);
 }
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
