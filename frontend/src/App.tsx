@@ -286,7 +286,40 @@ function OfficeView() {
 }
 
 export default function App() {
-  const { isAuthenticated, userRole } = useOfficeStore();
+  const { isAuthenticated, userRole, setAuth } = useOfficeStore();
+  // On load the Zustand store starts isAuthenticated=false, but the session may
+  // still be valid via the httpOnly cookie. Ask the backend who we are; if the
+  // cookie is good, rehydrate the store so a reload doesn't bounce to login.
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await apiFetch(`${_BACKEND}/auth/me`);
+        if (alive && r.ok) {
+          const me = await r.json();
+          if (me?.authenticated) setAuth(me.email ?? '', me.role ?? 'client');
+        }
+      } catch {
+        /* not authenticated — stay on login */
+      } finally {
+        if (alive) setCheckingSession(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [setAuth]);
+
+  if (checkingSession && !isAuthenticated) {
+    return (
+      <div style={{
+        height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#0d0d18', color: '#8a8a9a', fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13,
+      }}>
+        Cargando…
+      </div>
+    );
+  }
 
   if (!isAuthenticated) return <LoginView />;
   if (userRole === 'staff') return <StaffDashboard />;
