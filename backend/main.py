@@ -515,6 +515,24 @@ async def login(user: UserCreate, request: Request):
     return response
 
 
+@app.get("/auth/me")
+async def auth_me(current_user: dict = Depends(get_current_user)):
+    """Validate the httpOnly cookie and return the current user's identity.
+    The frontend calls this on load to rehydrate the session after a reload
+    (the JWT lives only in the cookie, so there's nothing in JS to read directly).
+    Returns 401 if the cookie is missing/expired."""
+    user_id = str(current_user["user_id"])
+    db_user = await get_user_by_id(user_id)
+    if not db_user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return {
+        "user_id": user_id,
+        "role": db_user.get("role", current_user.get("role", "client")),
+        "email": db_user.get("email"),
+        "authenticated": True,
+    }
+
+
 @app.post("/api/ws-ticket")
 async def ws_ticket(current_user: dict = Depends(get_current_user)):
     """
