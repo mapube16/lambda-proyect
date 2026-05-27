@@ -28,7 +28,7 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.users.create_index("email", unique=True)
     await db.campaigns.create_index([("user_id", 1), ("is_active", 1)])
     await db.runs.create_index([("user_id", 1), ("started_at", -1)])
-    await db.runs.create_index("run_id", unique=True)
+    await db.runs.create_index("run_id", unique=True, sparse=True)
     await db.leads.create_index([("run_id", 1), ("user_id", 1)])
     await db.leads.create_index([("user_id", 1), ("created_at", -1)])
     await db.client_knowledge.create_index([("user_id", 1), ("filename", 1)])
