@@ -116,7 +116,8 @@ def make_prospecting_registry(
 
     # ── Shared run state (tracks real counts across tool calls) ────────────
     _state: dict = {
-        "discovered": [],   # company list from discover_companies
+        "discovered": [],        # company list from discover_companies
+        "discovery_calls": 0,    # number of times discover_companies was called
         "analyzed":   0,    # total analyze_company calls completed
         "approved":   0,    # total SUCCESS_READY_FOR_REVIEW
         "rejected":   0,    # total REJECTED_BY_AI or error
@@ -137,6 +138,26 @@ def make_prospecting_registry(
     async def _discover_companies(industria: str, ciudad: str, max_r: int = 0) -> dict:
         """Discover B2B companies via Google Maps + Bing + DuckDuckGo."""
         from prospector import discover_companies
+
+        # Guard: discovery runs exactly once per pipeline execution.
+        if _state["discovery_calls"] > 0:
+            n_found = len(_state["discovered"])
+            logger.warning(
+                "[discover_companies] BLOCKED: discovery already ran (%d calls, %d companies found)",
+                _state["discovery_calls"],
+                n_found,
+            )
+            if n_found > 0:
+                raise RuntimeError(
+                    f"[BLOCKED] discover_companies already ran and found {n_found} companies. "
+                    "You MUST NOT call discover_companies again. "
+                    f"Call analyze_company for each of the {n_found} companies you already have."
+                )
+            else:
+                raise RuntimeError(
+                    "[BLOCKED] discover_companies already ran and found 0 companies. "
+                    "Call report_campaign_complete with totals=0 and then set_output to finish."
+                )
 
         n = int(max_r) if max_r else max_results
         logger.info(
@@ -165,15 +186,20 @@ def make_prospecting_registry(
             use_secop       = bool(campaign.get("use_secop",       False))
             use_secop_radar = bool(campaign.get("use_secop_radar", False))
 
-        companies = await discover_companies(
-            industria,
-            ciudad,
-            n,
-            gmaps_key,
-            excluded_domains=excluded_set,
-            use_secop=use_secop,
-            source_priority=source_priority,
-        )
+        _state["discovery_calls"] += 1
+        try:
+            companies = await discover_companies(
+                industria,
+                ciudad,
+                n,
+                gmaps_key,
+                excluded_domains=excluded_set,
+                use_secop=use_secop,
+                source_priority=source_priority,
+            )
+        except Exception as exc:
+            logger.error("[discover_companies] Exception in prospector: %s", exc, exc_info=True)
+            companies = []
         if use_secop_radar:
             try:
                 from secop_radar import fetch_open_processes
