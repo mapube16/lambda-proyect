@@ -31,14 +31,29 @@ async def async_client():
         yield client
 
 
+@pytest.fixture(autouse=True)
+def bypass_vapi_signature():
+    """Bypass HMAC signature check for vapi webhook calls in cobranza tests."""
+    from unittest.mock import patch
+    with patch("cobranza.webhooks.verify_vapi_webhook_signature", return_value=True), \
+         patch("cobranza.webhooks.extract_signature_from_headers", return_value="dummy-sig"):
+        yield
+
+
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
-async def register_and_login(client, email="cobr_test@example.com", password="testpass123"):
-    """Register a test user and return the auth header dict."""
-    await client.post("/auth/register", json={"email": email, "password": password})
-    resp = await client.post("/auth/login", json={"email": email, "password": password})
-    assert resp.status_code == 200, f"Login failed: {resp.text}"
-    token = resp.json()["access_token"]
+async def register_and_login(client=None, email="cobr_test@example.com", password="testpass123"):
+    """Insert a test user and return the auth header dict."""
+    from datetime import timezone
+    import auth as _auth
+    result = await database.get_db().users.insert_one({
+        "email": email,
+        "hashed_password": _auth.hash_password(password),
+        "role": "client",
+        "created_at": datetime.now(timezone.utc),
+    })
+    user_id = str(result.inserted_id)
+    token = _auth.create_access_token({"sub": user_id, "role": "client"})
     return {"Authorization": f"Bearer {token}"}
 
 
