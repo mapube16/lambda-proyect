@@ -429,7 +429,7 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 20-01-PLAN.md — Wave 0: Add markdownify==1.2.2 + tldextract==5.3.1 to requirements.txt; add imports + PSL pre-warm to prospector.py
+- [ ] 20-01-PLAN.md — Wave 0: Create backend/Dockerfile.worker (Playwright base image); update railway-worker.toml; add crawl4ai>=0.4.21 + tldextract==5.3.1 + curl_cffi==0.15.0 to requirements.txt
 - [ ] 20-02-PLAN.md — Wave 1: Add html_to_compressed_markdown(), extract_homepage(), _NON_HOME_SUBDOMAINS; expand LOW_QUALITY_DISCOVERY_DOMAINS (~35 new domains)
 - [ ] 20-03-PLAN.md — Wave 1: Replace httpx.AsyncClient with curl_cffi AsyncSession in scrape_url(); wire html_to_compressed_markdown() and extract_homepage()
 - [ ] 20-04-PLAN.md — Wave 2: Fix discovery query bug — strengthen _DIRECTOR_PROMPT + add industria guard in _discover_companies()
