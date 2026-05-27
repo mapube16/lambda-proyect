@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Multi-Tenant SaaS Pipeline
 status: planning
-stopped_at: Defining requirements
+stopped_at: Roadmap created — ready to plan Phase 18
 last_updated: "2026-05-26T00:00:00Z"
-last_activity: "2026-05-26 — Milestone v1.0 started: multi-tenant SaaS pipeline"
+last_activity: "2026-05-26 — Milestone v1.0 roadmap created: 5 phases (18-22), 19 requirements mapped"
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -18,17 +18,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-17)
+See: .planning/PROJECT.md (updated 2026-05-26)
 
 **Core value:** Un cliente piloto puede configurar su agente prospector, ver los agentes trabajar en la oficina pixel art en tiempo real, y recibir expedientes con correos listos para enviar.
-**Current focus:** Phase 2 — Hive Adapter and Tenant Isolation
+**Current focus:** Phase 18 — Infrastructure Foundation
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started (roadmap complete, planning Phase 18 next)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-26 — Milestone v1.0 started: multi-tenant SaaS pipeline
+Status: Ready to plan
+Last activity: 2026-05-26 — Milestone v1.0 roadmap created: Phases 18-22 covering INFRA/TENANT/SCRAPE/VERTICAL/SIGNAL/COST
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -76,6 +76,17 @@ Progress: [░░░░░░░░░░] 0%
 
 - Phase 15 added: Pipeline Enrichment + Real Channel Activation (SECOP bridge, NIT enricher, WhatsApp fallback)
 - Phase 16 added: WhatsApp Conversational Advisor Bot (LLM tool-calling bot para asesores via Twilio)
+- Phases 18-22 added: Milestone v1.0 Multi-Tenant SaaS Pipeline (Railway infra, tenant isolation, scraping improvements, pipeline parametrization, cost observability)
+
+### Milestone v1.0 Phase Structure
+
+| Phase | Name | Requirements |
+|-------|------|--------------|
+| 18 | Infrastructure Foundation | INFRA-01, INFRA-02, INFRA-03 |
+| 19 | Tenant Isolation | TENANT-01, TENANT-02, TENANT-03, TENANT-04 |
+| 20 | Scraping Improvements | SCRAPE-01, SCRAPE-02, SCRAPE-03, SCRAPE-04 |
+| 21 | Pipeline Parametrization | VERTICAL-01, VERTICAL-02, VERTICAL-03, SIGNAL-01, SIGNAL-02 |
+| 22 | Cost Observability | COST-01, COST-02, COST-03 |
 
 ### Decisions
 
@@ -149,6 +160,10 @@ Recent decisions affecting current work:
 - [Phase 17-05]: Terminal estados (promesa_de_pago, escalado, pagado) are never overwritten by endedReason mapping — tool calls set state mid-call
 - [Phase 17-07]: CustomEvent bridge (cobr:debtor_update) preferred over store coupling — CobranzaTab is self-contained with no store mutations
 - [Phase 17-07]: Section switcher uses display:none for leads panel when cobranza active — avoids remount and preserves leads scroll position
+- [v1.0 Roadmap]: Phase 18 (INFRA) is the foundation — phases 19-22 all depend on ARQ Worker and Redis being operational
+- [v1.0 Roadmap]: Phase 20 (SCRAPE) does not depend on TENANT or VERTICAL — self-contained scraping fixes; placed after INFRA, parallel with TENANT conceptually but sequenced after it for clean dependency ordering
+- [v1.0 Roadmap]: Phase 21 (VERTICAL+SIGNAL) groups VERTICAL and SIGNAL together — VerticalConfig registers signal_sources and SignalLead is their output contract; inseparable
+- [v1.0 Roadmap]: Phase 22 (COST) depends on TENANT (needs tenant_id on CostEvent) and INFRA (run_id comes from ARQ jobs); placed last
 
 ### Pending Todos
 
@@ -161,6 +176,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-27T19:49:00Z
-Stopped at: Completed 17-07-PLAN.md
+Last session: 2026-05-26T00:00:00Z
+Stopped at: Milestone v1.0 roadmap created (Phases 18-22)
 Resume file: None
