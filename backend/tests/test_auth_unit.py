@@ -82,12 +82,21 @@ def test_create_access_token_contains_exp_claim():
 
 # --- get_current_user ---
 
+def _mock_request(cookies=None):
+    """Create a minimal mock Request with cookies dict."""
+    from unittest.mock import MagicMock
+    from fastapi import Request
+    req = MagicMock(spec=Request)
+    req.cookies = cookies or {}
+    return req
+
+
 @pytest.mark.asyncio
 async def test_get_current_user_returns_user_id_for_valid_token():
     """get_current_user returns {'user_id': str, 'role': str} for a valid token."""
     from auth import create_access_token, get_current_user
     token = create_access_token({"sub": "42"})
-    result = await get_current_user(token=token)
+    result = await get_current_user(request=_mock_request(), token=token)
     assert result["user_id"] == "42"
     assert isinstance(result["user_id"], str)
     assert "role" in result
@@ -95,11 +104,11 @@ async def test_get_current_user_returns_user_id_for_valid_token():
 
 @pytest.mark.asyncio
 async def test_get_current_user_raises_401_for_missing_token():
-    """get_current_user raises HTTPException 401 when token is None."""
+    """get_current_user raises HTTPException 401 when token is None and no cookie."""
     from fastapi import HTTPException
     from auth import get_current_user
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(token=None)
+        await get_current_user(request=_mock_request(), token=None)
     assert exc_info.value.status_code == 401, (
         f"Expected 401, got {exc_info.value.status_code}"
     )
@@ -111,7 +120,7 @@ async def test_get_current_user_raises_401_for_tampered_token():
     from fastapi import HTTPException
     from auth import get_current_user
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(token="tampered.jwt.token")
+        await get_current_user(request=_mock_request(), token="tampered.jwt.token")
     assert exc_info.value.status_code == 401
 
 
@@ -127,7 +136,7 @@ async def test_get_current_user_raises_401_for_expired_token():
         algorithm=TEST_ALGORITHM,
     )
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(token=expired_token)
+        await get_current_user(request=_mock_request(), token=expired_token)
     assert exc_info.value.status_code == 401
 
 
@@ -137,7 +146,7 @@ async def test_get_current_user_never_raises_403():
     from fastapi import HTTPException
     from auth import get_current_user
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(token=None)
+        await get_current_user(request=_mock_request(), token=None)
     assert exc_info.value.status_code != 403
 
 

@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime
 
 
 # --- AUTH-01: Registration ----------------------------------------------------
@@ -40,7 +41,7 @@ async def test_password_not_stored_plain(async_client):
 # --- AUTH-02: Login / JWT -----------------------------------------------------
 
 async def test_login_returns_jwt(async_client):
-    """POST /auth/login with valid credentials returns access_token."""
+    """POST /auth/login with valid credentials returns 200 with user info and sets httpOnly cookie."""
     await async_client.post("/auth/register", json={
         "email": "login@example.com", "password": "pass5678"
     })
@@ -49,8 +50,9 @@ async def test_login_returns_jwt(async_client):
     })
     assert response.status_code == 200
     body = response.json()
-    assert "access_token" in body
-    assert body["token_type"] == "bearer"
+    assert "authenticated" in body
+    assert body["authenticated"] is True
+    assert "hive_token" in response.cookies
 
 async def test_login_wrong_password(async_client):
     """POST /auth/login with wrong password returns 401."""
@@ -79,32 +81,21 @@ async def test_websocket_no_token_rejected(async_client):
 
 async def test_tenant_isolation(async_client):
     """User A's WebSocket messages are NOT delivered to user B's connection."""
-    from main import manager
-    from auth import create_access_token
+    from services.connection_manager import manager
+    import auth as _auth
+    import database
 
-    # Register two users
-    await async_client.post("/auth/register", json={"email": "userA@example.com", "password": "passA"})
-    await async_client.post("/auth/register", json={"email": "userB@example.com", "password": "passB"})
-    resp_a = await async_client.post("/auth/login", json={"email": "userA@example.com", "password": "passA"})
-    resp_b = await async_client.post("/auth/login", json={"email": "userB@example.com", "password": "passB"})
-    token_a = resp_a.json()["access_token"]
-    token_b = resp_b.json()["access_token"]
-
-    # Decode tokens to get user_ids
-    from jose import jwt as jose_jwt
-    from auth import SECRET_KEY, ALGORITHM
-    payload_a = jose_jwt.decode(token_a, SECRET_KEY, algorithms=[ALGORITHM])
-    payload_b = jose_jwt.decode(token_b, SECRET_KEY, algorithms=[ALGORITHM])
-    user_id_a = payload_a["sub"]
-    user_id_b = payload_b["sub"]
+    db = database.get_db()
+    from datetime import timezone as _tz
+    res_a = await db.users.insert_one({"email": "userA@example.com", "hashed_password": _auth.hash_password("passA"), "role": "client", "created_at": datetime.now(_tz.utc)})
+    res_b = await db.users.insert_one({"email": "userB@example.com", "hashed_password": _auth.hash_password("passB"), "role": "client", "created_at": datetime.now(_tz.utc)})
+    user_id_a = str(res_a.inserted_id)
+    user_id_b = str(res_b.inserted_id)
 
     # Verify ConnectionManager keys messages by user_id
-    # send_to_user(user_id_A) should only reach user A, not user B
-    # We test this by checking that send_to_user only stores per-user key
     assert user_id_a != user_id_b, "Users must have distinct IDs"
 
     # Verify the manager's active_connections dict is keyed by user_id (str)
-    # This validates the architecture: Dict[str, WebSocket] not Set[WebSocket]
     assert isinstance(manager.active_connections, dict), \
         "ConnectionManager must use Dict[str, WebSocket] for tenant isolation"
 

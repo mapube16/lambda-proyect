@@ -35,17 +35,17 @@ async def async_client():
 
 async def test_notify_user_routing_web():
     """notify_user() with channel='web' sends WS only, no WA."""
-    from unittest.mock import AsyncMock, patch, MagicMock
-    import main as main_module
+    from unittest.mock import AsyncMock, patch
+    from services import notifications
 
     mock_cv = {"notification_channel": "web", "wa_phone_number": None}
     mock_send_to_user = AsyncMock()
     mock_send_whatsapp = AsyncMock()
 
-    with patch.object(main_module.manager, "send_to_user", mock_send_to_user), \
-         patch("main.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
-         patch("main.send_whatsapp_text", mock_send_whatsapp, create=True):
-        await main_module.notify_user("user123", {"type": "lead_checkpoint"})
+    with patch.object(notifications.manager, "send_to_user", mock_send_to_user), \
+         patch("landa.company_voice.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
+         patch("services.notifications.send_whatsapp_text", mock_send_whatsapp):
+        await notifications.notify_user("user123", {"type": "lead_checkpoint"})
 
     mock_send_to_user.assert_awaited_once()
     mock_send_whatsapp.assert_not_awaited()
@@ -54,16 +54,16 @@ async def test_notify_user_routing_web():
 async def test_notify_user_routing_whatsapp():
     """notify_user() with channel='whatsapp' sends WA only, no WS."""
     from unittest.mock import AsyncMock, patch
-    import main as main_module
+    from services import notifications
 
     mock_cv = {"notification_channel": "whatsapp", "wa_phone_number": "+573001234567"}
     mock_send_to_user = AsyncMock()
     mock_send_whatsapp = AsyncMock()
 
-    with patch.object(main_module.manager, "send_to_user", mock_send_to_user), \
-         patch("main.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
-         patch("main.send_whatsapp_text", mock_send_whatsapp, create=True):
-        await main_module.notify_user("user123", {"type": "lead_checkpoint"})
+    with patch.object(notifications.manager, "send_to_user", mock_send_to_user), \
+         patch("landa.company_voice.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
+         patch("services.notifications.send_whatsapp_text", mock_send_whatsapp):
+        await notifications.notify_user("user123", {"type": "lead_checkpoint"})
 
     mock_send_to_user.assert_not_awaited()
     mock_send_whatsapp.assert_awaited_once()
@@ -72,16 +72,16 @@ async def test_notify_user_routing_whatsapp():
 async def test_notify_user_routing_both():
     """notify_user() with channel='both' sends WS + WA."""
     from unittest.mock import AsyncMock, patch
-    import main as main_module
+    from services import notifications
 
     mock_cv = {"notification_channel": "both", "wa_phone_number": "+573001234567"}
     mock_send_to_user = AsyncMock()
     mock_send_whatsapp = AsyncMock()
 
-    with patch.object(main_module.manager, "send_to_user", mock_send_to_user), \
-         patch("main.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
-         patch("main.send_whatsapp_text", mock_send_whatsapp, create=True):
-        await main_module.notify_user("user123", {"type": "lead_checkpoint"})
+    with patch.object(notifications.manager, "send_to_user", mock_send_to_user), \
+         patch("landa.company_voice.get_or_create_company_voice", AsyncMock(return_value=mock_cv)), \
+         patch("services.notifications.send_whatsapp_text", mock_send_whatsapp):
+        await notifications.notify_user("user123", {"type": "lead_checkpoint"})
 
     mock_send_to_user.assert_awaited_once()
     mock_send_whatsapp.assert_awaited_once()
@@ -217,6 +217,7 @@ async def test_tool_call_ver_leads_checkpoint():
     with patch("wa_handler.get_db") as mock_get_db:
         mock_db = MagicMock()
         mock_cursor = MagicMock()
+        mock_cursor.sort.return_value = mock_cursor  # chain: find().sort() returns cursor
         mock_cursor.to_list = AsyncMock(return_value=[])
         mock_db.leads.find.return_value = mock_cursor
         mock_get_db.return_value = mock_db
