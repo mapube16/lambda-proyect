@@ -10,6 +10,13 @@ const WS_URL_BASE = BACKEND
   ? BACKEND.replace(/^https/, 'wss').replace(/^http/, 'ws') + '/ws'
   : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
 
+const PIPELINE_AGENTS: Agent[] = [
+  { id: 'buscador-001', name: 'Buscador',    role: 'researcher', state: 'idle', current_tool: null, tool_status: null, palette: 0, seat_id: null, is_subagent: false, parent_agent_id: null },
+  { id: 'scraper-001',  name: 'Scraper',      role: 'planner',    state: 'idle', current_tool: null, tool_status: null, palette: 1, seat_id: null, is_subagent: false, parent_agent_id: null },
+  { id: 'analista-001', name: 'Analista B2B', role: 'reviewer',   state: 'idle', current_tool: null, tool_status: null, palette: 2, seat_id: null, is_subagent: false, parent_agent_id: null },
+  { id: 'redactor-001', name: 'Redactor',     role: 'writer',     state: 'idle', current_tool: null, tool_status: null, palette: 3, seat_id: null, is_subagent: false, parent_agent_id: null },
+];
+
 const MAX_RECONNECT_DELAY = 30_000;
 
 export function useWebSocket() {
@@ -129,7 +136,7 @@ export function useWebSocket() {
       case 'initial_state': {
         const msg = data as InitialStateMessage;
         console.log('📦 Received initial state:', msg.agents.length, 'agents');
-        setAgents(msg.agents);
+        setAgents([...msg.agents, ...PIPELINE_AGENTS]);
         break;
       }
       case 'agent_update': {
