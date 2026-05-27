@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: — Multi-Tenant SaaS Pipeline
 status: Ready to execute
-stopped_at: Completed 18-02-PLAN.md
-last_updated: "2026-05-27T03:22:48.577Z"
+stopped_at: Planned 20-scraping-improvements
+last_updated: "2026-05-27T00:00:00.000Z"
 progress:
   total_phases: 22
   completed_phases: 6
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-26)
 
 **Core value:** Un cliente piloto puede configurar su agente prospector, ver los agentes trabajar en la oficina pixel art en tiempo real, y recibir expedientes con correos listos para enviar.
-**Current focus:** Phase 18 — Infrastructure Foundation
+**Current focus:** Phase 20 — Scraping Improvements
 
 ## Current Position
 
-Phase: 18 (Infrastructure Foundation) — EXECUTING
-Plan: 3 of 3
+Phase: 20 (Scraping Improvements) — PLANNING COMPLETE
+Plan: 0 of 4 (ready to execute)
 
 ## Performance Metrics
 
