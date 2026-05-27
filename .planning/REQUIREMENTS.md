@@ -96,6 +96,43 @@
 - **SCAL-02**: Clay enrichment para datos adicionales de empresa
 - **SCAL-03**: Migración de SQLite a PostgreSQL para 3+ clientes concurrentes
 
+### INFRA — Infrastructure (Milestone v1.0)
+
+- [ ] **INFRA-01**: Developer can deploy API, Worker, and Redis as 3 separate Railway services from one repo
+- [ ] **INFRA-02**: Worker service processes ARQ jobs from Redis without blocking the API service
+- [ ] **INFRA-03**: API service enqueues prospecting campaigns as ARQ jobs and returns run_id immediately
+
+### TENANT — Tenant Isolation (Milestone v1.0)
+
+- [ ] **TENANT-01**: All MongoDB collections (campaigns, leads, company_voice) include tenant_id = user_id on every document
+- [ ] **TENANT-02**: All read queries filter by tenant_id to prevent cross-tenant data access
+- [ ] **TENANT-03**: Redis pub/sub channels use namespacing pattern `ws:{tenant_id}:{run_id}`
+- [ ] **TENANT-04**: Worker events reach only the WebSocket connection matching the correct tenant_id
+
+### VERTICAL — Pipeline Verticals (Milestone v1.0)
+
+- [ ] **VERTICAL-01**: User can select an insurance vertical (desempleo, arrendamiento, empresarial) when configuring a campaign
+- [ ] **VERTICAL-02**: VerticalConfig dataclass defines signal_sources, scoring_weights, and prompt_fragments per vertical
+- [ ] **VERTICAL-03**: Pipeline loads the correct signal_sources at runtime from VerticalConfig
+
+### SIGNAL — SignalLead Contract (Milestone v1.0)
+
+- [ ] **SIGNAL-01**: All signal_sources return a SignalLead TypedDict with fields: company_name, url, industry, city, source
+- [ ] **SIGNAL-02**: Serper signal_source implements SignalLead contract
+
+### SCRAPE — Scraping Improvements (Milestone v1.0)
+
+- [ ] **SCRAPE-01**: Scraper uses curl_cffi AsyncSession(impersonate="chrome131") instead of httpx
+- [ ] **SCRAPE-02**: Scraped HTML converts to compressed Markdown via Crawl4AI before LLM analysis
+- [ ] **SCRAPE-03**: DIRECTORY_DOMAINS blocklist filters aggregator sites from Serper results before scraping
+- [ ] **SCRAPE-04**: extract_homepage(url) normalizes blog/directory URLs to company homepages
+
+### COST — Cost Tracking (Milestone v1.0)
+
+- [ ] **COST-01**: Every LLM call logs CostEvent(tenant_id, run_id, model, input_tokens, output_tokens, cost_usd)
+- [ ] **COST-02**: Every Serper call logs CostEvent(tenant_id, run_id, credits_used)
+- [ ] **COST-03**: User can query total cost per run_id via API endpoint
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -105,8 +142,10 @@
 | Self-improving graph (auto-evolución) | Requiere harness de evaluación que no existe aún — v3+ |
 | Next.js / SSR migration | El canvas pixel art con game loop ya funciona en React/Vite — SSR no agrega valor |
 | Auth0 / Clerk / Supabase Auth | JWT in-house es suficiente para MVP piloto — sin dependencia de vendor externo |
-| SQLAlchemy ORM / Alembic | Overhead innecesario para MVP — queries directas con aiosqlite |
-| Playwright / Crawl4AI | `aden_tools web_scrape_tool` primero — instalar headless browser solo si falla |
+| SQLAlchemy ORM / Alembic | Overhead innecesario para MVP — queries directas con Motor async |
+| Playwright headless browser | curl_cffi + Crawl4AI cubre los casos de anti-bot sin headless browser |
+| Apollo.io enrichment | Fuera de scope v1.0 — añadir como signal_source en v1.1+ |
+| Org hierarchy (org → N users) | tenant_id = user_id es suficiente para 20-50 brokers — orgs en v2 |
 
 ## Traceability
 
@@ -137,12 +176,31 @@
 | VIZ-01 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-02 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-03 | Phase 8 — Real-Time Visualization | Pending |
+| INFRA-01 | TBD — Phase 18+ | Pending |
+| INFRA-02 | TBD — Phase 18+ | Pending |
+| INFRA-03 | TBD — Phase 18+ | Pending |
+| TENANT-01 | TBD — Phase 18+ | Pending |
+| TENANT-02 | TBD — Phase 18+ | Pending |
+| TENANT-03 | TBD — Phase 18+ | Pending |
+| TENANT-04 | TBD — Phase 18+ | Pending |
+| VERTICAL-01 | TBD — Phase 18+ | Pending |
+| VERTICAL-02 | TBD — Phase 18+ | Pending |
+| VERTICAL-03 | TBD — Phase 18+ | Pending |
+| SIGNAL-01 | TBD — Phase 18+ | Pending |
+| SIGNAL-02 | TBD — Phase 18+ | Pending |
+| SCRAPE-01 | TBD — Phase 18+ | Pending |
+| SCRAPE-02 | TBD — Phase 18+ | Pending |
+| SCRAPE-03 | TBD — Phase 18+ | Pending |
+| SCRAPE-04 | TBD — Phase 18+ | Pending |
+| COST-01 | TBD — Phase 18+ | Pending |
+| COST-02 | TBD — Phase 18+ | Pending |
+| COST-03 | TBD — Phase 18+ | Pending |
 
 **Coverage:**
-- v1 requirements: 25 total
-- Mapped to phases: 25
-- Unmapped: 0
+- v0.6 requirements: 25 (AUTH/HIVE/PIPE/HITL/CONF/LEAD/VIZ) + 16 (LANDA/COBR)
+- v1.0 requirements: 19 new (INFRA/TENANT/VERTICAL/SIGNAL/SCRAPE/COST)
+- Total mapped: all
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-17 after roadmap creation — traceability updated to 8-phase structure*
+*Last updated: 2026-05-26 — Milestone v1.0 requirements added (INFRA/TENANT/VERTICAL/SIGNAL/SCRAPE/COST)*
