@@ -9,11 +9,25 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import OperationFailure
 
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("MONGODB_DB", "hive_office")
 
 _client: Optional[AsyncIOMotorClient] = None
+
+logger = logging.getLogger(__name__)
+
+
+async def _safe_index(collection, keys, **kwargs):
+    """Create index, ignoring conflicts with existing indexes (e.g. prod has different options)."""
+    try:
+        await collection.create_index(keys, **kwargs)
+    except OperationFailure as exc:
+        if exc.code == 86:  # IndexKeySpecsConflict
+            logger.warning("Index conflict on %s (skipped): %s", collection.name, exc.details.get("errmsg", ""))
+        else:
+            raise
 
 
 def get_db():
@@ -25,58 +39,48 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     import certifi
     _client = client or AsyncIOMotorClient(MONGODB_URI, tlsCAFile=certifi.where())
     db = _client[DB_NAME]
-    await db.users.create_index("email", unique=True)
-    await db.campaigns.create_index([("user_id", 1), ("is_active", 1)])
-    await db.runs.create_index([("user_id", 1), ("started_at", -1)])
-    await db.runs.create_index("run_id", unique=True, sparse=True)
-    await db.leads.create_index([("run_id", 1), ("user_id", 1)])
-    await db.leads.create_index([("user_id", 1), ("created_at", -1)])
-    await db.client_knowledge.create_index([("user_id", 1), ("filename", 1)])
-    await db.client_profiles.create_index("user_id", unique=True)
-    await db.ideal_leads.create_index([("user_id", 1), ("lead_id", 1)], unique=True)
-    await db.rejected_leads.create_index([("user_id", 1), ("lead_id", 1)], unique=True)
-    await db.whatsapp_agents.create_index("phone_number", unique=True)
-    await db.whatsapp_agents.create_index("cliente_id")
+    await _safe_index(db.users, "email", unique=True)
+    await _safe_index(db.campaigns, [("user_id", 1), ("is_active", 1)])
+    await _safe_index(db.runs, [("user_id", 1), ("started_at", -1)])
+    await _safe_index(db.runs, "run_id", unique=True, sparse=True)
+    await _safe_index(db.leads, [("run_id", 1), ("user_id", 1)])
+    await _safe_index(db.leads, [("user_id", 1), ("created_at", -1)])
+    await _safe_index(db.client_knowledge, [("user_id", 1), ("filename", 1)])
+    await _safe_index(db.client_profiles, "user_id", unique=True)
+    await _safe_index(db.ideal_leads, [("user_id", 1), ("lead_id", 1)], unique=True)
+    await _safe_index(db.rejected_leads, [("user_id", 1), ("lead_id", 1)], unique=True)
+    await _safe_index(db.whatsapp_agents, "phone_number", unique=True)
+    await _safe_index(db.whatsapp_agents, "cliente_id")
     # ── Landa Foundation (Phase 12) indexes ──────────────────────────────────
-    await db.leads.create_index("estado")
-    await db.leads.create_index([("user_id", 1), ("estado", 1)])
-    await db.sector_profiles.create_index([("sector", 1), ("pais_region", 1)])
-    await db.scheduled_actions.create_index("fecha_programada")
-    await db.scheduled_actions.create_index([("estado", 1), ("fecha_programada", 1)])
-    await db.scheduled_actions.create_index("lead_id")
+    await _safe_index(db.leads, "estado")
+    await _safe_index(db.leads, [("user_id", 1), ("estado", 1)])
+    await _safe_index(db.sector_profiles, [("sector", 1), ("pais_region", 1)])
+    await _safe_index(db.scheduled_actions, "fecha_programada")
+    await _safe_index(db.scheduled_actions, [("estado", 1), ("fecha_programada", 1)])
+    await _safe_index(db.scheduled_actions, "lead_id")
     # ── Phase 16: wa_sessions TTL index ──────────────────────────────────────
-    await db.wa_sessions.create_index("phone", unique=True)
-    await db.wa_sessions.create_index(
-        [("updated_at", 1)],
-        expireAfterSeconds=86400,  # 24 hours TTL
-    )
+    await _safe_index(db.wa_sessions, "phone", unique=True)
+    await _safe_index(db.wa_sessions, [("updated_at", 1)], expireAfterSeconds=86400)
     # ── Registration requests index (staff access control) ──────────────────
-    await db.registration_requests.create_index("email", unique=True)
-    await db.registration_requests.create_index([("created_at", -1)])
+    await _safe_index(db.registration_requests, "email", unique=True)
+    await _safe_index(db.registration_requests, [("created_at", -1)])
     # ── Agents persistence ───────────────────────────────────────────────────
-    await db.agents.create_index("agent_id", unique=True)
+    await _safe_index(db.agents, "agent_id", unique=True)
     # ── Phase 17: Cobranza debtors indexes ───────────────────────────────────
-    await db.debtors.create_index([("user_id", 1), ("estado", 1)])
-    await db.debtors.create_index([("user_id", 1), ("created_at", -1)])
-    await db.debtors.create_index("vapi_call_id", sparse=True)
-    await db.debtors.create_index(
-        [("user_id", 1), ("telefono", 1)],
-        unique=True,
-        partialFilterExpression={"source": "manual"},
-    )
+    await _safe_index(db.debtors, [("user_id", 1), ("estado", 1)])
+    await _safe_index(db.debtors, [("user_id", 1), ("created_at", -1)])
+    await _safe_index(db.debtors, "vapi_call_id", sparse=True)
+    await _safe_index(db.debtors, [("user_id", 1), ("telefono", 1)], unique=True, partialFilterExpression={"source": "manual"})
     # ── Email OAuth + Events ──────────────────────────────────────────────────
-    await db.email_events.create_index([("user_id", 1), ("timestamp", -1)])
-    await db.email_events.create_index("message_id")
-    await db.email_events.create_index("lead_id")
+    await _safe_index(db.email_events, [("user_id", 1), ("timestamp", -1)])
+    await _safe_index(db.email_events, "message_id")
+    await _safe_index(db.email_events, "lead_id")
     # ── Phase 17: Voice Orchestrator (Assembly AI) ───────────────────────────
-    await db.cobranza_calls_in_progress.create_index("call_sid", unique=True)
-    await db.cobranza_calls_in_progress.create_index([("user_id", 1), ("started_at", -1)])
-    await db.cobranza_calls_in_progress.create_index(
-        [("started_at", 1)],
-        expireAfterSeconds=3600,  # 1 hour TTL (cleanup old mappings)
-    )
-    await db.cobranza_calls.create_index([("user_id", 1), ("created_at", -1)])
-    await db.cobranza_calls.create_index("call_id", unique=True)
+    await _safe_index(db.cobranza_calls_in_progress, "call_sid", unique=True)
+    await _safe_index(db.cobranza_calls_in_progress, [("user_id", 1), ("started_at", -1)])
+    await _safe_index(db.cobranza_calls_in_progress, [("started_at", 1)], expireAfterSeconds=3600)
+    await _safe_index(db.cobranza_calls, [("user_id", 1), ("created_at", -1)])
+    await _safe_index(db.cobranza_calls, "call_id", unique=True)
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
