@@ -189,10 +189,9 @@ async def get_runs(current_user: dict = Depends(get_current_user)):
 
 @router.get("/api/runs/{run_id}/report")
 async def get_run_report(run_id: str, current_user: dict = Depends(get_current_user)):
-    from bson import ObjectId
     user_id = str(current_user["user_id"])
     db = get_db()
-    run = await db.runs.find_one({"_id": ObjectId(run_id), "user_id": user_id})
+    run = await db.runs.find_one({"run_id": run_id, "user_id": user_id})
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return {"run_id": run_id, "status": run.get("status"), "total_found": run.get("total_found", 0), "total_approved": run.get("total_approved", 0), "agent_logs": run.get("agent_logs", {})}
