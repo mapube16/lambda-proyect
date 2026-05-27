@@ -98,9 +98,9 @@
 
 ### INFRA — Infrastructure (Milestone v1.0)
 
-- [ ] **INFRA-01**: Developer can deploy API, Worker, and Redis as 3 separate Railway services from one repo
-- [ ] **INFRA-02**: Worker service processes ARQ jobs from Redis without blocking the API service
-- [ ] **INFRA-03**: API service enqueues prospecting campaigns as ARQ jobs and returns run_id immediately
+- [x] **INFRA-01**: Developer can deploy API, Worker, and Redis as 3 separate Railway services from one repo
+- [x] **INFRA-02**: Worker service processes ARQ jobs from Redis without blocking the API service
+- [x] **INFRA-03**: API service enqueues prospecting campaigns as ARQ jobs and returns run_id immediately
 
 ### TENANT — Tenant Isolation (Milestone v1.0)
 
@@ -176,9 +176,9 @@
 | VIZ-01 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-02 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-03 | Phase 8 — Real-Time Visualization | Pending |
-| INFRA-01 | Phase 18 — Infrastructure Foundation | Pending |
-| INFRA-02 | Phase 18 — Infrastructure Foundation | Pending |
-| INFRA-03 | Phase 18 — Infrastructure Foundation | Pending |
+| INFRA-01 | Phase 18 — Infrastructure Foundation | Complete |
+| INFRA-02 | Phase 18 — Infrastructure Foundation | Complete |
+| INFRA-03 | Phase 18 — Infrastructure Foundation | Complete |
 | TENANT-01 | Phase 19 — Tenant Isolation | Pending |
 | TENANT-02 | Phase 19 — Tenant Isolation | Pending |
 | TENANT-03 | Phase 19 — Tenant Isolation | Pending |

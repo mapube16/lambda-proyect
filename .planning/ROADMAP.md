@@ -483,7 +483,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
 | 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete | 2026-03-26 |
 | 17. Voice Cobranza Agent | 8/8 | Complete | 2026-03-27 |
-| 18. Infrastructure Foundation | 0/3 | Planned | - |
+| 18. Infrastructure Foundation | 0/3 | Planned    |  |
 | 19. Tenant Isolation | 0/TBD | Not started | - |
 | 20. Scraping Improvements | 0/TBD | Not started | - |
 | 21. Pipeline Parametrization | 0/TBD | Not started | - |
