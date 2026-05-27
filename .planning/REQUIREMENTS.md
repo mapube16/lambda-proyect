@@ -176,25 +176,25 @@
 | VIZ-01 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-02 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-03 | Phase 8 — Real-Time Visualization | Pending |
-| INFRA-01 | TBD — Phase 18+ | Pending |
-| INFRA-02 | TBD — Phase 18+ | Pending |
-| INFRA-03 | TBD — Phase 18+ | Pending |
-| TENANT-01 | TBD — Phase 18+ | Pending |
-| TENANT-02 | TBD — Phase 18+ | Pending |
-| TENANT-03 | TBD — Phase 18+ | Pending |
-| TENANT-04 | TBD — Phase 18+ | Pending |
-| VERTICAL-01 | TBD — Phase 18+ | Pending |
-| VERTICAL-02 | TBD — Phase 18+ | Pending |
-| VERTICAL-03 | TBD — Phase 18+ | Pending |
-| SIGNAL-01 | TBD — Phase 18+ | Pending |
-| SIGNAL-02 | TBD — Phase 18+ | Pending |
-| SCRAPE-01 | TBD — Phase 18+ | Pending |
-| SCRAPE-02 | TBD — Phase 18+ | Pending |
-| SCRAPE-03 | TBD — Phase 18+ | Pending |
-| SCRAPE-04 | TBD — Phase 18+ | Pending |
-| COST-01 | TBD — Phase 18+ | Pending |
-| COST-02 | TBD — Phase 18+ | Pending |
-| COST-03 | TBD — Phase 18+ | Pending |
+| INFRA-01 | Phase 18 — Infrastructure Foundation | Pending |
+| INFRA-02 | Phase 18 — Infrastructure Foundation | Pending |
+| INFRA-03 | Phase 18 — Infrastructure Foundation | Pending |
+| TENANT-01 | Phase 19 — Tenant Isolation | Pending |
+| TENANT-02 | Phase 19 — Tenant Isolation | Pending |
+| TENANT-03 | Phase 19 — Tenant Isolation | Pending |
+| TENANT-04 | Phase 19 — Tenant Isolation | Pending |
+| VERTICAL-01 | Phase 21 — Pipeline Parametrization | Pending |
+| VERTICAL-02 | Phase 21 — Pipeline Parametrization | Pending |
+| VERTICAL-03 | Phase 21 — Pipeline Parametrization | Pending |
+| SIGNAL-01 | Phase 21 — Pipeline Parametrization | Pending |
+| SIGNAL-02 | Phase 21 — Pipeline Parametrization | Pending |
+| SCRAPE-01 | Phase 20 — Scraping Improvements | Pending |
+| SCRAPE-02 | Phase 20 — Scraping Improvements | Pending |
+| SCRAPE-03 | Phase 20 — Scraping Improvements | Pending |
+| SCRAPE-04 | Phase 20 — Scraping Improvements | Pending |
+| COST-01 | Phase 22 — Cost Observability | Pending |
+| COST-02 | Phase 22 — Cost Observability | Pending |
+| COST-03 | Phase 22 — Cost Observability | Pending |
 
 **Coverage:**
 - v0.6 requirements: 25 (AUTH/HIVE/PIPE/HITL/CONF/LEAD/VIZ) + 16 (LANDA/COBR)
@@ -203,4 +203,4 @@
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-05-26 — Milestone v1.0 requirements added (INFRA/TENANT/VERTICAL/SIGNAL/SCRAPE/COST)*
+*Last updated: 2026-05-26 — Milestone v1.0 traceability updated: INFRA→18, TENANT→19, SCRAPE→20, VERTICAL/SIGNAL→21, COST→22*
