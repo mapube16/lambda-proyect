@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.6
-milestone_name: milestone
+milestone: v1.0
+milestone_name: Multi-Tenant SaaS Pipeline
 status: planning
-stopped_at: Completed 17-08-PLAN.md
-last_updated: "2026-03-27T20:08:18Z"
-last_activity: "2026-03-27 — Phase 17 Plan 08 complete: cobranza router wired, scheduler jobs registered, cobranza_enabled staff gate, 8 COBR tests green"
+stopped_at: Defining requirements
+last_updated: "2026-05-26T00:00:00Z"
+last_activity: "2026-05-26 — Milestone v1.0 started: multi-tenant SaaS pipeline"
 progress:
-  total_phases: 17
-  completed_phases: 5
-  total_plans: 43
-  completed_plans: 38
-  percent: 44
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-03-17)
 
 ## Current Position
 
-Phase: 2 of 8 (Hive Adapter and Tenant Isolation)
+Phase: Not started (defining requirements)
 Plan: —
-Status: Planning (not started)
-Last activity: 2026-03-22 — Phase 14 Plan 01 complete: 8 xfail stubs for LANDA-09/10/11
+Status: Defining requirements
+Last activity: 2026-05-26 — Milestone v1.0 started: multi-tenant SaaS pipeline
 
-Progress: [████░░░░░░] 44%
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
