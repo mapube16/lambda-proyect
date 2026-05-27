@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 orchestrator = None
 hive_adapter = None
+arq_pool = None
 
 _agent_state_cache: Dict[str, Dict[str, dict]] = {}
 
