@@ -24,4 +24,4 @@ pytz>=2024.1
 vapi_server_sdk>=0.1.0
 pandas>=2.0.0
 arq==0.28.0
-redis>=7.0.0
+redis>=4.2.0,<6
