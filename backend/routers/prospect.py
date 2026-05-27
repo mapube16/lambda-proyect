@@ -57,34 +57,40 @@ async def prospect(request: ProspectRequest, current_user: dict = Depends(get_cu
             campaign = {k: v for k, v in active.items() if k not in ("_id", "user_id", "is_active", "created_at")}
     profile = await get_client_profile(user_id)
     personality_prompt = (profile or {}).get("personality_prompt", "")
-    orch_agents = state.orchestrator.get_all_agents()
+    orch_agents = state.orchestrator.get_all_agents() if state.orchestrator else []
     if orch_agents:
         runtime_agents = [{"id": a.id, "name": a.name, "role": a.role.value, "state": "idle", "palette": a.palette, "current_tool": None} for a in orch_agents]
     else:
         runtime_agents = _build_runtime_agents(profile)
     exclusions = await get_prospecting_excluded_domains(user_id)
     campaign_id = active["_id"] if (not request.campaign and active) else ""
-    run_id = await create_run(user_id=user_id, campaign_id=campaign_id, max_results=min(request.max_results, 50))
 
-    async def _finalize_on_complete():
-        task = state.hive_adapter._runs.get(user_id)
-        if task:
-            try:
-                result = await task
-                agent_logs = result.get("agent_logs") if isinstance(result, dict) else None
-                await update_run_status(run_id, status="complete", agent_logs=agent_logs)
-            except Exception as exc:
-                logger.error("[prospect] finalize error: %s", exc)
-                await update_run_status(run_id, status="error")
+    import uuid
+    run_id = str(uuid.uuid4())   # API owns run_id — UUID4 (NOT ObjectId; ObjectId breaks msgpack — RESEARCH Pitfall 7)
+    await create_run(user_id=user_id, campaign_id=campaign_id,
+                     max_results=min(request.max_results, 50), run_id=run_id)
 
-    await state.hive_adapter.start_run(
-        user_id=user_id,
-        inputs={"campaign": campaign, "max_results": min(request.max_results, 50), "personality_prompt": personality_prompt, "runtime_agents": runtime_agents, "excluded_domains": exclusions.get("excluded_domains", []), "source_priority": request.source_priority},
+    # Strip any ObjectId / _id from campaign before enqueue (msgpack cannot serialize ObjectId)
+    safe_campaign = {k: v for k, v in (campaign or {}).items() if k != "_id"}
+
+    await state.arq_pool.enqueue_job(
+        "run_prospecting_job",
         run_id=run_id,
-        save_lead=save_lead,
+        user_id=user_id,
+        campaign=safe_campaign,
+        max_results=min(request.max_results, 50),
+        personality_prompt=personality_prompt,
+        runtime_agents=runtime_agents,
+        excluded_domains=exclusions.get("excluded_domains", []),
+        source_priority=request.source_priority,
+        _job_id=run_id,   # dedupe — run_id as job id (RESEARCH Pattern 3)
     )
-    asyncio.create_task(_finalize_on_complete())
-    return {"status": "running", "run_id": run_id, "message": "Campaña iniciada — los agentes están buscando empresas", "exclusion_stats": exclusions.get("stats", {})}
+    return {
+        "status": "queued",
+        "run_id": run_id,
+        "message": "Campaña encolada — los agentes comenzarán pronto",
+        "exclusion_stats": exclusions.get("stats", {}),
+    }
 
 
 # ── Campaign Chat ─────────────────────────────────────────────────────────────

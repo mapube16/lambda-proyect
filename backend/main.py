@@ -64,6 +64,10 @@ async def lifespan(app: FastAPI):
 
     state.hive_adapter = HiveAdapter(send_to_user_callback=manager.send_to_user)
 
+    from arq_pool import create_arq_pool
+    state.arq_pool = await create_arq_pool()
+    logging.info("ARQ pool connected.")
+
     await start_scheduler()
     from landa.scheduler import scheduler as _sched
     from cobranza.campaign_scheduler import register_cobranza_jobs
@@ -71,6 +75,8 @@ async def lifespan(app: FastAPI):
 
     logging.info("Lambda Office started!")
     yield
+    if state.arq_pool is not None:
+        await state.arq_pool.aclose()
     shutdown_scheduler()
     logging.info("Shutting down.")
 
