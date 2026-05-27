@@ -80,6 +80,36 @@ def test_worker_job_function_signature():
     assert worker.run_prospecting_job in fns
 
 
+# ── INFRA-02 bridge: pub/sub forwarder routes Worker events to WebSocket ──────
+
+async def test_pubsub_event_routing():
+    import routers.websocket as ws
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    sent = []
+    fake_websocket = AsyncMock()
+    fake_websocket.send_json = AsyncMock(side_effect=lambda payload: sent.append(payload))
+
+    async def fake_listen():
+        yield {"type": "pmessage", "data": '{"type": "agent_update", "state": "THINKING"}'}
+        raise __import__("asyncio").CancelledError()
+
+    fake_pubsub = MagicMock()
+    fake_pubsub.psubscribe = AsyncMock()
+    fake_pubsub.punsubscribe = AsyncMock()
+    fake_pubsub.listen = fake_listen
+    fake_redis = AsyncMock()
+    fake_redis.pubsub = MagicMock(return_value=fake_pubsub)
+    fake_redis.aclose = AsyncMock()
+
+    with patch("routers.websocket.aioredis.from_url", new=AsyncMock(return_value=fake_redis)):
+        await ws._redis_event_forwarder("user1", fake_websocket)
+
+    assert any(p.get("state") == "THINKING" for p in sent)
+    fake_pubsub.psubscribe.assert_awaited_once()
+    fake_redis.aclose.assert_awaited_once()
+
+
 # ── INFRA-02: Worker job function invokes HiveAdapter and publishes events ────
 
 @pytest.mark.xfail(reason="INFRA-02: run_prospecting_job not implemented yet", strict=False)
