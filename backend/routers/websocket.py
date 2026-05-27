@@ -1,8 +1,12 @@
+import asyncio
+import json
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, WebSocketException, Query, status
 from jose import JWTError, jwt
+import redis.asyncio as aioredis
 
+from arq_pool import redis_url
 from auth import SECRET_KEY, ALGORITHM, get_current_user
 from database import get_client_profile
 from models import AgentRole
@@ -11,6 +15,31 @@ from services.connection_manager import manager
 import state
 
 router = APIRouter()
+
+
+async def _redis_event_forwarder(user_id: str, websocket: WebSocket):
+    """Subscribe to ws:{user_id}:* and forward Worker-published events to the WebSocket."""
+    redis_client = await aioredis.from_url(redis_url(), decode_responses=True)
+    pubsub = redis_client.pubsub()
+    pattern = f"ws:{user_id}:*"
+    await pubsub.psubscribe(pattern)
+    try:
+        async for message in pubsub.listen():
+            if message.get("type") == "pmessage":
+                data = message.get("data")
+                if isinstance(data, str):
+                    try:
+                        await websocket.send_json(json.loads(data))
+                    except Exception:
+                        pass
+    except asyncio.CancelledError:
+        pass
+    finally:
+        try:
+            await pubsub.punsubscribe(pattern)
+        except Exception:
+            pass
+        await redis_client.aclose()
 
 
 @router.websocket("/ws")
@@ -38,6 +67,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         agents_payload = _build_runtime_agents(profile)
     await websocket.send_json({"type": "initial_state", "agents": agents_payload})
 
+    pubsub_task = asyncio.create_task(_redis_event_forwarder(user_id, websocket))
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -59,7 +90,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 agent_id = data.get("agent_id")
                 task = data.get("task")
                 if agent_id and task:
-                    import asyncio
                     asyncio.create_task(state.orchestrator.run_agent(agent_id, task))
 
             elif data.get("type") == "agent_state":
@@ -69,3 +99,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
+    finally:
+        pubsub_task.cancel()
+        try:
+            await pubsub_task
+        except asyncio.CancelledError:
+            pass
