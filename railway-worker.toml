@@ -2,7 +2,7 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "sh -c 'arq worker:WorkerSettings'"
+startCommand = "sh -c 'arq worker.WorkerSettings'"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
 # No healthcheckPath — the Worker is not an HTTP service.
