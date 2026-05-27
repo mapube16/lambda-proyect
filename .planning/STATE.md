@@ -23,8 +23,14 @@ See: .planning/PROJECT.md (updated 2026-05-26)
 
 ## Current Position
 
-Phase: 20 (Scraping Improvements) — PLANNING COMPLETE
+Phase: 20 (Scraping Improvements) — PLANNING COMPLETE, READY TO EXECUTE
 Plan: 0 of 4 (ready to execute)
+
+Plans created:
+- 20-01-PLAN.md (Wave 0): Pin markdownify==1.2.2 + tldextract==5.3.1 in requirements.txt
+- 20-02-PLAN.md (Wave 1): Add html_to_compressed_markdown(), extract_homepage(), expand LOW_QUALITY_DISCOVERY_DOMAINS
+- 20-03-PLAN.md (Wave 1): Wire curl_cffi AsyncSession + html_to_compressed_markdown + extract_homepage into live pipeline
+- 20-04-PLAN.md (Wave 2): Fix discovery query bug — _DIRECTOR_PROMPT + _discover_companies guard
 
 ## Performance Metrics
 
@@ -166,6 +172,11 @@ Recent decisions affecting current work:
 - [Phase 18-infrastructure-foundation]: isinstance(task, asyncio.Task) guard in worker.py — prevents MagicMock from being awaited when HiveAdapter is patched in tests
 - [Phase 18-infrastructure-foundation]: UUID4 run_id stored as run_id field in MongoDB runs collection; update_run_status queries by run_id field (not ObjectId _id) for ARQ/UUID compatibility
 - [Phase 18-infrastructure-foundation]: arq_pool.py shared helper: redis_settings_from_url() parses Railway redis://:pw@host:port URLs correctly via urlparse
+- [Phase 20-scraping-improvements]: markdownify==1.2.2 chosen over Crawl4AI for HTML→Markdown — Crawl4AI requires Playwright (mandatory dep, ~300 MB browser binaries, incompatible with Railway ARQ worker); markdownify reuses beautifulsoup4 already installed
+- [Phase 20-scraping-improvements]: curl_cffi AsyncSession(impersonate="chrome131") replaces httpx.AsyncClient in scrape_url() only — httpx retained for API calls (Serper, GMaps, BrightData)
+- [Phase 20-scraping-improvements]: ua_profiles loop removed from scrape_url() — curl_cffi generates authentic browser headers from impersonate target; manual headers degrade the fingerprint
+- [Phase 20-scraping-improvements]: tldextract PSL pre-warm at module level (tldextract.extract("")) prevents cold-start network call per request on Railway
+- [Phase 20-scraping-improvements]: Two-layer discovery bug fix: strengthened _DIRECTOR_PROMPT (prompt-level) + _GENERIC_INDUSTRY_TERMS guard in _discover_companies() (runtime-level)
 
 ### Pending Todos
 
@@ -178,6 +189,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-27T03:22:48.572Z
-Stopped at: Completed 18-02-PLAN.md
+Last session: 2026-05-27T00:00:00.000Z
+Stopped at: Created 20-01 through 20-04 PLAN.md files
 Resume file: None
