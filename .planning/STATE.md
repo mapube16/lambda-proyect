@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: — Multi-Tenant SaaS Pipeline
 status: Ready to execute
-stopped_at: Completed 18-01-PLAN.md
-last_updated: "2026-05-27T02:52:10.589Z"
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-05-27T03:22:48.577Z"
 progress:
   total_phases: 22
   completed_phases: 6
   total_plans: 46
-  completed_plans: 39
+  completed_plans: 41
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-05-26)
 ## Current Position
 
 Phase: 18 (Infrastructure Foundation) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Plan: 2 of 3
 | Phase 17-voice-cobranza-agent P07 | 9min | 2 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P08 | 8min | 3 tasks | 4 files |
 | Phase 18 P01 | 5 | 1 tasks | 1 files |
+| Phase 18-infrastructure-foundation P02 | 741 | 4 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -162,6 +163,9 @@ Recent decisions affecting current work:
 - [v1.0 Roadmap]: Phase 22 (COST) depends on TENANT (needs tenant_id on CostEvent) and INFRA (run_id comes from ARQ jobs); placed last
 - [Phase 18]: strict=False on all 5 xfail markers — stubs show as xfail not failures; CI never blocks on unimplemented infra features — consistent with Phase 16/17 pattern
 - [Phase 18]: create_user() returns dict with 'id' key — stubs use user['id'] not str(uid) directly (per actual database.py signature)
+- [Phase 18-infrastructure-foundation]: isinstance(task, asyncio.Task) guard in worker.py — prevents MagicMock from being awaited when HiveAdapter is patched in tests
+- [Phase 18-infrastructure-foundation]: UUID4 run_id stored as run_id field in MongoDB runs collection; update_run_status queries by run_id field (not ObjectId _id) for ARQ/UUID compatibility
+- [Phase 18-infrastructure-foundation]: arq_pool.py shared helper: redis_settings_from_url() parses Railway redis://:pw@host:port URLs correctly via urlparse
 
 ### Pending Todos
 
@@ -174,6 +178,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-27T02:52:10.584Z
-Stopped at: Completed 18-01-PLAN.md
+Last session: 2026-05-27T03:22:48.572Z
+Stopped at: Completed 18-02-PLAN.md
 Resume file: None
