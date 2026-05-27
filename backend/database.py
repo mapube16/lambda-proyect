@@ -28,6 +28,7 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await db.users.create_index("email", unique=True)
     await db.campaigns.create_index([("user_id", 1), ("is_active", 1)])
     await db.runs.create_index([("user_id", 1), ("started_at", -1)])
+    await db.runs.create_index("run_id", unique=True)
     await db.leads.create_index([("run_id", 1), ("user_id", 1)])
     await db.leads.create_index([("user_id", 1), ("created_at", -1)])
     await db.client_knowledge.create_index([("user_id", 1), ("filename", 1)])
@@ -450,19 +451,22 @@ async def get_client_profile(user_id: str) -> Optional[dict]:
 
 # ── Runs ──────────────────────────────────────────────────────────────────────
 
-async def create_run(user_id: str, campaign_id: str, max_results: int) -> str:
+async def create_run(user_id: str, campaign_id: str, max_results: int, run_id: str = None) -> str:
+    import uuid
     db = get_db()
-    result = await db.runs.insert_one({
+    run_id = run_id or str(uuid.uuid4())
+    await db.runs.insert_one({
+        "run_id": run_id,
         "user_id": user_id,
         "campaign_id": campaign_id,
-        "status": "running",
+        "status": "queued",
         "max_results": max_results,
         "total_found": 0,
         "total_approved": 0,
         "started_at": datetime.now(timezone.utc),
         "completed_at": None,
     })
-    return str(result.inserted_id)
+    return run_id
 
 
 async def update_run_status(
@@ -483,7 +487,7 @@ async def update_run_status(
     if status in ("complete", "error"):
         update["completed_at"] = datetime.now(timezone.utc)
     await db.runs.update_one(
-        {"_id": ObjectId(run_id)},
+        {"run_id": run_id},
         {"$set": update},
     )
 
