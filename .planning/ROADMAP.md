@@ -426,7 +426,13 @@ Plans:
   3. Serper results for a query that would return ciencuadras.com or computrabajo.com are filtered out before any scraping attempt — zero requests are made to DIRECTORY_DOMAINS entries
   4. Calling `extract_homepage("https://blog.acme.com/article/123")` returns `"https://acme.com"` — blog post and directory listing URLs are normalized to root domains
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 20-01-PLAN.md — Wave 0: Add markdownify==1.2.2 + tldextract==5.3.1 to requirements.txt; add imports + PSL pre-warm to prospector.py
+- [ ] 20-02-PLAN.md — Wave 1: Add html_to_compressed_markdown(), extract_homepage(), _NON_HOME_SUBDOMAINS; expand LOW_QUALITY_DISCOVERY_DOMAINS (~35 new domains)
+- [ ] 20-03-PLAN.md — Wave 1: Replace httpx.AsyncClient with curl_cffi AsyncSession in scrape_url(); wire html_to_compressed_markdown() and extract_homepage()
+- [ ] 20-04-PLAN.md — Wave 2: Fix discovery query bug — strengthen _DIRECTOR_PROMPT + add industria guard in _discover_companies()
 
 ### Phase 21: Pipeline Parametrization
 
