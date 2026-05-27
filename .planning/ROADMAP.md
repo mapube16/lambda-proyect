@@ -393,7 +393,12 @@ Plans:
   3. The Worker service picks up an enqueued ARQ job from Redis and executes the prospecting pipeline without any code running in the API process — verified by checking that no pipeline logic executes in the API process during a run
   4. If the Worker process is restarted mid-run, incomplete jobs are re-queued and resume — the API service remains fully responsive throughout
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 18-01-PLAN.md — Wave 0: xfail test stubs for INFRA-01/02/03 in backend/tests/test_infra.py
+- [ ] 18-02-PLAN.md — Wave 1: ARQ worker.py + arq_pool.py + POST /api/prospect enqueue + UUID run_id in database.py (INFRA-02, INFRA-03)
+- [ ] 18-03-PLAN.md — Wave 2: Redis pub/sub WS bridge + railway.toml/railway-worker.toml + 3-service deploy checkpoint (INFRA-01, INFRA-02)
 
 ### Phase 19: Tenant Isolation
 
@@ -478,7 +483,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
 | 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete | 2026-03-26 |
 | 17. Voice Cobranza Agent | 8/8 | Complete | 2026-03-27 |
-| 18. Infrastructure Foundation | 0/TBD | Not started | - |
+| 18. Infrastructure Foundation | 0/3 | Planned | - |
 | 19. Tenant Isolation | 0/TBD | Not started | - |
 | 20. Scraping Improvements | 0/TBD | Not started | - |
 | 21. Pipeline Parametrization | 0/TBD | Not started | - |
