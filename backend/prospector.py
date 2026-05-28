@@ -230,12 +230,12 @@ def html_to_compressed_markdown(html: str) -> str:
     try:
         from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
         from crawl4ai.content_filter_strategy import PruningContentFilter
-        content_filter = PruningContentFilter(threshold=0.48, threshold_type="fixed")
-        generator = DefaultMarkdownGenerator(content_filter=content_filter)
+        generator = DefaultMarkdownGenerator()
         result = generator.generate_markdown(
-            cleaned_html=html,
+            html,
             base_url="",
             html2text_options={"ignore_links": True, "ignore_images": True},
+            content_filter=PruningContentFilter(threshold=0.48, threshold_type="fixed"),
         )
         markdown = result.fit_markdown or result.raw_markdown or ""
         if not markdown.strip():
