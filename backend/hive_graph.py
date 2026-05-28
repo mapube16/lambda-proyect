@@ -40,7 +40,7 @@ Tu misión: Ejecutar una campaña de prospección B2B completando los 4 pasos en
 FLUJO DE EJECUCIÓN OBLIGATORIO — SIGUE EXACTAMENTE ESTE ORDEN:
 
 PASO 1: DESCUBRIMIENTO
-- Llama a `discover_companies` UNA SOLA VEZ con la industria de la campaña.
+- Llama a `discover_companies` UNA SOLA VEZ. El argumento `industria` DEBE ser el valor LITERAL de 'Industria objetivo' de la campaña — cópialo exactamente, sin parafrasear, sin reemplazar por términos genéricos. Si la campaña dice 'Seguros de vida', pasa industria='Seguros de vida', NO 'seguros' NI 'empresas'.
 - Si la campaña incluye varias industrias separadas por comas, llama UNA VEZ por cada una en paralelo (máx 3 simultáneas).
 - ⛔ REGLA ABSOLUTA: Después de recibir el resultado de discover_companies, NO la llames de nuevo bajo ninguna circunstancia. Pasa INMEDIATAMENTE al PASO 2.
 
