@@ -26,4 +26,5 @@ WORKDIR /app/backend
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+# Start FastAPI + ARQ worker in the same container
+CMD ["sh", "-c", "arq worker:WorkerSettings & uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
