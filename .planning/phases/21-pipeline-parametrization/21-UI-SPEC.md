@@ -68,16 +68,21 @@ Exceptions:
 
 Source: detected from `AgentPanel.tsx` and `StaffDashboard.tsx` style objects.
 
+Exactly 4 sizes, exactly 2 weights.
+
 | Role | Size | Weight | Line Height | Font | Usage |
 |------|------|--------|-------------|------|-------|
-| Body | 13px | 400 | 1.5 | Inter | Card description text, form values, chat bubbles |
-| Label | 10px | 600 | 1.2 | Space Grotesk | Section labels, param labels, uppercase metadata |
-| Heading | 14–16px | 500–700 | 1.2 | Space Grotesk | Vertical card title, section heading |
-| Display | 22px | 700 | 1.0 | Space Grotesk | "Configuración de Campaña" header — not changed |
+| Label | 10px | 600 | 1.2 | Space Grotesk | Section labels, param labels, uppercase metadata, VerticalBadge paramLabel, signal source tags |
+| Body | 13px | 400 | 1.5 | Inter | Card description text, form values, chat bubbles, vertical card description |
+| Heading | 14px | 600 | 1.2 | Space Grotesk | Vertical card title, section heading, paramValue |
+| Display | 22px | 600 | 1.0 | Space Grotesk | "Configuración de Campaña" header — not changed |
 
-Vertical card title: 14px, weight 600, Space Grotesk, color `#e3e0f1`
-Vertical card description: 12px, weight 400, Inter, color `rgba(227,224,241,0.5)`
-Vertical card tag (signal source badges): 10px, weight 600, Space Grotesk, uppercase, letterSpacing 0.06em
+Per-component size and weight references:
+- Vertical card title: 14px, weight 600, Space Grotesk, color `#e3e0f1`
+- Vertical card description: 13px, weight 400, Inter, color `rgba(227,224,241,0.5)`
+- Vertical card tag (signal source badges): 10px, weight 600, Space Grotesk, uppercase, letterSpacing 0.06em
+- VerticalBadge paramLabel: 10px, weight 600, Space Grotesk, uppercase, muted
+- VerticalBadge paramValue: 14px, weight 600, color `#e3e0f1`
 
 ---
 
@@ -136,7 +141,7 @@ Signal source badge colors (read-only tags inside vertical cards):
 **VerticalCard anatomy (top to bottom):**
 1. Icon: 24px emoji, `lineHeight: 1`, `marginBottom: 4px`
 2. Title: 14px, weight 600, Space Grotesk, `#e3e0f1`
-3. Description: 12px, weight 400, Inter, `rgba(227,224,241,0.5)`, `lineHeight: 1.5`
+3. Description: 13px, weight 400, Inter, `rgba(227,224,241,0.5)`, `lineHeight: 1.5`
 4. Signal source tags row: horizontal flex, `gap: 4px`, `flexWrap: wrap`, `marginTop: 8px`
 
 **Signal source tag:** `fontSize: 10px`, `fontFamily: Space Grotesk`, `fontWeight: 600`, `textTransform: uppercase`, `letterSpacing: 0.06em`, `padding: '2px 6px'`, `borderRadius: 4px`. Colors from Color section above.
@@ -182,7 +187,7 @@ When a vertical is selected and `campaignReady === true`, show a read-only badge
 VERTICAL ACTIVO: Pólizas de Arrendamiento  [Fincaraíz] [Serper]
 ```
 
-Style matches existing `paramCard` with `gridColumn: '1 / -1'`. Label in `paramLabel` style (9px, uppercase, Space Grotesk, muted). Value in `paramValue` style (14px, `#e3e0f1`). Tags inline using signal source badge colors.
+Style matches existing `paramCard` with `gridColumn: '1 / -1'`. Label in `paramLabel` style (10px, weight 600, uppercase, Space Grotesk, muted). Value in `paramValue` style (14px, weight 600, `#e3e0f1`). Tags inline using signal source badge colors.
 
 ---
 
@@ -196,8 +201,8 @@ Style matches existing `paramCard` with `gridColumn: '1 / -1'`. Label in `paramL
 | Vertical selector subheading | "Selecciona un vertical para pre-configurar las fuentes de señales." |
 | Empty state — no vertical + no campaign | "Selecciona un vertical para comenzar" (below selector grid) |
 | Selected vertical confirmation | "Vertical seleccionado: [título]. Las fuentes de señales se activarán automáticamente." (small text below grid, color `rgba(227,224,241,0.4)`) |
-| Error — vertical not selected on launch attempt | "Selecciona un vertical antes de iniciar la prospección." (inline, color `#ff6188`, fontSize 12px, below selector) |
-| personalizado selected | "Configura las fuentes en el panel de Fuentes de descubrimiento del StaffDashboard." (12px, muted, below selector) |
+| Error — vertical not selected on launch attempt | "Selecciona un vertical antes de iniciar la prospección." (inline, color `#ff6188`, fontSize 13px, below selector) |
+| personalizado selected | "Configura las fuentes en el panel de Fuentes de descubrimiento del StaffDashboard." (13px, muted, below selector) |
 | FuentesPanel — RUES label | "RUES — Empresas recién registradas (datos.gov.co)" |
 | FuentesPanel — Fincaraíz label | "Fincaraíz — Listados de arriendo activos" |
 
