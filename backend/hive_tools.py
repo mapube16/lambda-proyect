@@ -159,6 +159,21 @@ def make_prospecting_registry(
                     "Call report_campaign_complete with totals=0 and then set_output to finish."
                 )
 
+        # Guard: override generic industria if LLM passed a meaningless term.
+        # This is a defense-in-depth fix for the bug where the director LLM calls
+        # discover_companies(industria="empresas") instead of the real campaign industry.
+        _GENERIC_INDUSTRIA_TERMS = frozenset({
+            "empresas", "empresa", "negocios", "negocio", "companies", "company",
+            "business", "organizaciones", "organizacion", "",
+        })
+        campaign_industria = campaign.get("industria_objetivo", "").strip()
+        if campaign_industria and industria.lower().strip() in _GENERIC_INDUSTRIA_TERMS:
+            logger.warning(
+                "[discover_companies] LLM passed generic industria=%r; overriding with campaign=%r",
+                industria, campaign_industria,
+            )
+            industria = campaign_industria
+
         n = int(max_r) if max_r else max_results
         logger.info(
             "[discover_companies] user=%s industria=%s ciudad=%s max=%d",
