@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 8: Real-Time Visualization** - Map all 9 graph node states to character animations; WebSocket delivery without UI block; error states on pipeline failure
 - [ ] **Phase 18: Infrastructure Foundation** - Railway 3-service deployment (API + Worker + Redis); ARQ job queue replaces in-process execution; API enqueues jobs and returns run_id immediately
 - [ ] **Phase 19: Tenant Isolation** - tenant_id on all MongoDB documents; all queries filtered by tenant_id; Redis pub/sub WebSocket bridge routes Worker events to the correct frontend connection
-- [ ] **Phase 20: Scraping Improvements** - curl_cffi Chrome131 TLS impersonation replaces httpx; Crawl4AI compresses HTML to Markdown before LLM; DIRECTORY_DOMAINS blocklist; extract_homepage() normalization
+- [x] **Phase 20: Scraping Improvements** - curl_cffi Chrome131 TLS impersonation replaces httpx; Crawl4AI compresses HTML to Markdown before LLM; DIRECTORY_DOMAINS blocklist; extract_homepage() normalization (completed 2026-05-28)
 - [ ] **Phase 21: Pipeline Parametrization** - VerticalConfig dataclass per insurance vertical; SignalLead TypedDict contract for all signal_sources; user selects vertical at campaign configuration
 - [ ] **Phase 22: Cost Observability** - CostEvent logged per LLM and Serper call with tenant_id + run_id; user can query total cost per run via API
 
@@ -432,7 +432,7 @@ Plans:
 - [x] 20-01-PLAN.md — Wave 0: Create backend/Dockerfile.worker (Playwright base image); update railway-worker.toml; add crawl4ai>=0.4.21 + tldextract==5.3.1 + curl_cffi==0.15.0 to requirements.txt
 - [x] 20-02-PLAN.md — Wave 1: Add html_to_compressed_markdown(), extract_homepage(), _NON_HOME_SUBDOMAINS; expand LOW_QUALITY_DISCOVERY_DOMAINS (~35 new domains)
 - [x] 20-03-PLAN.md — Wave 1: Replace httpx.AsyncClient with curl_cffi AsyncSession in scrape_url(); wire html_to_compressed_markdown() and extract_homepage()
-- [ ] 20-04-PLAN.md — Wave 2: Fix discovery query bug — strengthen _DIRECTOR_PROMPT + add industria guard in _discover_companies()
+- [x] 20-04-PLAN.md — Wave 2: Fix discovery query bug — strengthen _DIRECTOR_PROMPT + add industria guard in _discover_companies()
 
 ### Phase 21: Pipeline Parametrization
 
@@ -491,6 +491,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Voice Cobranza Agent | 8/8 | Complete | 2026-03-27 |
 | 18. Infrastructure Foundation | 2/3 | In Progress|  |
 | 19. Tenant Isolation | 0/TBD | Not started | - |
-| 20. Scraping Improvements | 3/4 | In Progress|  |
+| 20. Scraping Improvements | 4/4 | Complete   | 2026-05-28 |
 | 21. Pipeline Parametrization | 0/TBD | Not started | - |
 | 22. Cost Observability | 0/TBD | Not started | - |

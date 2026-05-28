@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: — Multi-Tenant SaaS Pipeline
-status: Ready to execute
-stopped_at: Completed 20-03-PLAN.md
-last_updated: "2026-05-28T14:26:15.165Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 20-04-PLAN.md
+last_updated: "2026-05-28T14:29:13.590Z"
 progress:
   total_phases: 22
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 50
-  completed_plans: 44
+  completed_plans: 45
 ---
 
 # Project State
@@ -69,6 +69,7 @@ Plan: 4 of 4
 | Phase 20 P01 | 5 | 1 tasks | 2 files |
 | Phase 20-scraping-improvements P02 | 2min | 2 tasks | 1 files |
 | Phase 20 P03 | 10min | 2 tasks | 1 files |
+| Phase 20-scraping-improvements P04 | 5min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -181,6 +182,8 @@ Recent decisions affecting current work:
 - [Phase 20]: ua_profiles loop removed from scrape_url() — curl_cffi auto-generates authentic browser headers; manual headers degrade fingerprint
 - [Phase 20]: html_to_compressed_markdown(html) wired at end of scrape_url() replacing old soup.get_text() block — soup retained for contact extraction above it
 - [Phase 20]: extract_homepage(url) wired before BLOCKED_DOMAINS check in discover_via_serper() — normalizes blog/subpage URLs to company homepages before dedup
+- [Phase 20-scraping-improvements]: Two-layer discovery bug fix: strengthened _DIRECTOR_PROMPT (prompt-level) + _GENERIC_INDUSTRIA_TERMS guard in _discover_companies() (runtime-level)
+- [Phase 20-scraping-improvements]: _GENERIC_INDUSTRIA_TERMS defined as local frozenset inside _discover_companies() — not module-level to avoid confusion with COMPETITOR_GENERIC_WORDS
 
 ### Pending Todos
 
@@ -193,6 +196,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-28T14:26:15.153Z
-Stopped at: Completed 20-03-PLAN.md
+Last session: 2026-05-28T14:29:13.580Z
+Stopped at: Completed 20-04-PLAN.md
 Resume file: None
