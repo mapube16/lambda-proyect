@@ -202,6 +202,107 @@ def _is_low_quality_candidate(url: str, title: str = "") -> bool:
     return False
 
 
+# Subdomains that indicate a non-homepage URL (blog, careers, app, etc.)
+_NON_HOME_SUBDOMAINS = frozenset({
+    "blog", "blogs", "news", "press", "noticias",
+    "careers", "jobs", "empleo", "vacantes", "hire",
+    "app", "apps", "portal", "admin", "dashboard", "api",
+    "shop", "store", "tienda",
+    "support", "help", "ayuda", "soporte",
+    "mail", "webmail", "correo",
+    "m", "mobile",
+    "dev", "staging", "test", "demo", "qa",
+    "cdn", "static", "assets", "media",
+    "docs", "wiki", "kb", "documentation",
+    "forum", "community", "comunidad",
+})
+
+
+def html_to_compressed_markdown(html: str) -> str:
+    """
+    Convert scraped HTML to compressed Markdown using Crawl4AI DefaultMarkdownGenerator
+    + PruningContentFilter. Achieves ~80% token reduction vs raw HTML.
+
+    Does NOT launch a browser — processes the HTML string directly.
+    curl_cffi fetches the HTML; Crawl4AI converts it. They are independent.
+    """
+    try:
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+        from crawl4ai.content_filter_strategy import PruningContentFilter
+        content_filter = PruningContentFilter(threshold=0.48, threshold_type="fixed")
+        generator = DefaultMarkdownGenerator(content_filter=content_filter)
+        result = generator.generate_markdown(
+            cleaned_html=html,
+            base_url="",
+            html2text_options={"ignore_links": True, "ignore_images": True},
+        )
+        markdown = result.fit_markdown or result.raw_markdown or ""
+        if not markdown.strip():
+            raise ValueError("empty markdown output")
+        return markdown
+    except Exception as e:
+        # Fallback: strip tags with BeautifulSoup and return plain text
+        # This ensures scrape_url() never hard-fails due to crawl4ai import issues.
+        logger.warning("[html_to_compressed_markdown] crawl4ai failed (%s), using bs4 fallback", e)
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header",
+                         "aside", "form", "noscript", "svg", "img", "iframe"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ", strip=True)
+        return re.sub(r"\s{2,}", " ", text)
+
+
+def extract_homepage(url: str) -> str:
+    """
+    Normalize a URL to the probable company homepage.
+    Strips known non-homepage subdomains (blog., careers., etc.) and deep paths.
+    Uses tldextract for correct handling of .com.co, .co.uk, and PSL private suffixes.
+    Falls back to original URL if unable to parse.
+
+    Examples:
+      https://blog.acme.com/article/2024/news   -> https://acme.com
+      https://careers.empresa.com.co/vacante/1  -> https://empresa.com.co
+      https://www.acme.com/about/team           -> https://www.acme.com/about/team
+      https://acme.com/noticias/articulo-123    -> https://acme.com
+    """
+    if not url:
+        return url
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+
+    ext = tldextract.extract(url)
+    if not ext.domain or not ext.suffix:
+        return url
+
+    registered = f"{ext.domain}.{ext.suffix}"  # e.g. "empresa.com.co"
+    subdomain = (ext.subdomain or "").lower()
+
+    # Determine the effective subdomain (strip leading "www.")
+    effective_sub = subdomain
+    if effective_sub in ("www", ""):
+        effective_sub = ""
+    elif effective_sub.startswith("www."):
+        effective_sub = effective_sub[4:]
+
+    if effective_sub in _NON_HOME_SUBDOMAINS:
+        return f"https://{registered}"
+
+    # Check for deep blog/article paths using the existing LOW_QUALITY_PATH_MARKERS tuple
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    path = (parsed.path or "/").lower()
+    for marker in LOW_QUALITY_PATH_MARKERS:
+        if marker in path:
+            # Strip to registered domain, dropping the non-home path
+            netloc_clean = parsed.netloc.lower()
+            if netloc_clean.startswith("www."):
+                netloc_clean = netloc_clean[4:]
+            return f"https://{netloc_clean or registered}"
+
+    # No normalization needed
+    return url
+
+
 # ── Discovery: Google Maps Places API ────────────────────────────────────────
 
 async def _gmaps_place_details(
