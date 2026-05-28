@@ -491,6 +491,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Voice Cobranza Agent | 8/8 | Complete | 2026-03-27 |
 | 18. Infrastructure Foundation | 2/3 | In Progress|  |
 | 19. Tenant Isolation | 0/TBD | Not started | - |
-| 20. Scraping Improvements | 4/4 | Complete   | 2026-05-28 |
+| 20. Scraping Improvements | 4/4 | Complete    | 2026-05-28 |
 | 21. Pipeline Parametrization | 0/TBD | Not started | - |
 | 22. Cost Observability | 0/TBD | Not started | - |
