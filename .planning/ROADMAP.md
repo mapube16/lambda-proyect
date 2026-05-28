@@ -431,7 +431,7 @@ Plans:
 Plans:
 - [x] 20-01-PLAN.md — Wave 0: Create backend/Dockerfile.worker (Playwright base image); update railway-worker.toml; add crawl4ai>=0.4.21 + tldextract==5.3.1 + curl_cffi==0.15.0 to requirements.txt
 - [x] 20-02-PLAN.md — Wave 1: Add html_to_compressed_markdown(), extract_homepage(), _NON_HOME_SUBDOMAINS; expand LOW_QUALITY_DISCOVERY_DOMAINS (~35 new domains)
-- [ ] 20-03-PLAN.md — Wave 1: Replace httpx.AsyncClient with curl_cffi AsyncSession in scrape_url(); wire html_to_compressed_markdown() and extract_homepage()
+- [x] 20-03-PLAN.md — Wave 1: Replace httpx.AsyncClient with curl_cffi AsyncSession in scrape_url(); wire html_to_compressed_markdown() and extract_homepage()
 - [ ] 20-04-PLAN.md — Wave 2: Fix discovery query bug — strengthen _DIRECTOR_PROMPT + add industria guard in _discover_companies()
 
 ### Phase 21: Pipeline Parametrization
@@ -491,6 +491,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Voice Cobranza Agent | 8/8 | Complete | 2026-03-27 |
 | 18. Infrastructure Foundation | 2/3 | In Progress|  |
 | 19. Tenant Isolation | 0/TBD | Not started | - |
-| 20. Scraping Improvements | 2/4 | In Progress|  |
+| 20. Scraping Improvements | 3/4 | In Progress|  |
 | 21. Pipeline Parametrization | 0/TBD | Not started | - |
 | 22. Cost Observability | 0/TBD | Not started | - |

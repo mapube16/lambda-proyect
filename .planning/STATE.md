@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: — Multi-Tenant SaaS Pipeline
 status: Ready to execute
-stopped_at: Completed 20-02-PLAN.md
-last_updated: "2026-05-28T14:21:38.340Z"
+stopped_at: Completed 20-03-PLAN.md
+last_updated: "2026-05-28T14:26:15.165Z"
 progress:
   total_phases: 22
   completed_phases: 6
   total_plans: 50
-  completed_plans: 43
+  completed_plans: 44
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-05-26)
 ## Current Position
 
 Phase: 20 (Scraping Improvements) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 
 ## Performance Metrics
 
@@ -68,6 +68,7 @@ Plan: 3 of 4
 | Phase 18-infrastructure-foundation P02 | 741 | 4 tasks | 7 files |
 | Phase 20 P01 | 5 | 1 tasks | 2 files |
 | Phase 20-scraping-improvements P02 | 2min | 2 tasks | 1 files |
+| Phase 20 P03 | 10min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -176,6 +177,10 @@ Recent decisions affecting current work:
 - [Phase 20]: strict=False on all 4 xfail markers — stubs show as xfail not failures; CI never blocks on unimplemented scraping features — consistent with Phase 16/17/18 pattern
 - [Phase 20-scraping-improvements]: Crawl4AI DefaultMarkdownGenerator chosen for html_to_compressed_markdown() per plan critical_notes — processes HTML without browser launch; lazy import + bs4 fallback for graceful degradation
 - [Phase 20-scraping-improvements]: extract_homepage() reuses LOW_QUALITY_PATH_MARKERS tuple — no duplication; tldextract.extract('') at module top pre-warms PSL cache at Railway pod start
+- [Phase 20]: curl_cffi AsyncSession(impersonate='chrome131') replaces httpx.AsyncClient in scrape_url() — one session per call, TLS fingerprint defeats WAF detection
+- [Phase 20]: ua_profiles loop removed from scrape_url() — curl_cffi auto-generates authentic browser headers; manual headers degrade fingerprint
+- [Phase 20]: html_to_compressed_markdown(html) wired at end of scrape_url() replacing old soup.get_text() block — soup retained for contact extraction above it
+- [Phase 20]: extract_homepage(url) wired before BLOCKED_DOMAINS check in discover_via_serper() — normalizes blog/subpage URLs to company homepages before dedup
 
 ### Pending Todos
 
@@ -188,6 +193,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-28T14:21:38.298Z
-Stopped at: Completed 20-02-PLAN.md
+Last session: 2026-05-28T14:26:15.153Z
+Stopped at: Completed 20-03-PLAN.md
 Resume file: None
