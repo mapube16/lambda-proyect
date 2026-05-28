@@ -846,6 +846,11 @@ async def discover_companies(
     gmaps_key: str = "",
     excluded_domains: set[str] | None = None,
     use_secop: bool = False,
+    use_rues: bool = False,
+    use_fincaraiz: bool = False,
+    rues_dias_recientes: int = 180,
+    fincaraiz_tipo: str = "apartamentos",
+    fincaraiz_only_particular: bool = False,
     source_priority: str = "serper",  # "serper" | "bright_data" | "hybrid"
 ) -> list[dict]:
     """
@@ -860,7 +865,9 @@ async def discover_companies(
     1. Google Maps (local businesses with contact info)
     2. Bing web search (companies with web presence)
     3. SECOP II (Colombian government contractors) — optional
-    4. DuckDuckGo (fallback)
+    4. RUES (recently registered companies) — optional
+    5. Fincaraíz (rental property listings) — optional
+    6. DuckDuckGo (fallback)
     Deduplicates by domain and merges up to max_results.
     """
     from urllib.parse import urlparse
@@ -1016,6 +1023,33 @@ async def discover_companies(
         secop_resolved = await resolve_secop_urls(secop_raw, max_concurrent=3)
         add_secop(secop_resolved[:secop_needed])
         logger.info("[Discovery] SECOP: %d raw → %d resueltas → %d total", len(secop_raw), len(secop_resolved), len(merged))
+
+    # RUES source: recently registered companies (Cámara de Comercio)
+    if use_rues and len(merged) < max_results:
+        from rues import discover_companies_rues, resolve_rues_urls
+        rues_needed = max_results - len(merged)
+        rues_raw = await discover_companies_rues(
+            industria, ciudad,
+            max_results=rues_needed * 2,
+            dias_recientes=rues_dias_recientes,
+        )
+        rues_resolved = await resolve_rues_urls(rues_raw, max_concurrent=3)
+        add_secop(rues_resolved[:rues_needed])  # reuse add_secop (same NIT-dedup logic)
+        logger.info("[Discovery] RUES: %d raw → %d resueltas → %d total", len(rues_raw), len(rues_resolved), len(merged))
+
+    # Fincaraíz source: rental property listings (inmobiliarias + particulares)
+    if use_fincaraiz and len(merged) < max_results:
+        from fincaraiz_signal import discover_via_fincaraiz
+        fincaraiz_needed = max_results - len(merged)
+        fincaraiz_results = await discover_via_fincaraiz(
+            ciudad=ciudad,
+            tipo_inmueble=fincaraiz_tipo,
+            only_particular=fincaraiz_only_particular,
+            max_results=fincaraiz_needed,
+            fetch_details=True,
+        )
+        add(fincaraiz_results)
+        logger.info("[Discovery] Fincaraíz: %d listings → %d total", len(fincaraiz_results), len(merged))
 
     return merged
 

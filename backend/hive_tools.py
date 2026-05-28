@@ -201,6 +201,12 @@ def make_prospecting_registry(
             use_secop       = bool(campaign.get("use_secop",       False))
             use_secop_radar = bool(campaign.get("use_secop_radar", False))
 
+        use_rues      = bool(campaign.get("use_rues", False))
+        use_fincaraiz = bool(campaign.get("use_fincaraiz", False))
+        fincaraiz_tipo             = str(campaign.get("fincaraiz_tipo", "apartamentos"))
+        fincaraiz_only_particular  = bool(campaign.get("fincaraiz_only_particular", False))
+        rues_dias_recientes        = int(campaign.get("rues_dias_recientes", 180))
+
         _state["discovery_calls"] += 1
         try:
             companies = await discover_companies(
@@ -210,6 +216,11 @@ def make_prospecting_registry(
                 gmaps_key,
                 excluded_domains=excluded_set,
                 use_secop=use_secop,
+                use_rues=use_rues,
+                use_fincaraiz=use_fincaraiz,
+                rues_dias_recientes=rues_dias_recientes,
+                fincaraiz_tipo=fincaraiz_tipo,
+                fincaraiz_only_particular=fincaraiz_only_particular,
                 source_priority=source_priority,
             )
         except Exception as exc:
@@ -259,7 +270,7 @@ def make_prospecting_registry(
             await send_to_user(user_id, {
                 "type": "agent_update", "agent_id": aid,
                 "state": "waiting",
-                "tool_status": f"✓ {len(companies)} empresas encontradas",
+                "tool_status": f"{len(companies)} empresas encontradas",
             })
         return {"companies": companies, "total": len(companies)}
 
@@ -388,9 +399,9 @@ def make_prospecting_registry(
 
         # ── Log analista decision ──────────────────────────────────────────
         score  = jp.get("score") or 0
-        sector = "✓ sector correcto" if (jp.get("es_sector_correcto") or result.get("status") == "success") else "✗ sector incorrecto"
+        sector = "sector correcto" if (jp.get("es_sector_correcto") or result.get("status") == "success") else "sector incorrecto"
         tamano = jp.get("tamano_estimado") or "desconocido"
-        dolor  = "✓ dolor detectado" if jp.get("sintomas_de_dolor") else "sin dolor claro"
+        dolor  = "dolor detectado" if jp.get("sintomas_de_dolor") else "sin dolor claro"
         nombre = jp.get("empresa") or title[:35]
         if is_approved:
             email_ok = bool((jp.get("borradores") or {}).get("email_cuerpo"))
