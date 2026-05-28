@@ -14,6 +14,7 @@ import re
 import asyncio
 import logging
 import httpx
+from curl_cffi.requests import AsyncSession, RequestsError
 from pathlib import Path
 from openai import AsyncOpenAI
 from bs4 import BeautifulSoup
@@ -1022,31 +1023,6 @@ async def discover_companies(
 async def scrape_url(url: str, timeout: int = 12) -> str:
     from urllib.parse import urlparse, urlunparse
 
-    ua_profiles = [
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/123.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
-        },
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) "
-                "Gecko/20100101 Firefox/124.0"
-            ),
-            "Accept-Language": "es-419,es;q=0.9,en;q=0.8",
-        },
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
-            ),
-            "Accept-Language": "es-ES,es;q=0.9,en;q=0.7",
-        },
-    ]
-
     def build_candidates(raw_url: str) -> list[str]:
         value = (raw_url or "").strip()
         if not value:
@@ -1089,29 +1065,30 @@ async def scrape_url(url: str, timeout: int = 12) -> str:
     # Status codes that mean the whole domain is blocked — skip remaining candidates too
     _HARD_BLOCK_CODES = {403, 429, 451}
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+        async with AsyncSession(
+            impersonate="chrome131",
+            allow_redirects=True,
+            timeout=timeout,
+        ) as client:
             hard_blocked = False
             for candidate in candidates:
                 if hard_blocked:
                     break
-                for headers in ua_profiles:
-                    try:
-                        resp = await client.get(candidate, headers=headers)
-                    except Exception as e:
-                        last_error = f"{candidate}: {e}"
-                        continue
+                try:
+                    resp = await client.get(candidate)
+                except RequestsError as e:
+                    last_error = f"{candidate}: {e}"
+                    continue
 
-                    if resp.status_code >= 400:
-                        last_error = f"{candidate}: HTTP {resp.status_code}"
-                        if resp.status_code in _HARD_BLOCK_CODES:
-                            hard_blocked = True
-                        if resp.status_code in _NO_RETRY_CODES:
-                            break  # don't try other UA profiles for this candidate
-                        continue
-
-                    html = resp.text or ""
-                    if html.strip():
+                if resp.status_code >= 400:
+                    last_error = f"{candidate}: HTTP {resp.status_code}"
+                    if resp.status_code in _HARD_BLOCK_CODES:
+                        hard_blocked = True
+                    if resp.status_code in _NO_RETRY_CODES:
                         break
+                    continue
+
+                html = resp.text or ""
                 if html.strip():
                     break
     except Exception as e:
