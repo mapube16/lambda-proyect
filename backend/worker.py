@@ -1,7 +1,7 @@
 """
 ARQ Worker — executes the Hive prospecting pipeline out-of-process.
 
-Runs as a separate Railway service: `arq worker:WorkerSettings`.
+Runs as a separate Railway service: `arq worker.WorkerSettings`.
 The FastAPI lifespan does NOT run here — this module initializes its OWN
 MongoDB and Redis clients in on_startup (RESEARCH Pitfall 2 + Pitfall 6).
 Never import or reference state.* / manager from this file.
