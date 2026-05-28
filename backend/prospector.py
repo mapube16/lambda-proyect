@@ -418,6 +418,8 @@ async def discover_via_serper(
                 logger.info("[Serper] query=%r → %d organic hits", query, len(organic))
                 for item in organic:
                     url = item.get("link", "")
+                    url = extract_homepage(url)
+                    item["url"] = url
                     title = item.get("title", "")
                     if not url or not title:
                         continue
@@ -1136,12 +1138,8 @@ async def scrape_url(url: str, timeout: int = 12) -> str:
         contact_section = "[CONTACTOS]\n" + "\n".join(parts) + "\n\n"
     # ──────────────────────────────────────────────────────────────────────────
 
-    for tag in soup(["script", "style", "nav", "footer", "header",
-                     "aside", "form", "noscript", "svg", "img"]):
-        tag.decompose()
-    text = soup.get_text(separator=" ", strip=True)
-    text = re.sub(r"\s{2,}", " ", text)
-    return (contact_section + text)[:8000]
+    content = html_to_compressed_markdown(html)
+    return (contact_section + content)[:8000]
 
 
 # ── Prompt building ───────────────────────────────────────────────────────────
