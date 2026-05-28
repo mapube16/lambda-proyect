@@ -26,5 +26,6 @@ pandas>=2.0.0
 arq==0.28.0
 redis>=4.2.0,<6
 curl_cffi==0.15.0
-crawl4ai==0.4.248
+# crawl4ai omitted: conflicts with pipecat-ai Pillow>=11 vs crawl4ai Pillow~=10.4
+# prospector.py has explicit bs4 fallback — pipeline runs without it
 tldextract==5.3.1
