@@ -17,6 +17,10 @@ import httpx
 from pathlib import Path
 from openai import AsyncOpenAI
 from bs4 import BeautifulSoup
+import tldextract
+# Pre-warm the Public Suffix List cache at import time to avoid cold-start network latency.
+# This makes one HTTP request on first Railway pod start, not on each scrape_url() call.
+tldextract.extract("")
 try:
     from ddgs import DDGS          # new package name
 except ImportError:
@@ -110,6 +114,38 @@ LOW_QUALITY_DISCOVERY_DOMAINS = {
     "pinterest.com", "ar.pinterest.com",      # social/ideas board
     "correosexpress.es",                       # Spanish courier, not Colombian
     "ccl.com.co",                              # Cámara Colombiana de la Logística (gremio, no empresa)
+    # Colombian business directories (added Phase 20)
+    "einforma.co", "directorio-empresas.einforma.co",
+    "empresas.portafolio.co", "empresas.larepublica.co",
+    "cylex.co", "guiaempresarial.co", "123empresas.com",
+    "tuugo.com", "tuugo.com.co",
+    "enests.co",
+    "brownbook.net",
+    "cybo.com",
+    "infobel.com",
+    "tupalo.com",
+    "hotfrog.com",
+    "foursquare.com",
+    # Job boards (added Phase 20)
+    "bumeran.com",
+    "getonboard.com", "getonboard.co",
+    "magneto.co",
+    "hipo.co",
+    "trabajando.com.co",
+    "multitrabajos.com",
+    "empleo.net.co",
+    # News / media portals (added Phase 20)
+    "businesscol.com",
+    "colombia.com",
+    "somos.com.co",
+    # Real estate / classifieds (added Phase 20)
+    "olx.com.co",
+    "vivareal.com.co",
+    "properati.com.co",
+    # Review / ranking directories (added Phase 20)
+    "glassdoor.com",
+    "g2.com",
+    "capterra.com",
 }
 
 LOW_QUALITY_DOMAIN_SUFFIXES = (
