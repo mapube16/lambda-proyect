@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: — Multi-Tenant SaaS Pipeline
 status: Ready to execute
-stopped_at: Planned 20-scraping-improvements
-last_updated: "2026-05-27T00:00:00.000Z"
+stopped_at: Completed 20-02-PLAN.md
+last_updated: "2026-05-28T14:21:38.340Z"
 progress:
   total_phases: 22
   completed_phases: 6
-  total_plans: 46
-  completed_plans: 41
+  total_plans: 50
+  completed_plans: 43
 ---
 
 # Project State
@@ -23,14 +23,8 @@ See: .planning/PROJECT.md (updated 2026-05-26)
 
 ## Current Position
 
-Phase: 20 (Scraping Improvements) — PLANNING COMPLETE, READY TO EXECUTE
-Plan: 0 of 4 (ready to execute)
-
-Plans created:
-- 20-01-PLAN.md (Wave 0): Pin markdownify==1.2.2 + tldextract==5.3.1 in requirements.txt
-- 20-02-PLAN.md (Wave 1): Add html_to_compressed_markdown(), extract_homepage(), expand LOW_QUALITY_DISCOVERY_DOMAINS
-- 20-03-PLAN.md (Wave 1): Wire curl_cffi AsyncSession + html_to_compressed_markdown + extract_homepage into live pipeline
-- 20-04-PLAN.md (Wave 2): Fix discovery query bug — _DIRECTOR_PROMPT + _discover_companies guard
+Phase: 20 (Scraping Improvements) — EXECUTING
+Plan: 3 of 4
 
 ## Performance Metrics
 
@@ -72,6 +66,8 @@ Plans created:
 | Phase 17-voice-cobranza-agent P08 | 8min | 3 tasks | 4 files |
 | Phase 18 P01 | 5 | 1 tasks | 1 files |
 | Phase 18-infrastructure-foundation P02 | 741 | 4 tasks | 7 files |
+| Phase 20 P01 | 5 | 1 tasks | 2 files |
+| Phase 20-scraping-improvements P02 | 2min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -177,6 +173,9 @@ Recent decisions affecting current work:
 - [Phase 20-scraping-improvements]: ua_profiles loop removed from scrape_url() — curl_cffi generates authentic browser headers from impersonate target; manual headers degrade the fingerprint
 - [Phase 20-scraping-improvements]: tldextract PSL pre-warm at module level (tldextract.extract("")) prevents cold-start network call per request on Railway
 - [Phase 20-scraping-improvements]: Two-layer discovery bug fix: strengthened _DIRECTOR_PROMPT (prompt-level) + _GENERIC_INDUSTRY_TERMS guard in _discover_companies() (runtime-level)
+- [Phase 20]: strict=False on all 4 xfail markers — stubs show as xfail not failures; CI never blocks on unimplemented scraping features — consistent with Phase 16/17/18 pattern
+- [Phase 20-scraping-improvements]: Crawl4AI DefaultMarkdownGenerator chosen for html_to_compressed_markdown() per plan critical_notes — processes HTML without browser launch; lazy import + bs4 fallback for graceful degradation
+- [Phase 20-scraping-improvements]: extract_homepage() reuses LOW_QUALITY_PATH_MARKERS tuple — no duplication; tldextract.extract('') at module top pre-warms PSL cache at Railway pod start
 
 ### Pending Todos
 
@@ -189,6 +188,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-27T00:00:00.000Z
-Stopped at: Created 20-01 through 20-04 PLAN.md files
+Last session: 2026-05-28T14:21:38.298Z
+Stopped at: Completed 20-02-PLAN.md
 Resume file: None
