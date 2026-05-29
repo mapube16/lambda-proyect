@@ -12,8 +12,9 @@ from database import (
     get_db, get_active_campaign, save_campaign, get_runs_by_user, get_leads_by_run,
     create_run, update_run_status, get_ideal_leads, get_rejected_leads,
     get_client_profile, get_prospecting_excluded_domains, save_lead,
+    upsert_prospecting_knowledge, get_prospecting_knowledge, get_or_create_prospecting_knowledge,
 )
-from onboarding import chat_turn
+from onboarding import chat_turn, extract_campaign_from_nl
 from pipeline_helpers import _build_runtime_agents, _normalize_agent_configs
 import state
 
@@ -39,6 +40,15 @@ class LeadsChatRequest(BaseModel):
 class ApplyIntentRequest(BaseModel):
     intent_type: str
     payload: dict
+
+
+class NLProspectRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+
+
+class KnowledgeUpsertRequest(BaseModel):
+    product_description: Optional[str] = None
+    icp_summary: Optional[str] = None
 
 
 # ── Prospecting ───────────────────────────────────────────────────────────────
@@ -271,3 +281,90 @@ async def diagnostics_maps(current_user: dict = Depends(get_current_user)):
         return {"status": data.get("status"), "api_key_present": True, "results_count": len(data.get("results", []))}
     except Exception as e:
         return {"status": "error", "api_key_present": True, "error": str(e)}
+
+
+# ── NL Prospecting Chat (Phase 23) ────────────────────────────────────────────
+
+def _build_nl_context(knowledge: dict) -> str:
+    """Format prospecting_knowledge dict into a single context block for the system prompt.
+    Caps signal lists at 20 items each and total context at 1500 chars (RESEARCH pitfall 3).
+    """
+    if not knowledge:
+        return ""
+    parts = []
+    product = (knowledge.get("product_description") or "").strip()
+    if product:
+        parts.append(f"Producto: {product}")
+    icp = (knowledge.get("icp_summary") or "").strip()
+    if icp:
+        parts.append(f"ICP: {icp}")
+    approved = knowledge.get("approved_lead_signals") or []
+    if approved:
+        parts.append("Senales aprobadas:\n" + "\n".join(f"- {s}" for s in approved[:20]))
+    rejected = knowledge.get("rejected_lead_signals") or []
+    if rejected:
+        parts.append("Senales rechazadas:\n" + "\n".join(f"- {s}" for s in rejected[:20]))
+    blob = "\n\n".join(parts)
+    return blob[:1500]
+
+
+@router.post("/api/chat/prospect")
+async def nl_prospect_chat(
+    request: NLProspectRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Single-turn NL -> CAMPAIGN_READY extraction. Replaces multi-turn campaign form for v1."""
+    user_id = str(current_user["user_id"])
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
+    knowledge = await get_or_create_prospecting_knowledge(user_id)
+    context = _build_nl_context(knowledge)
+    try:
+        reply = await extract_campaign_from_nl(request.message, api_key, context=context)
+    except Exception as e:
+        logger.exception("[nl_prospect] extract failed: %s", e)
+        raise HTTPException(status_code=502, detail="NL extraction failed")
+    if "CAMPAIGN_READY:" in reply:
+        try:
+            marker = "CAMPAIGN_READY:"
+            idx = reply.index(marker) + len(marker)
+            raw_json = reply[idx:].strip()
+            brace_start = raw_json.index("{")
+            brace_end = raw_json.rindex("}") + 1
+            campaign_data = json.loads(raw_json[brace_start:brace_end])
+            # Strip _id if present (RESEARCH pitfall 1 — ObjectId msgpack guard)
+            safe_campaign = {k: v for k, v in campaign_data.items() if k != "_id"}
+            await save_campaign(user_id, safe_campaign)
+            # Persist last_campaign_params for future context (fire-and-forget OK but sync is fine here)
+            await upsert_prospecting_knowledge(user_id, {"last_campaign_params": safe_campaign})
+            return {"status": "extracted", "campaign": safe_campaign}
+        except Exception as e:
+            logger.warning("[nl_prospect] parse failed: %s", e)
+    return {"status": "needs_clarification", "reply": reply}
+
+
+@router.get("/api/knowledge")
+async def get_my_knowledge(current_user: dict = Depends(get_current_user)):
+    user_id = str(current_user["user_id"])
+    doc = await get_or_create_prospecting_knowledge(user_id)
+    # Return only the safe public fields
+    return {
+        "product_description": doc.get("product_description", ""),
+        "icp_summary": doc.get("icp_summary", ""),
+        "approved_lead_signals": doc.get("approved_lead_signals", []),
+        "rejected_lead_signals": doc.get("rejected_lead_signals", []),
+    }
+
+
+@router.post("/api/knowledge")
+async def upsert_my_knowledge(
+    request: KnowledgeUpsertRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = str(current_user["user_id"])
+    fields = {k: v for k, v in request.dict().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    await upsert_prospecting_knowledge(user_id, fields)
+    return {"status": "ok"}
