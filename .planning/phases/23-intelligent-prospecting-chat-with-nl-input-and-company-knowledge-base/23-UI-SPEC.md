@@ -1,7 +1,8 @@
 ---
 phase: 23
 slug: intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base
-status: draft
+status: approved
+reviewed_at: 2026-05-28
 shadcn_initialized: false
 preset: none
 created: 2026-05-28
@@ -58,8 +59,8 @@ Declared values (must be multiples of 4):
 | 3xl | 64px | Not used in this phase |
 
 Exceptions:
-- NL input textarea: 10px vertical padding, 13px horizontal — matches existing `cc.input` pattern (`'9px 13px'`)
-- Extracted params grid cards: 10px top, 12px horizontal — matches existing `paramCard` style (`'10px 12px'`)
+- NL input textarea: 8px vertical padding, 12px horizontal — adjusted from existing `cc.input` pattern to multiples of 4
+- Extracted params grid cards: 8px top, 12px horizontal — adjusted from existing `paramCard` style to multiples of 4
 - Knowledge base panel: 12px internal padding — matches existing `beePreview` / `sliderSection` pattern (`'12px 14px'`)
 - Learning indicator badge: 4px vertical, 8px horizontal — inline chip size
 
@@ -69,12 +70,12 @@ Exceptions:
 
 | Role | Size | Weight | Line Height | Font | Usage |
 |------|------|--------|-------------|------|-------|
-| Label | 9px | 600 | 1.2 | Space Grotesk | Section headers, uppercase field labels, tab text |
+| Label/hint | 11px | 600 | 1.2 | Space Grotesk | Section headers, uppercase field labels, tab text, hint text below NL input |
 | Body | 13px | 400 | 1.5 | Space Grotesk | Chat bubbles, description text, knowledge base textarea, error copy |
-| Value | 14px | 500 | 1.3 | Space Grotesk | Extracted param values in confirmation card |
-| Display | 22px | 700 | 1.1 | Space Grotesk | Section title "Configurar Campaña" (existing `campaignHeaderTitle`) |
+| Value | 14px | 400 | 1.3 | Space Grotesk | Extracted param values in confirmation card |
+| Display | 22px | 600 | 1.1 | Space Grotesk | Section title "Configurar Campaña" (existing `campaignHeaderTitle`) |
 
-Source: directly extracted from `AgentPanel.tsx` style objects (`s.campaignHeaderTitle` 22px/700, `s.paramValue` 14px/500, `s.detailValue` 13px, `s.paramLabel` 9px/600).
+Source: directly extracted from `AgentPanel.tsx` style objects (`s.campaignHeaderTitle` 22px, `s.paramValue` 14px, `s.detailValue` 13px, `s.paramLabel`). Weights collapsed to 400/600 only per design contract rules.
 
 Monospace exception: agent log modal uses `fontFamily: 'monospace', fontSize: 12px` — not applicable to Phase 23 new surfaces.
 
@@ -113,6 +114,12 @@ Source: extracted from `AgentPanel.tsx` `STATE_LABELS`, `s.*` style objects, and
 
 ---
 
+## Visuals
+
+Primary visual anchor: the NL textarea occupies full width below the "Configurar Campaña" display heading; the send button ➤ at the right edge is the call-to-action terminus.
+
+---
+
 ## Component Inventory
 
 ### 1. NL Prospect Input (new sub-component: `NLProspectInput`)
@@ -121,7 +128,7 @@ Source: extracted from `AgentPanel.tsx` `STATE_LABELS`, `s.*` style objects, and
 
 **Idle state:**
 - Single `<textarea>` (3 rows, resizable: none) with placeholder text (see copywriting)
-- Send button (`➤`) to the right — same gradient as existing `cc.sendBtn`
+- Send button (`➤`) to the right — same gradient as existing `cc.sendBtn` — `aria-label="Enviar descripción"`
 - Below the textarea: one line of hint text at 11px / `rgba(227,224,241,0.35)` / Space Grotesk
 
 **Loading state (in-flight):**
@@ -144,11 +151,11 @@ Source: extracted from `AgentPanel.tsx` `STATE_LABELS`, `s.*` style objects, and
 **Replaces:** the existing `paramGrid` + edit toggle — shown only after successful NL extraction
 
 **Structure:**
-- Header row: label "Parámetros extraídos" at 9px/600/uppercase/`#ab9df2` (matches `s.sectionTitle`) + count badge showing number of filled fields at 9px/600/`#78dce8`
+- Header row: label "Parámetros extraídos" at 11px/600/uppercase/`#ab9df2` (matches `s.sectionTitle`) + count badge showing number of filled fields at 11px/600/`#78dce8`
 - Grid: `display: grid; gridTemplateColumns: 1fr 1fr; gap: 8px` — identical to existing `s.paramGrid`
-- Each cell: `s.paramCard` style (background `#12121d`, borderRadius 8px, padding `10px 12px`, border `1px solid rgba(120,220,232,0.05)`)
-- Field label: 9px / 600 / uppercase / `rgba(227,224,241,0.35)` — `s.paramLabel`
-- Field value: 14px / 500 / `#e3e0f1` — `s.paramValue`, truncated with `textOverflow: ellipsis`
+- Each cell: `s.paramCard` style (background `#12121d`, borderRadius 8px, padding `8px 12px`, border `1px solid rgba(120,220,232,0.05)`)
+- Field label: 11px / 600 / uppercase / `rgba(227,224,241,0.35)` — `s.paramLabel`
+- Field value: 14px / 400 / `#e3e0f1` — `s.paramValue`, truncated with `textOverflow: ellipsis`
 - Missing/inferred fields: value displayed as `"—"` in `rgba(227,224,241,0.25)`
 
 **Edit toggle (existing behavior preserved):**
@@ -166,13 +173,13 @@ Source: extracted from `AgentPanel.tsx` `STATE_LABELS`, `s.*` style objects, and
 **Position:** below the extracted params confirmation card / above the max prospects slider section.
 
 **Collapsed state (default):**
-- Header row: label "Base de conocimiento" at 9px/600/uppercase/`#ab9df2` + toggle button "▼ Expandir" at 11px / `rgba(227,224,241,0.35)`
+- Header row: label "Base de conocimiento" at 11px/600/uppercase/`#ab9df2` + toggle button "▼ Expandir" at 11px / `rgba(227,224,241,0.35)`
 - Entire panel background: `#12121d`, borderRadius 10px, padding `12px 14px` — matches `s.beePreview` / `s.sliderSection`
 - Learning indicator badge visible even in collapsed state (see §4 below)
 
 **Expanded state:**
-- Product description textarea: 4 rows, width 100%, background `#1b1a26`, border none, borderBottom `1px solid rgba(120,220,232,0.2)` idle / `rgba(120,220,232,0.4)` focus, color `#e3e0f1`, fontSize 13px, fontFamily Space Grotesk, borderRadius 6px, padding `9px 13px`, resize: vertical, outline none
-- Label above textarea: "Tu producto / ICP" at 9px/600/uppercase/`rgba(227,224,241,0.4)` — matches `s.fieldLabel`
+- Product description textarea: 4 rows, width 100%, background `#1b1a26`, border none, borderBottom `1px solid rgba(120,220,232,0.2)` idle / `rgba(120,220,232,0.4)` focus, color `#e3e0f1`, fontSize 13px, fontFamily Space Grotesk, borderRadius 6px, padding `8px 12px`, resize: vertical, outline none
+- Label above textarea: "Tu producto / ICP" at 11px/600/uppercase/`rgba(227,224,241,0.4)` — matches `s.fieldLabel`
 - Save behavior: auto-save on blur — no explicit save button
 - Save confirmation: field label temporarily changes to "Guardado ✓" at `#a9dc76` for 1.5 seconds then reverts
 - Toggle button changes to "↑ Ocultar" when expanded
@@ -188,7 +195,7 @@ Source: extracted from `AgentPanel.tsx` `STATE_LABELS`, `s.*` style objects, and
 **Position:** inside the knowledge base panel header row, between the "Base de conocimiento" label and the expand toggle.
 
 **Visual:**
-- Inline span: `fontSize: 10px`, `fontFamily: Space Grotesk`, `color: rgba(227,224,241,0.4)`, `border: 1px solid rgba(120,220,232,0.15)`, `borderRadius: 4px`, `padding: '2px 7px'`, background `rgba(120,220,232,0.04)`
+- Inline span: `fontSize: 11px`, `fontFamily: Space Grotesk`, `color: rgba(227,224,241,0.4)`, `border: 1px solid rgba(120,220,232,0.15)`, `borderRadius: 4px`, `padding: '4px 8px'`, background `rgba(120,220,232,0.04)`
 - Copy when signals exist: `"N aprobados · M rechazados"` where N and M are counts from `prospecting_knowledge` document
 - Copy when no signals yet: `"Sin señales aún"` at the same styles
 - No icon — text only
