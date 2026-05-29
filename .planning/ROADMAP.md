@@ -24,7 +24,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 8: Real-Time Visualization** - Map all 9 graph node states to character animations; WebSocket delivery without UI block; error states on pipeline failure
 - [ ] **Phase 18: Infrastructure Foundation** - Railway 3-service deployment (API + Worker + Redis); ARQ job queue replaces in-process execution; API enqueues jobs and returns run_id immediately
 - [ ] **Phase 19: Tenant Isolation** - tenant_id on all MongoDB documents; all queries filtered by tenant_id; Redis pub/sub WebSocket bridge routes Worker events to the correct frontend connection
-- [x] **Phase 20: Scraping Improvements** - curl_cffi Chrome131 TLS impersonation replaces httpx; Crawl4AI compresses HTML to Markdown before LLM; DIRECTORY_DOMAINS blocklist; extract_homepage() normalization (completed 2026-05-28)
+- [x] **Phase 20: Scraping Improvements** - curl_cffi Chrome131 TLS impersonation replaces httpx; Crawl4AI compresses HTML to Markdown before LLM; DIRECTORY_DOMAINS blocklist; extract_homepage() normalization
+ (completed 2026-05-28)
 - [ ] **Phase 21: Pipeline Parametrization** - VerticalConfig dataclass per insurance vertical; SignalLead TypedDict contract for all signal_sources; user selects vertical at campaign configuration
 - [ ] **Phase 22: Cost Observability** - CostEvent logged per LLM and Serper call with tenant_id + run_id; user can query total cost per run via API
 
@@ -462,6 +463,20 @@ Plans:
   4. Two tenants running concurrent campaigns accumulate CostEvents separately — querying by tenant_id returns only that tenant's costs
 
 **Plans**: TBD
+
+### Phase 23: Intelligent prospecting chat with NL input and company knowledge base
+
+**Goal:** Replace the manual 10-field campaign form with a single-turn natural-language chat that extracts prospecting parameters via LLM, persists a per-tenant prospecting_knowledge collection (product description + ICP + signal history), injects that context into every NL extraction, and closes the feedback loop by appending approved/rejected lead signals automatically when the user makes checkpoint decisions.
+**Requirements**: NL-01, NL-02, KB-01, KB-02, KB-03, SIGNAL-FB-01, UI-01, UI-02, UI-03, UI-04
+**Depends on:** Phase 22
+**Plans:** 5 plans
+
+Plans:
+- [ ] 23-01-PLAN.md - Wave 1: Nyquist xfail test scaffold (8 stubs covering NL/KB/SIGNAL-FB)
+- [ ] 23-02-PLAN.md - Wave 2: extract_campaign_from_nl + prospecting_knowledge CRUD + /api/chat/prospect + /api/knowledge endpoints
+- [ ] 23-03-PLAN.md - Wave 3: Fire-and-forget signal feedback hook on POST /api/leads/{id}/decision
+- [ ] 23-04-PLAN.md - Wave 3: NLProspectInput + ExtractedParamsCard + KnowledgeBasePanel + LearningBadge in AgentPanel.tsx
+- [ ] 23-05-PLAN.md - Wave 4: Backend+frontend health gates + human-verify end-to-end checkpoint
 
 ---
 
