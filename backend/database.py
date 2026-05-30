@@ -819,6 +819,68 @@ async def get_prospecting_excluded_domains(user_id: str) -> dict:
     }
 
 
+# ── Prospecting Knowledge Base ────────────────────────────────────────────────
+
+async def upsert_prospecting_knowledge(user_id: str, fields: dict) -> None:
+    """Upsert prospecting_knowledge document for tenant. Mirrors upsert_client_profile pattern."""
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    set_payload = {**fields, "updated_at": now, "user_id": user_id}
+    await db.prospecting_knowledge.update_one(
+        {"user_id": user_id},
+        {"$set": set_payload, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+
+
+async def get_prospecting_knowledge(user_id: str) -> dict:
+    """Return prospecting_knowledge doc or empty dict if none."""
+    db = get_db()
+    doc = await db.prospecting_knowledge.find_one({"user_id": user_id})
+    if doc and "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    return doc or {}
+
+
+async def append_lead_signal(user_id: str, signal: str, signal_type: str) -> None:
+    """Append signal string to approved_lead_signals or rejected_lead_signals via $addToSet (dedup)."""
+    if signal_type not in ("approved", "rejected"):
+        raise ValueError(f"signal_type must be 'approved' or 'rejected', got {signal_type!r}")
+    if not signal or not signal.strip():
+        return  # guard: do not append empty signals (RESEARCH pitfall 4)
+    field = "approved_lead_signals" if signal_type == "approved" else "rejected_lead_signals"
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.prospecting_knowledge.update_one(
+        {"user_id": user_id},
+        {
+            "$addToSet": {field: signal.strip()},
+            "$set": {"updated_at": now, "user_id": user_id},
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+
+
+async def get_or_create_prospecting_knowledge(user_id: str) -> dict:
+    """Get prospecting_knowledge; if missing, seed from client_profiles.business_summary."""
+    doc = await get_prospecting_knowledge(user_id)
+    if doc:
+        return doc
+    # Seed from client_profiles if present
+    db = get_db()
+    profile = await db.client_profiles.find_one({"user_id": user_id}) or {}
+    seed = {
+        "product_description": profile.get("business_summary", "") or "",
+        "icp_summary": "",
+        "approved_lead_signals": [],
+        "rejected_lead_signals": [],
+        "blacklisted_domains": [],
+    }
+    await upsert_prospecting_knowledge(user_id, seed)
+    return await get_prospecting_knowledge(user_id)
+
+
 async def get_all_client_summaries(user_ids: list[str]) -> dict[str, dict]:
     """
     Single-pass aggregation for all clients at once — 3 round-trips total regardless of
