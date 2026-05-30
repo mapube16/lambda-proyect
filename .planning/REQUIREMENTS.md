@@ -122,10 +122,10 @@
 
 ### SCRAPE — Scraping Improvements (Milestone v1.0)
 
-- [ ] **SCRAPE-01**: Scraper uses curl_cffi AsyncSession(impersonate="chrome131") instead of httpx
-- [ ] **SCRAPE-02**: Scraped HTML converts to compressed Markdown via Crawl4AI before LLM analysis
-- [ ] **SCRAPE-03**: DIRECTORY_DOMAINS blocklist filters aggregator sites from Serper results before scraping
-- [ ] **SCRAPE-04**: extract_homepage(url) normalizes blog/directory URLs to company homepages
+- [x] **SCRAPE-01**: Scraper uses curl_cffi AsyncSession(impersonate="chrome131") instead of httpx
+- [x] **SCRAPE-02**: Scraped HTML converts to compressed Markdown via Crawl4AI before LLM analysis
+- [x] **SCRAPE-03**: DIRECTORY_DOMAINS blocklist filters aggregator sites from Serper results before scraping
+- [x] **SCRAPE-04**: extract_homepage(url) normalizes blog/directory URLs to company homepages
 
 ### COST — Cost Tracking (Milestone v1.0)
 
@@ -188,10 +188,10 @@
 | VERTICAL-03 | Phase 21 — Pipeline Parametrization | Pending |
 | SIGNAL-01 | Phase 21 — Pipeline Parametrization | Pending |
 | SIGNAL-02 | Phase 21 — Pipeline Parametrization | Pending |
-| SCRAPE-01 | Phase 20 — Scraping Improvements | Pending |
-| SCRAPE-02 | Phase 20 — Scraping Improvements | Pending |
-| SCRAPE-03 | Phase 20 — Scraping Improvements | Pending |
-| SCRAPE-04 | Phase 20 — Scraping Improvements | Pending |
+| SCRAPE-01 | Phase 20 — Scraping Improvements | Complete |
+| SCRAPE-02 | Phase 20 — Scraping Improvements | Complete |
+| SCRAPE-03 | Phase 20 — Scraping Improvements | Complete |
+| SCRAPE-04 | Phase 20 — Scraping Improvements | Complete |
 | COST-01 | Phase 22 — Cost Observability | Pending |
 | COST-02 | Phase 22 — Cost Observability | Pending |
 | COST-03 | Phase 22 — Cost Observability | Pending |

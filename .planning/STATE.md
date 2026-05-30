@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: — Multi-Tenant SaaS Pipeline
 status: Ready to execute
-stopped_at: Completed 23-04-PLAN.md
-last_updated: "2026-05-30T01:42:12.862Z"
+stopped_at: Completed 23-03-PLAN.md
+last_updated: "2026-05-30T01:51:46.203Z"
 progress:
   total_phases: 23
   completed_phases: 7
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-05-26)
 ## Current Position
 
 Phase: 23 (intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 
 ## Performance Metrics
 
@@ -73,6 +73,7 @@ Plan: 4 of 5
 | Phase 23 P01 | 142 | 1 tasks | 1 files |
 | Phase 23 P02 | 15 | 2 tasks | 3 files |
 | Phase 23-intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base P04 | 3min | 2 tasks | 1 files |
+| Phase 23 P03 | 13min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -195,6 +196,8 @@ Recent decisions affecting current work:
 - [Phase 23]: _build_nl_context() caps signal lists at 20 items and total context at 1500 chars — prevents context window overflow (RESEARCH pitfall 3)
 - [Phase 23-04]: NLProspectInput placed above CampaignChat; CampaignChat retained unchanged as clarification fallback via clarificationReply state
 - [Phase 23-04]: KnowledgeBasePanel uses auto-save on blur (no save button); value===originalValue guard avoids unnecessary POSTs; collapsed by default, local React state only
+- [Phase 23]: import database as _database in leads.py — module reference required for monkeypatch.setattr patchability; direct from-import breaks test interception
+- [Phase 23]: test_prospect_chat.py uses insert_one + create_access_token directly; REST /auth/register route returns 404 from test client — matches test_cobranza.py pattern
 
 ### Pending Todos
 
@@ -207,6 +210,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-30T01:42:12.855Z
-Stopped at: Completed 23-04-PLAN.md
+Last session: 2026-05-30T01:51:46.193Z
+Stopped at: Completed 23-03-PLAN.md
 Resume file: None
