@@ -298,6 +298,153 @@ function LeadCard({ lead, onApprove, onDiscard }: {
   );
 }
 
+// ── NL Prospect Input ─────────────────────────────────────────────────────────
+
+function NLProspectInput({
+  onExtracted,
+  onClarification,
+}: {
+  onExtracted: (campaign: Record<string, unknown>) => void;
+  onClarification: (reply: string) => void;
+}) {
+  const [text, setText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const msg = text.trim();
+    if (!msg || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`${API_URL}/api/chat/prospect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg }),
+      });
+      if (!res.ok) {
+        setError('Error de conexión. Intenta de nuevo.');
+        return;
+      }
+      const body = await res.json();
+      if (body.status === 'extracted' && body.campaign) {
+        onExtracted(body.campaign);
+      } else if (body.status === 'needs_clarification') {
+        onClarification(body.reply || 'No pude extraer todos los parámetros. ¿Puedes agregar más detalle?');
+      } else {
+        setError('No pude extraer todos los parámetros. ¿Puedes agregar más detalle?');
+      }
+    } catch {
+      setError('Error de conexión. Intenta de nuevo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  };
+
+  return (
+    <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 22, fontWeight: 600, fontFamily: "'Space Grotesk', system-ui, sans-serif", color: '#e3e0f1', marginBottom: 8 }}>
+        Configurar Campaña
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ej: busca propietarios arrendando en Bogotá..."
+          rows={3}
+          disabled={loading}
+          style={{
+            flex: 1,
+            background: '#1b1a26',
+            border: 'none',
+            borderBottom: '1px solid rgba(120,220,232,0.2)',
+            borderRadius: 6,
+            padding: '8px 12px',
+            color: '#e3e0f1',
+            fontSize: 13,
+            fontFamily: "'Space Grotesk', system-ui, sans-serif",
+            resize: 'none',
+            outline: 'none',
+            opacity: loading ? 0.6 : 1,
+          }}
+        />
+        <button
+          onClick={submit}
+          disabled={loading || !text.trim()}
+          aria-label="Enviar descripción"
+          style={{
+            background: 'linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%)',
+            border: 'none',
+            borderRadius: 6,
+            padding: '8px 16px',
+            color: '#fff',
+            fontSize: 14,
+            cursor: loading ? 'not-allowed' : 'pointer',
+            opacity: loading || !text.trim() ? 0.5 : 1,
+            fontFamily: "'Space Grotesk', system-ui, sans-serif",
+          }}
+        >
+          {loading ? '...' : '➤'}
+        </button>
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(227,224,241,0.35)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+        Describe en una frase a quién quieres prospectar
+      </div>
+      {error && (
+        <div style={{ fontSize: 13, color: '#ff6188', fontFamily: "'Space Grotesk', system-ui, sans-serif", marginTop: 4 }}>
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExtractedParamsCard({ campaign }: { campaign: Record<string, unknown> }) {
+  const fields: Array<[string, string]> = [
+    ['Industria', String(campaign.industria_objetivo || '')],
+    ['Ciudad', String(campaign.ciudad_objetivo || '')],
+    ['Remitente', String(campaign.nombre_remitente || '')],
+    ['Empresa', String(campaign.empresa_remitente || '')],
+    ['Dolor', String(campaign.dolor_operativo || '')],
+    ['Solución', String(campaign.solucion_ofrecida || '')],
+    ['Software clave', String(campaign.software_clave || '')],
+    ['Decisores', String(campaign.jerarquia_decisores || '')],
+  ];
+  const filledCount = fields.filter(([, v]) => v && v.trim()).length;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: '#ab9df2', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+          Parámetros extraídos
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: '#78dce8', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+          {filledCount} campos
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        {fields.map(([label, value]) => (
+          <div key={label} style={{ background: '#12121d', borderRadius: 8, padding: '8px 12px', border: '1px solid rgba(120,220,232,0.05)' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'rgba(227,224,241,0.35)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+              {label}
+            </div>
+            <div style={{ fontSize: 14, color: value ? '#e3e0f1' : 'rgba(227,224,241,0.25)', fontFamily: "'Space Grotesk', system-ui, sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {value || '—'}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Campaign Chat ─────────────────────────────────────────────────────────────
 
 interface ChatMessage { role: 'user' | 'assistant'; content: string }
@@ -756,6 +903,8 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
   const [campaignReady, setCampaignReady] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [chatResetKey, setChatResetKey] = useState(0);
+  const [extractedCampaign, setExtractedCampaign] = useState<Record<string, unknown> | null>(null);
+  const [clarificationReply, setClarificationReply] = useState<string | null>(null);
   const [showCheckpoint, setShowCheckpoint] = useState(false);
   const [showHandover, setShowHandover] = useState(false);
   const [agentLogModal, setAgentLogModal] = useState<{ logKey: string; lines: string[] } | null>(null);
@@ -860,11 +1009,18 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
           {/* Chat OR ready state */}
           {!campaignReady ? (
             <>
-              <div style={s.campaignHeader}>
-                <div style={s.campaignHeaderTitle}>Configurar Campaña</div>
-                <div style={s.campaignHeaderSub}>PARÁMETROS_DE_EJECUCIÓN_v4.0</div>
-              </div>
-              <CampaignChat onCampaignReady={handleCampaignReady} resetKey={chatResetKey} />
+              {!clarificationReply ? (
+                <NLProspectInput
+                  onExtracted={(camp) => {
+                    setExtractedCampaign(camp);
+                    setCampaign({ ...DEFAULT_CAMPAIGN, ...(camp as Record<string, string>) });
+                    setCampaignReady(true);
+                  }}
+                  onClarification={(reply) => setClarificationReply(reply)}
+                />
+              ) : (
+                <CampaignChat onCampaignReady={handleCampaignReady} resetKey={chatResetKey} />
+              )}
             </>
           ) : (
             <>
@@ -873,6 +1029,11 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
                 <div style={s.campaignHeaderTitle}>Configuración de Campaña</div>
                 <div style={s.campaignHeaderSub}>PARÁMETROS_DE_EJECUCIÓN_v4.0</div>
               </div>
+
+              {/* Extracted params confirmation card (from NL extraction) */}
+              {extractedCampaign && (
+                <ExtractedParamsCard campaign={extractedCampaign} />
+              )}
 
               {/* Parameter cards grid */}
               <div style={s.paramGrid}>
@@ -932,7 +1093,7 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
                 {prospecting ? 'AGENTES TRABAJANDO...' : 'INICIAR PROSPECCIÓN 🚀'}
               </button>
 
-              <button style={s.resetBtn} onClick={() => { setCampaignReady(false); setChatResetKey(k => k + 1); }}>
+              <button style={s.resetBtn} onClick={() => { setCampaignReady(false); setExtractedCampaign(null); setClarificationReply(null); setChatResetKey(k => k + 1); }}>
                 ↩ Nueva campaña
               </button>
 
