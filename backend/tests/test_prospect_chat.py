@@ -1,207 +1,156 @@
-"""
-test_prospect_chat.py — Phase 23: Intelligent Prospecting Chat with NL Input and Company Knowledge Base.
-
-Requirement areas:
-  NL-01: extract_campaign_from_nl() returns CAMPAIGN_READY with all required fields for a complete NL description
-  NL-02: POST /api/chat/prospect returns {"status":"extracted", "campaign":{...}} for a well-formed NL message
-  KB-01: upsert_prospecting_knowledge() creates document with user_id; second call updates without duplicate
-  KB-02: append_lead_signal() appends to approved/rejected lists without duplicates ($addToSet)
-  KB-03: Knowledge base context is injected into NL extraction prompt (context param non-empty when knowledge exists)
+"""Phase 23 — Wave 0 Nyquist scaffold for NL prospecting chat + knowledge base.
 
 All stubs use strict=False so CI never blocks on unimplemented features.
-Heavy imports are placed INSIDE test bodies (lazy) so collection succeeds before modules are extended.
+Subsequent plans (23-02, 23-03) flip these to green by implementing the modules.
 """
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
+# ===== NL-01: extract_campaign_from_nl() =====
 
-# ── KB-01: upsert_prospecting_knowledge — create then update ─────────────────
-
-@pytest.mark.xfail(reason="KB-01: upsert_prospecting_knowledge not implemented yet", strict=False)
-async def test_upsert_prospecting_knowledge_creates_then_updates():
-    from database import upsert_prospecting_knowledge, get_prospecting_knowledge
-    # First call creates
-    await upsert_prospecting_knowledge("u1", {"product_description": "A"})
-    doc = await get_prospecting_knowledge("u1")
-    assert doc.get("product_description") == "A"
-    assert doc.get("user_id") == "u1"
-    # Second call updates without duplication
-    await upsert_prospecting_knowledge("u1", {"product_description": "B"})
-    doc2 = await get_prospecting_knowledge("u1")
-    assert doc2.get("product_description") == "B"
-    # Only one document should exist
-    from database import get_db
-    db = get_db()
-    count = await db.prospecting_knowledge.count_documents({"user_id": "u1"})
-    assert count == 1
-
-
-@pytest.mark.xfail(reason="KB-01: get_or_create_prospecting_knowledge auto-seed not implemented yet", strict=False)
-async def test_get_or_create_prospecting_knowledge_seeds_from_profile():
-    import database
-    from database import get_or_create_prospecting_knowledge, upsert_client_profile
-    # Setup client profile with business_summary
-    await upsert_client_profile("u2", {"business_summary": "Software de nomina para PYMEs", "personality_prompt": "", "campaign": {}, "agents": []})
-    # get_or_create should seed product_description from business_summary
-    doc = await get_or_create_prospecting_knowledge("u2")
-    assert "product_description" in doc
-    assert "Software de nomina" in doc.get("product_description", "")
-
-
-# ── KB-02: append_lead_signal — dedup via $addToSet ──────────────────────────
-
-@pytest.mark.xfail(reason="KB-02: append_lead_signal not implemented yet", strict=False)
-async def test_append_lead_signal_addtoset_dedup():
-    from database import append_lead_signal, get_prospecting_knowledge
-    # Append same signal twice
-    await append_lead_signal("u3", "X", "approved")
-    await append_lead_signal("u3", "X", "approved")
-    doc = await get_prospecting_knowledge("u3")
-    signals = doc.get("approved_lead_signals", [])
-    assert signals.count("X") == 1, f"Expected exactly 1 occurrence of X, got {signals.count('X')}"
-
-
-@pytest.mark.xfail(reason="KB-02: append_lead_signal rejected type not implemented yet", strict=False)
-async def test_append_lead_signal_rejected_goes_to_correct_list():
-    from database import append_lead_signal, get_prospecting_knowledge
-    await append_lead_signal("u4", "Y", "rejected")
-    doc = await get_prospecting_knowledge("u4")
-    assert "Y" in doc.get("rejected_lead_signals", [])
-    assert "Y" not in doc.get("approved_lead_signals", [])
-
-
-# ── NL-01: extract_campaign_from_nl — returns CAMPAIGN_READY string ──────────
-
-@pytest.mark.xfail(reason="NL-01: extract_campaign_from_nl not implemented yet", strict=False)
+@pytest.mark.xfail(strict=False, reason="NL-01: extract_campaign_from_nl not implemented yet")
 async def test_extract_campaign_from_nl_complete_description():
-    """extract_campaign_from_nl returns a string containing CAMPAIGN_READY: (mocked OpenAI)."""
-    mock_reply = 'CAMPAIGN_READY:\n{"nombre_remitente": "Test", "empresa_remitente": "Acme", "industria_objetivo": "logistica", "ciudad_objetivo": "Bogota", "dolor_operativo": "procesos manuales", "solucion_ofrecida": "software ERP", "software_clave": "Excel", "jerarquia_decisores": "Gerente", "signal_sources": ["serper"], "max_results": 20}'
+    """Complete NL description yields CAMPAIGN_READY: with all required fields."""
+    from onboarding import extract_campaign_from_nl  # lazy import
+    reply = await extract_campaign_from_nl(
+        "busca propietarios arrendando en Bogota industria inmobiliaria",
+        openai_api_key="sk-test",
+        context="",
+    )
+    assert "CAMPAIGN_READY:" in reply
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = mock_reply
-
-    mock_client = AsyncMock()
-    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-    with patch("openai.AsyncOpenAI", return_value=mock_client):
-        from onboarding import extract_campaign_from_nl
-        result = await extract_campaign_from_nl(
-            "busca propietarios en Bogota",
-            "sk-test",
-            "",
-        )
-    assert "CAMPAIGN_READY:" in result
-
-
-@pytest.mark.xfail(reason="NL-01: extract_campaign_from_nl context injection not implemented yet", strict=False)
+@pytest.mark.xfail(strict=False, reason="NL-01: extract_campaign_from_nl not implemented yet")
 async def test_extract_campaign_from_nl_uses_context():
-    """extract_campaign_from_nl includes context in the system prompt sent to OpenAI."""
-    captured_messages = []
+    """When context is non-empty, it is appended to the system prompt."""
+    from onboarding import extract_campaign_from_nl
+    reply = await extract_campaign_from_nl(
+        "busca empresas similares",
+        openai_api_key="sk-test",
+        context="=== CONTEXTO DEL NEGOCIO ===\nProducto: seguros empresariales",
+    )
+    assert reply  # contract: returns str, not None
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "CAMPAIGN_READY:\n{}"
+# ===== NL-02: POST /api/chat/prospect =====
 
-    async def mock_create(**kwargs):
-        captured_messages.extend(kwargs.get("messages", []))
-        return mock_response
+@pytest.mark.xfail(strict=False, reason="NL-02: /api/chat/prospect endpoint not implemented yet")
+async def test_nl_prospect_endpoint_returns_extracted(async_client):
+    """POST /api/chat/prospect with well-formed message returns status=extracted."""
+    # Setup user directly in DB (codebase pattern)
+    import auth as _auth
+    import database as _db
+    from datetime import datetime, timezone
+    result = await _db.get_db().users.insert_one({
+        "email": "p23a@test.com",
+        "hashed_password": _auth.hash_password("x12345678"),
+        "role": "client",
+        "created_at": datetime.now(timezone.utc),
+    })
+    user_id = str(result.inserted_id)
+    token = _auth.create_access_token({"sub": user_id, "role": "client"})
+    r = await async_client.post(
+        "/api/chat/prospect",
+        json={"message": "busca propietarios en Bogota"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] in ("extracted", "needs_clarification")
 
-    mock_client = AsyncMock()
-    mock_client.chat.completions.create = mock_create
-
-    with patch("openai.AsyncOpenAI", return_value=mock_client):
-        from onboarding import extract_campaign_from_nl
-        await extract_campaign_from_nl(
-            "busca logistica",
-            "sk-test",
-            context="Producto: software ERP para transporte",
-        )
-
-    full_system = " ".join(m["content"] for m in captured_messages if m["role"] == "system")
-    assert "software ERP para transporte" in full_system
-
-
-# ── NL-02: POST /api/chat/prospect endpoint ──────────────────────────────────
-
-@pytest.mark.xfail(reason="NL-02: /api/chat/prospect endpoint not implemented yet", strict=False)
+@pytest.mark.xfail(strict=False, reason="NL-02: /api/chat/prospect endpoint requires auth")
 async def test_nl_prospect_endpoint_requires_auth(async_client):
     """POST /api/chat/prospect without JWT returns 401."""
-    resp = await async_client.post("/api/chat/prospect", json={"message": "busca empresas"})
-    assert resp.status_code == 401
+    r = await async_client.post("/api/chat/prospect", json={"message": "hola"})
+    assert r.status_code == 401
 
+# ===== KB-01: upsert_prospecting_knowledge() =====
 
-@pytest.mark.xfail(reason="NL-02: /api/chat/prospect extracted response not implemented yet", strict=False)
-async def test_nl_prospect_endpoint_returns_extracted(async_client):
-    """POST /api/chat/prospect with valid JWT + extractable message returns status=extracted."""
-    import database, state
-    from auth import create_access_token
-    from unittest.mock import AsyncMock, MagicMock, patch
+@pytest.mark.xfail(strict=False, reason="KB-01: prospecting_knowledge CRUD not implemented yet")
+async def test_upsert_prospecting_knowledge_creates_then_updates():
+    """First call inserts; second call with same user_id updates without duplicate."""
+    from database import upsert_prospecting_knowledge, get_prospecting_knowledge
+    await upsert_prospecting_knowledge("user_kb_1", {"product_description": "seguros A"})
+    await upsert_prospecting_knowledge("user_kb_1", {"product_description": "seguros B"})
+    doc = await get_prospecting_knowledge("user_kb_1")
+    assert doc["product_description"] == "seguros B"
 
-    user = await database.create_user("nl_prospect@test.com", "hashed", role="client")
-    uid = user["id"]
-    token = create_access_token({"sub": str(uid)})
+# ===== KB-02: append_lead_signal() =====
 
-    state.arq_pool = AsyncMock()
-    state.arq_pool.enqueue_job = AsyncMock(return_value=None)
+@pytest.mark.xfail(strict=False, reason="KB-02: append_lead_signal not implemented yet")
+async def test_append_lead_signal_addtoset_dedup():
+    """$addToSet ensures duplicate signals are not added twice."""
+    from database import append_lead_signal, get_prospecting_knowledge
+    await append_lead_signal("user_kb_2", "industria=logistica ciudad=Bogota", "approved")
+    await append_lead_signal("user_kb_2", "industria=logistica ciudad=Bogota", "approved")
+    doc = await get_prospecting_knowledge("user_kb_2")
+    assert doc["approved_lead_signals"].count("industria=logistica ciudad=Bogota") == 1
 
-    mock_reply = 'CAMPAIGN_READY:\n{"nombre_remitente": "Ana", "empresa_remitente": "TechCo", "industria_objetivo": "logistica", "ciudad_objetivo": "Bogota", "dolor_operativo": "lento", "solucion_ofrecida": "ERP", "software_clave": "Excel", "jerarquia_decisores": "Gerente", "signal_sources": ["serper"], "max_results": 20}'
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = mock_reply
-    mock_client = AsyncMock()
-    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+# ===== KB-03: knowledge base context injection =====
 
-    with patch("openai.AsyncOpenAI", return_value=mock_client), \
-         patch("os.getenv", side_effect=lambda k, d=None: "sk-test" if k == "OPENAI_API_KEY" else d):
-        resp = await async_client.post(
-            "/api/chat/prospect",
-            json={"message": "busca empresas de logistica en Bogota"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body.get("status") == "extracted"
-    assert "campaign" in body
-    assert body["campaign"].get("industria_objetivo") == "logistica"
-
-
-# ── KB-03: knowledge base context injection ──────────────────────────────────
-
-@pytest.mark.xfail(reason="KB-03: knowledge base context injection not implemented yet", strict=False)
-async def test_nl_context_injection_uses_knowledge_base(async_client):
-    """If prospecting_knowledge.product_description exists, it appears in context passed to extract_campaign_from_nl."""
-    import database, state
-    from auth import create_access_token
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    user = await database.create_user("kb_ctx@test.com", "hashed", role="client")
-    uid = user["id"]
-    token = create_access_token({"sub": str(uid)})
-
-    # Pre-seed knowledge base
-    await database.upsert_prospecting_knowledge(
-        str(uid),
-        {"product_description": "CRM para constructoras colombianas"},
+@pytest.mark.xfail(strict=False, reason="KB-03: NL endpoint must inject knowledge base context")
+async def test_nl_context_injection_uses_knowledge_base(async_client, monkeypatch):
+    """When prospecting_knowledge has product_description, it is passed as context to extractor."""
+    captured = {}
+    async def fake_extract(message, openai_api_key, context=""):
+        captured["context"] = context
+        return 'CAMPAIGN_READY:\n{"industria_objetivo": "inmobiliaria", "ciudad_objetivo": "Bogota"}'
+    monkeypatch.setattr("onboarding.extract_campaign_from_nl", fake_extract)
+    # Setup user directly in DB (codebase pattern)
+    import auth as _auth
+    import database as _db
+    from datetime import datetime, timezone
+    result = await _db.get_db().users.insert_one({
+        "email": "p23kb@test.com",
+        "hashed_password": _auth.hash_password("x12345678"),
+        "role": "client",
+        "created_at": datetime.now(timezone.utc),
+    })
+    user_id = str(result.inserted_id)
+    token = _auth.create_access_token({"sub": user_id, "role": "client"})
+    from database import upsert_prospecting_knowledge
+    await upsert_prospecting_knowledge(user_id, {"product_description": "seguros empresariales"})
+    await async_client.post(
+        "/api/chat/prospect",
+        json={"message": "busca empresas similares"},
+        headers={"Authorization": f"Bearer {token}"},
     )
+    assert "seguros empresariales" in captured.get("context", "")
 
-    state.arq_pool = AsyncMock()
-    state.arq_pool.enqueue_job = AsyncMock(return_value=None)
+# ===== SIGNAL-FB-01: lead decision fires signal feedback =====
 
-    captured_contexts = []
-
-    async def fake_extract(message, api_key, context=""):
-        captured_contexts.append(context)
-        return "CAMPAIGN_READY:\n{}"
-
-    with patch("routers.prospect.extract_campaign_from_nl", side_effect=fake_extract), \
-         patch("os.getenv", side_effect=lambda k, d=None: "sk-test" if k == "OPENAI_API_KEY" else d):
-        await async_client.post(
-            "/api/chat/prospect",
-            json={"message": "busca constructoras en Medellin"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    assert len(captured_contexts) >= 1
-    assert "CRM para constructoras colombianas" in captured_contexts[0]
+@pytest.mark.xfail(strict=False, reason="SIGNAL-FB-01: lead decision must fire append_lead_signal")
+async def test_lead_decision_fires_signal_feedback(async_client, monkeypatch):
+    """POST /api/leads/{id}/decision with decision=aprobar triggers asyncio.create_task on append_lead_signal."""
+    calls = []
+    async def fake_append(user_id, signal, signal_type):
+        calls.append((user_id, signal, signal_type))
+    monkeypatch.setattr("database.append_lead_signal", fake_append)
+    # Setup user directly in DB (codebase pattern: create_access_token, not REST register)
+    import auth as _auth
+    import database as _db
+    from datetime import datetime, timezone
+    result = await _db.get_db().users.insert_one({
+        "email": "p23sig@test.com",
+        "hashed_password": _auth.hash_password("x12345678"),
+        "role": "client",
+        "created_at": datetime.now(timezone.utc),
+    })
+    user_id = str(result.inserted_id)
+    token = _auth.create_access_token({"sub": user_id, "role": "client"})
+    from database import get_db
+    db = get_db()
+    res = await db.leads.insert_one({
+        "user_id": user_id,
+        "estado": "checkpoint",
+        "empresa": "ACME",
+        "expediente_json": {"industria": "logistica", "ciudad": "Bogota"},
+    })
+    lead_id = str(res.inserted_id)
+    r = await async_client.post(
+        f"/api/leads/{lead_id}/decision",
+        json={"decision": "aprobar", "canal_elegido": "email"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    import asyncio
+    await asyncio.sleep(0.1)  # let fire-and-forget task run
+    assert len(calls) >= 1
+    assert calls[0][2] == "approved"

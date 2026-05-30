@@ -7,6 +7,7 @@ from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel
 
+import database as _database
 from auth import get_current_user
 from database import (
     get_db, get_lead_by_id, get_leads_by_user, update_lead_hitl,
@@ -37,6 +38,28 @@ class CallReportRequest(BaseModel):
 
 
 DECISION_MAP = {"aprobar": "outreach", "pausar": "pausado", "rechazar": "nurturing"}
+
+
+def _build_lead_signal(lead: dict) -> str:
+    """Derive short signal string from lead.expediente_json. Returns '' if insufficient data."""
+    exp = lead.get("expediente_json") or {}
+    if not isinstance(exp, dict):
+        return ""
+    industria = (exp.get("industria") or exp.get("industry") or "").strip()
+    ciudad = (exp.get("ciudad") or exp.get("city") or "").strip()
+    if not industria and not ciudad:
+        return ""  # RESEARCH pitfall 4 — do not append empty/useless signals
+    parts = []
+    if industria:
+        parts.append(f"industria={industria}")
+    if ciudad:
+        parts.append(f"ciudad={ciudad}")
+    tech = exp.get("tech_stack") or exp.get("software_clave")
+    if tech:
+        if isinstance(tech, list):
+            tech = ", ".join(str(t) for t in tech[:3])
+        parts.append(f"tech={tech}")
+    return " ".join(parts)
 
 
 @router.get("/api/leads")
@@ -198,6 +221,12 @@ async def lead_decision(lead_id: str, request: LeadDecisionRequest, current_user
         await notify_user(user_id, {"type": "lead_archived", "lead_id": lead_id, "empresa": updated.get("company_name") or updated.get("empresa", "")})
     else:
         await manager.send_to_user(user_id, {"type": "agent_state", "agent": "investigador", "state": "idle", "message": f"Lead pausado: {updated.get('company_name', lead_id)}"})
+    # Phase 23 SIGNAL-FB-01: fire-and-forget feedback to prospecting_knowledge
+    if request.decision in ("aprobar", "rechazar"):
+        signal_text = _build_lead_signal(updated)
+        if signal_text:
+            signal_type = "approved" if request.decision == "aprobar" else "rejected"
+            asyncio.create_task(_database.append_lead_signal(user_id, signal_text, signal_type))
     return {"status": "ok", "lead_id": lead_id, "nuevo_estado": new_estado}
 
 
