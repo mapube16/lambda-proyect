@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: — Multi-Tenant SaaS Pipeline
-status: Ready to plan
-stopped_at: Completed 20-04-PLAN.md
-last_updated: "2026-05-28T14:33:16.016Z"
+status: Ready to execute
+stopped_at: Completed 23-04-PLAN.md
+last_updated: "2026-05-30T01:42:12.862Z"
 progress:
-  total_phases: 22
+  total_phases: 23
   completed_phases: 7
-  total_plans: 50
-  completed_plans: 45
+  total_plans: 55
+  completed_plans: 46
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-26)
 
 **Core value:** Un cliente piloto puede configurar su agente prospector, ver los agentes trabajar en la oficina pixel art en tiempo real, y recibir expedientes con correos listos para enviar.
-**Current focus:** Phase 20 — Scraping Improvements
+**Current focus:** Phase 23 — intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base
 
 ## Current Position
 
-Phase: 21
-Plan: Not started
+Phase: 23 (intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base) — EXECUTING
+Plan: 4 of 5
 
 ## Performance Metrics
 
@@ -70,6 +70,9 @@ Plan: Not started
 | Phase 20-scraping-improvements P02 | 2min | 2 tasks | 1 files |
 | Phase 20 P03 | 10min | 2 tasks | 1 files |
 | Phase 20-scraping-improvements P04 | 5min | 2 tasks | 2 files |
+| Phase 23 P01 | 142 | 1 tasks | 1 files |
+| Phase 23 P02 | 15 | 2 tasks | 3 files |
+| Phase 23-intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base P04 | 3min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -78,6 +81,7 @@ Plan: Not started
 - Phase 15 added: Pipeline Enrichment + Real Channel Activation (SECOP bridge, NIT enricher, WhatsApp fallback)
 - Phase 16 added: WhatsApp Conversational Advisor Bot (LLM tool-calling bot para asesores via Twilio)
 - Phases 18-22 added: Milestone v1.0 Multi-Tenant SaaS Pipeline (Railway infra, tenant isolation, scraping improvements, pipeline parametrization, cost observability)
+- Phase 23 added: Intelligent prospecting chat with NL input and company knowledge base
 
 ### Milestone v1.0 Phase Structure
 
@@ -184,6 +188,13 @@ Recent decisions affecting current work:
 - [Phase 20]: extract_homepage(url) wired before BLOCKED_DOMAINS check in discover_via_serper() — normalizes blog/subpage URLs to company homepages before dedup
 - [Phase 20-scraping-improvements]: Two-layer discovery bug fix: strengthened _DIRECTOR_PROMPT (prompt-level) + _GENERIC_INDUSTRIA_TERMS guard in _discover_companies() (runtime-level)
 - [Phase 20-scraping-improvements]: _GENERIC_INDUSTRIA_TERMS defined as local frozenset inside _discover_companies() — not module-level to avoid confusion with COMPETITOR_GENERIC_WORDS
+- [Phase 23]: strict=False on all 8 xfail markers — stubs show as xfail not failures; CI never blocks on unimplemented Phase 23 features — consistent with Phase 16/17/18/20 pattern
+- [Phase 23]: Lazy imports inside test bodies (from onboarding import, from database import, import auth) — modules do not exist yet at collection time; consistent with Phase 17/18 pattern
+- [Phase 23]: extract_campaign_from_nl uses same gpt-5.4-2026-03-05 model and extra_body syntax as chat_turn() — string-marker parsing over Structured Outputs for compatibility
+- [Phase 23]: prospecting_knowledge collection: upsert_prospecting_knowledge includes user_id in $set (not only $setOnInsert) — ensures user_id always present for query consistency
+- [Phase 23]: _build_nl_context() caps signal lists at 20 items and total context at 1500 chars — prevents context window overflow (RESEARCH pitfall 3)
+- [Phase 23-04]: NLProspectInput placed above CampaignChat; CampaignChat retained unchanged as clarification fallback via clarificationReply state
+- [Phase 23-04]: KnowledgeBasePanel uses auto-save on blur (no save button); value===originalValue guard avoids unnecessary POSTs; collapsed by default, local React state only
 
 ### Pending Todos
 
@@ -196,6 +207,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-28T14:29:13.580Z
-Stopped at: Completed 20-04-PLAN.md
+Last session: 2026-05-30T01:42:12.855Z
+Stopped at: Completed 23-04-PLAN.md
 Resume file: None

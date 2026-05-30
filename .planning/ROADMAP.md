@@ -469,13 +469,13 @@ Plans:
 **Goal:** Replace the manual 10-field campaign form with a single-turn natural-language chat that extracts prospecting parameters via LLM, persists a per-tenant prospecting_knowledge collection (product description + ICP + signal history), injects that context into every NL extraction, and closes the feedback loop by appending approved/rejected lead signals automatically when the user makes checkpoint decisions.
 **Requirements**: NL-01, NL-02, KB-01, KB-02, KB-03, SIGNAL-FB-01, UI-01, UI-02, UI-03, UI-04
 **Depends on:** Phase 22
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 
 Plans:
 - [ ] 23-01-PLAN.md - Wave 1: Nyquist xfail test scaffold (8 stubs covering NL/KB/SIGNAL-FB)
 - [ ] 23-02-PLAN.md - Wave 2: extract_campaign_from_nl + prospecting_knowledge CRUD + /api/chat/prospect + /api/knowledge endpoints
 - [ ] 23-03-PLAN.md - Wave 3: Fire-and-forget signal feedback hook on POST /api/leads/{id}/decision
-- [ ] 23-04-PLAN.md - Wave 3: NLProspectInput + ExtractedParamsCard + KnowledgeBasePanel + LearningBadge in AgentPanel.tsx
+- [x] 23-04-PLAN.md - Wave 3: NLProspectInput + ExtractedParamsCard + KnowledgeBasePanel + LearningBadge in AgentPanel.tsx
 - [ ] 23-05-PLAN.md - Wave 4: Backend+frontend health gates + human-verify end-to-end checkpoint
 
 ---
