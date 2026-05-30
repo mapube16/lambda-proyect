@@ -1497,6 +1497,28 @@ async def analyze_company(
     personality_prompt: str = "",  # client-specific analyst prompt (from Queen onboarding)
 ) -> dict:
     """
+
+
+def _append_signal_context(prompt: str, signals: list[dict] | None) -> str:
+    if not signals:
+        return prompt
+    lines = [
+        "\n\n═══════════════════════════════════════",
+        "SEÑALES DETECTADAS (datos externos):",
+        "═══════════════════════════════════════",
+    ]
+    for sig in signals:
+        sig_type = str(sig.get("type") or "").strip()
+        value = sig.get("value")
+        if sig_type == "new_hires":
+            lines.append(f"- Contrataciones recientes: {value}")
+        elif sig_type == "growth_rate":
+            lines.append(f"- Crecimiento estimado: {value}")
+        elif sig_type == "funding_round":
+            lines.append("- Ronda de financiamiento reciente")
+        else:
+            lines.append(f"- {sig_type or 'señal'}: {value}")
+    return prompt + "\n" + "\n".join(lines)
     3-stage multi-agent pipeline per company:
       Stage 1 (Scraper)      — fetch + clean HTML
       Stage 2 (Analista B2B) — LLM analyzes company profile
@@ -1556,11 +1578,13 @@ async def analyze_company(
     # ── Stage 2: Analista B2B ─────────────────────────────────────────────────
     await stage("analista", f"Analizando perfil: {company['title'][:30]}...")
     analista_model = _normalize_openai_model_name(merged.get("llm_analista", ""), "gpt-5.4-2026-03-05")
+    signals = company.get("signals") or []
     if personality_prompt and personality_prompt.strip():
         # Use client-specific analyst prompt from Queen onboarding
         analista_content = _build_prompt(url, scraped, merged, override_template=personality_prompt)
     else:
         analista_content = _analista_prompt(url, scraped, merged)
+    analista_content = _append_signal_context(analista_content, signals)
     try:
         r1 = await client.chat.completions.create(
             model=analista_model,

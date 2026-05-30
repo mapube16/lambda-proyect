@@ -121,6 +121,7 @@ def make_prospecting_registry(
         "analyzed":   0,    # total analyze_company calls completed
         "approved":   0,    # total SUCCESS_READY_FOR_REVIEW
         "rejected":   0,    # total REJECTED_BY_AI or error
+        "signal_context_by_domain": {},  # domain -> signals list
         # Per-agent decision log — shown when user clicks an agent card
         "agent_logs": {
             "buscador":  [],   # discovery decisions
@@ -134,6 +135,59 @@ def make_prospecting_registry(
         _state["agent_logs"].setdefault(agent, []).append(msg)
 
     # ── Tool 1: discover_companies ─────────────────────────────────────────
+
+    def _domain_key(url: str) -> str:
+        from urllib.parse import urlparse
+        host = (urlparse(url).netloc or "").lower().lstrip("www.")
+        return host
+
+    def _signals_from_metadata(meta: dict) -> list[dict]:
+        signals: list[dict] = []
+        if meta.get("new_hires"):
+            signals.append({"type": "new_hires", "value": meta.get("new_hires")})
+        if meta.get("growth_rate"):
+            signals.append({"type": "growth_rate", "value": meta.get("growth_rate")})
+        if meta.get("funding_round"):
+            signals.append({"type": "funding_round", "value": meta.get("funding_round")})
+        return signals
+
+    async def _load_signal_companies(limit: int) -> tuple[list[dict], list[str]]:
+        from database import get_signal_source_config, list_signal_leads
+
+        config = await get_signal_source_config(user_id)
+        enabled_sources = [str(s) for s in (config.get("enabled_sources") or []) if str(s).strip()]
+        if not enabled_sources:
+            return [], []
+
+        rows: list[dict] = []
+        for source in enabled_sources:
+            rows.extend(await list_signal_leads(user_id, source=source, limit=limit, processed=False))
+
+        companies: list[dict] = []
+        used_ids: list[str] = []
+        for row in rows:
+            meta = row.get("metadata", {}) or {}
+            url = str(meta.get("url") or "").strip()
+            domain = str(meta.get("domain") or "").strip()
+            if not url and domain:
+                url = f"https://{domain}"
+            if not url:
+                continue
+            companies.append({
+                "title": row.get("empresa", ""),
+                "url": url,
+                "phone": meta.get("telefono", ""),
+                "address": meta.get("direccion", ""),
+                "rating": None,
+                "source": row.get("source", "signal"),
+                "nit": row.get("nit", ""),
+                "metadata": meta,
+                "signals": _signals_from_metadata(meta),
+                "signal_id": row.get("_id"),
+            })
+            if row.get("_id"):
+                used_ids.append(str(row["_id"]))
+        return companies, used_ids
 
     async def _discover_companies(industria: str, ciudad: str, max_r: int = 0) -> dict:
         """Discover B2B companies via Google Maps + Bing + DuckDuckGo."""
@@ -208,6 +262,13 @@ def make_prospecting_registry(
         rues_dias_recientes        = int(campaign.get("rues_dias_recientes", 180))
 
         _state["discovery_calls"] += 1
+        signal_companies: list[dict] = []
+        signal_ids: list[str] = []
+        try:
+            signal_companies, signal_ids = await _load_signal_companies(n)
+        except Exception as exc:
+            logger.warning("[discover_companies] signal load failed: %s", exc)
+
         try:
             companies = await discover_companies(
                 industria,
@@ -245,7 +306,61 @@ def make_prospecting_registry(
                 logger.info("[discover_companies] secop_radar added %d leads", len(radar_leads))
             except Exception as e:
                 logger.warning("[discover_companies] secop_radar error: %s", e)
+        # Dedup + ranking on signal leads
+        if signal_companies:
+            try:
+                from compliance import calculate_compliance_score
+                from ranking import calculate_intent_score
+                from deduplication import DeduplicationEngine
+
+                deduper = DeduplicationEngine()
+                ranked: list[dict] = []
+                for item in signal_companies:
+                    dup = await deduper.find_duplicate(
+                        nit=str(item.get("nit") or ""),
+                        empresa=str(item.get("title") or ""),
+                        url=str(item.get("url") or ""),
+                        user_id=user_id,
+                    )
+                    if dup:
+                        continue
+                    compliance_score = await calculate_compliance_score(
+                        nit=str(item.get("nit") or ""),
+                        empresa=str(item.get("title") or ""),
+                    )
+                    item["intent_score"] = calculate_intent_score(item, compliance_score)
+                    ranked.append(item)
+                signal_companies = sorted(ranked, key=lambda x: x.get("intent_score", 0), reverse=True)
+            except Exception as exc:
+                logger.warning("[discover_companies] signal ranking failed: %s", exc)
+
+        # Merge signal leads first, then discovery results (dedup by domain)
+        merged: list[dict] = []
+        seen_domains: set[str] = set()
+        for item in signal_companies + companies:
+            if len(merged) >= n:
+                break
+            domain = _domain_key(str(item.get("url") or ""))
+            if not domain or domain in seen_domains:
+                continue
+            seen_domains.add(domain)
+            merged.append(item)
+            if item.get("signals"):
+                _state["signal_context_by_domain"][domain] = item.get("signals")
+
+        companies = merged
         _state["discovered"] = companies
+        if signal_ids:
+            try:
+                from database import mark_signal_leads_processed
+                used_signal_ids = [
+                    str(item.get("signal_id"))
+                    for item in companies
+                    if item.get("signal_id")
+                ]
+                await mark_signal_leads_processed(user_id, used_signal_ids)
+            except Exception as exc:
+                logger.warning("[discover_companies] mark signal leads processed failed: %s", exc)
         # ── Log buscador decisions ─────────────────────────────────────────
         _log("buscador", f"Consulta: '{industria}' en {ciudad}")
         _log("buscador", f"Empresas encontradas: {len(companies)}")
@@ -328,9 +443,13 @@ def make_prospecting_registry(
         """Scrape a company's website and run the 3-stage LLM analysis pipeline."""
         from prospector import analyze_company
 
+        domain = _domain_key(url)
+        signals = _state.get("signal_context_by_domain", {}).get(domain, [])
+
         company = {
             "url": url, "title": title,
             "phone": phone, "address": address,
+            "signals": signals,
         }
 
         # Pre-filter: skip obvious competitors without scraping or LLM

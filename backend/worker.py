@@ -93,6 +93,6 @@ class WorkerSettings:
     on_shutdown = on_shutdown
     redis_settings = redis_settings_from_url()
     max_jobs = 5
-    job_timeout = 3600      # 1h max per prospecting run
+    job_timeout = 600       # 10m max per prospecting run
     keep_result = 86400     # keep result 24h for status checks
     max_tries = 1           # do NOT auto-retry — prospecting costs LLM/scraping calls (RESEARCH anti-pattern)

@@ -17,8 +17,9 @@ for _log in ("hive_adapter", "hive_llm", "hive_tools", "hive_graph", "framework.
     logging.getLogger(_log).setLevel(logging.INFO)
 
 import pathlib
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db, seed_users
@@ -82,6 +83,30 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Lambda Office", version="1.0.0", lifespan=lifespan)
+
+_MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "2000000"))
+_EXEMPT_BODY_LIMIT_PATHS = ("/api/staff/clients/",)
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if request.method in {"POST", "PUT", "PATCH"} and content_length:
+        path = request.url.path
+        if path.startswith(_EXEMPT_BODY_LIMIT_PATHS) and "knowledge/upload" in path:
+            return await call_next(request)
+        try:
+            if int(content_length) > _MAX_BODY_BYTES:
+                return JSONResponse({"detail": "Request body too large"}, status_code=413)
+        except ValueError:
+            return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
+    return await call_next(request)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logging.error("[unhandled] %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse({"detail": "Internal server error"}, status_code=500)
 
 ALLOWED_ORIGINS = list(set([
     "http://localhost:5173",

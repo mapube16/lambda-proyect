@@ -1,0 +1,22 @@
+  WARNING: The script trimesh.exe is installed in 'C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+  WARNING: The script chardetect.exe is installed in 'C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+  WARNING: The script playwright.exe is installed in 'C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+  WARNING: The script patchright.exe is installed in 'C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+  WARNING: The script httpx.exe is installed in 'C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+  WARNING: The script tldextract.exe is installed in 'C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+  WARNING: The script alphashape.exe is installed in 'C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+  WARNING: The scripts crawl4ai-doctor.exe, crawl4ai-download-models.exe, crawl4ai-migrate.exe, crawl4ai-setup.exe and crwl.exe are installed in 'C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+litellm 1.83.10 requires python-dotenv==1.0.1, but you have python-dotenv 1.0.0 which is incompatible.
+mcp 1.27.0 requires uvicorn>=0.31.1; sys_platform != "emscripten", but you have uvicorn 0.27.0 which is incompatible.
+
+[notice] A new release of pip is available: 25.0.1 -> 26.1.1
+[notice] To update, run: python.exe -m pip install --upgrade pip

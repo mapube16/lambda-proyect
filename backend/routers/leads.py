@@ -139,14 +139,17 @@ async def send_lead_email(lead_id: str, request: SendEmailRequest, current_user:
     campaign = await db.campaigns.find_one({"user_id": user_id}, sort=[("created_at", -1)])
     camp = campaign or {}
     try:
-        status = await send_lead_outreach(
-            to_email=to_email, to_name=decisor.get("nombre") or "",
-            subject=subject, body_text=body,
-            sender_name=camp.get("nombre_remitente", ""),
-            sender_empresa=camp.get("empresa_remitente", ""),
-            reply_to_email=camp.get("email_remitente", ""),
-            user_id=user_id,
-        )
+        async with asyncio.timeout(10):
+            status = await send_lead_outreach(
+                to_email=to_email, to_name=decisor.get("nombre") or "",
+                subject=subject, body_text=body,
+                sender_name=camp.get("nombre_remitente", ""),
+                sender_empresa=camp.get("empresa_remitente", ""),
+                reply_to_email=camp.get("email_remitente", ""),
+                user_id=user_id,
+            )
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Email send timed out")
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail="Email service temporarily unavailable")
     except Exception as e:

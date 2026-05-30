@@ -75,6 +75,13 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.email_events, [("user_id", 1), ("timestamp", -1)])
     await _safe_index(db.email_events, "message_id")
     await _safe_index(db.email_events, "lead_id")
+    # ── Phase 24: Signal sources ─────────────────────────────────────────────
+    await _safe_index(db.signal_leads, [("user_id", 1), ("source", 1), ("nit", 1)], unique=True, sparse=True)
+    await _safe_index(db.signal_leads, [("user_id", 1), ("source", 1), ("signal_key", 1)], unique=True, sparse=True)
+    await _safe_index(db.signal_leads, [("user_id", 1), ("processed", 1)])
+    await _safe_index(db.signal_source_configs, "user_id", unique=True)
+    await _safe_index(db.cost_events, [("user_id", 1), ("timestamp", -1)])
+    await _safe_index(db.cost_events, [("user_id", 1), ("source", 1)])
     # ── Phase 17: Voice Orchestrator (Assembly AI) ───────────────────────────
     await _safe_index(db.cobranza_calls_in_progress, "call_sid", unique=True)
     await _safe_index(db.cobranza_calls_in_progress, [("user_id", 1), ("started_at", -1)])
@@ -879,6 +886,116 @@ async def get_or_create_prospecting_knowledge(user_id: str) -> dict:
     }
     await upsert_prospecting_knowledge(user_id, seed)
     return await get_prospecting_knowledge(user_id)
+
+
+# ── Phase 24: Signal Sources ─────────────────────────────────────────────────
+
+async def upsert_signal_lead(user_id: str, signal: dict) -> bool:
+    db = get_db()
+    source = str(signal.get("source") or "")
+    if not source:
+        return False
+
+    nit = str(signal.get("nit") or "")
+    signal_key = str(signal.get("signal_key") or "")
+
+    query = {"user_id": user_id, "source": source}
+    if nit:
+        query["nit"] = nit
+    elif signal_key:
+        query["signal_key"] = signal_key
+    else:
+        return False
+
+    now = datetime.now(timezone.utc)
+    payload = {
+        "user_id": user_id,
+        "source": source,
+        "empresa": signal.get("empresa", ""),
+        "nit": nit,
+        "sector": signal.get("sector", ""),
+        "ciudad": signal.get("ciudad", ""),
+        "fecha_senal": signal.get("fecha_senal") or now,
+        "confianza": float(signal.get("confianza") or 0),
+        "metadata": signal.get("metadata", {}) or {},
+        "signal_key": signal_key,
+        "processed": bool(signal.get("processed", False)),
+        "updated_at": now,
+    }
+
+    result = await db.signal_leads.update_one(
+        query,
+        {"$setOnInsert": {**payload, "created_at": now}, "$set": payload},
+        upsert=True,
+    )
+    return result.upserted_id is not None
+
+
+async def list_signal_leads(
+    user_id: str,
+    source: Optional[str] = None,
+    limit: int = 200,
+    processed: Optional[bool] = None,
+) -> list:
+    db = get_db()
+    query = {"user_id": user_id}
+    if source:
+        query["source"] = source
+    if processed is not None:
+        query["processed"] = processed
+    cursor = db.signal_leads.find(query).sort("fecha_senal", -1).limit(limit)
+    docs = await cursor.to_list(length=limit)
+    for d in docs:
+        d["_id"] = str(d["_id"])
+    return docs
+
+
+async def mark_signal_leads_processed(user_id: str, lead_ids: list[str]) -> int:
+    if not lead_ids:
+        return 0
+    db = get_db()
+    result = await db.signal_leads.update_many(
+        {"user_id": user_id, "_id": {"$in": [ObjectId(i) for i in lead_ids]}},
+        {"$set": {"processed": True, "processed_at": datetime.now(timezone.utc)}},
+    )
+    return int(result.modified_count or 0)
+
+
+async def set_signal_source_config(user_id: str, enabled_sources: list[str], weights: dict) -> None:
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.signal_source_configs.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "enabled_sources": enabled_sources,
+                "weights": weights,
+                "updated_at": now,
+                "user_id": user_id,
+            },
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+
+
+async def get_signal_source_config(user_id: str) -> dict:
+    db = get_db()
+    doc = await db.signal_source_configs.find_one({"user_id": user_id}) or {}
+    if doc and "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def record_cost_event(user_id: str, source: str, cost_usd: float, metadata: Optional[dict] = None) -> None:
+    db = get_db()
+    await db.cost_events.insert_one({
+        "user_id": user_id,
+        "source": source,
+        "cost_usd": float(cost_usd),
+        "metadata": metadata or {},
+        "timestamp": datetime.now(timezone.utc),
+    })
 
 
 async def get_all_client_summaries(user_ids: list[str]) -> dict[str, dict]:

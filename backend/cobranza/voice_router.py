@@ -8,6 +8,7 @@ Endpoints:
 """
 import logging
 import os
+import asyncio
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -284,10 +285,17 @@ async def initiate_call_v2(
 
         client = Client(account_sid, auth_token)
         to_number = debtor.get("telefono")
-        call = client.calls.create(
-            to=to_number, from_=from_number,
-            url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
-        )
+        try:
+            async with asyncio.timeout(15):
+                call = await asyncio.to_thread(
+                    client.calls.create,
+                    to=to_number,
+                    from_=from_number,
+                    url=f"{webhook_url}/api/cobranza/voice/webhook",
+                    method="POST",
+                )
+        except TimeoutError:
+            raise HTTPException(504, "Twilio call initiation timed out")
         call_sid = call.sid
         logger.info("[Init] Call %s -> %s", call_sid, to_number)
 

@@ -23,11 +23,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 7: Lead Dashboard** - Expediente cards with score, decisor, email draft; kill switch rejection display; one-click email copy
 - [ ] **Phase 8: Real-Time Visualization** - Map all 9 graph node states to character animations; WebSocket delivery without UI block; error states on pipeline failure
 - [ ] **Phase 18: Infrastructure Foundation** - Railway 3-service deployment (API + Worker + Redis); ARQ job queue replaces in-process execution; API enqueues jobs and returns run_id immediately
-- [ ] **Phase 19: Tenant Isolation** - tenant_id on all MongoDB documents; all queries filtered by tenant_id; Redis pub/sub WebSocket bridge routes Worker events to the correct frontend connection
+- ⏳ **Phase 19: Tenant Isolation** - tenant_id on all MongoDB documents; all queries filtered by tenant_id; Redis pub/sub WebSocket bridge routes Worker events to the correct frontend connection **(PLANNING PHASE)**
 - [x] **Phase 20: Scraping Improvements** - curl_cffi Chrome131 TLS impersonation replaces httpx; Crawl4AI compresses HTML to Markdown before LLM; DIRECTORY_DOMAINS blocklist; extract_homepage() normalization
  (completed 2026-05-28)
 - [ ] **Phase 21: Pipeline Parametrization** - VerticalConfig dataclass per insurance vertical; SignalLead TypedDict contract for all signal_sources; user selects vertical at campaign configuration
 - [ ] **Phase 22: Cost Observability** - CostEvent logged per LLM and Serper call with tenant_id + run_id; user can query total cost per run via API
+- [ ] **Phase 24: Signal Sources Colombianas** - RUES (recent registrations) + Bright Data (LinkedIn hiring signals) + Hunter.io (decision makers) + Google Maps; Signal deduplication (fuzzy) + intent-based ranking; Quota enforcement per broker ✨ **(STANDBY: Blocks on Phase 19)**
 
 ## Phase Details
 

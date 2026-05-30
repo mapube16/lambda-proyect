@@ -11,6 +11,7 @@ Architecture:
 import math
 import os
 import logging
+import asyncio
 from typing import Optional
 
 logger = logging.getLogger("rag")
@@ -104,10 +105,11 @@ async def embed_text(text: str) -> list[float]:
     """Embed a single text string using OpenAI text-embedding-3-small."""
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    response = await client.embeddings.create(
-        model=EMBED_MODEL,
-        input=text[:8_000],
-    )
+    async with asyncio.timeout(30):
+        response = await client.embeddings.create(
+            model=EMBED_MODEL,
+            input=text[:8_000],
+        )
     return response.data[0].embedding
 
 
@@ -122,7 +124,8 @@ async def embed_texts_batch(texts: list[str], batch_size: int = 512) -> list[lis
     all_embeddings: list[list[float]] = []
     for i in range(0, len(texts), batch_size):
         batch = [t[:8_000] for t in texts[i:i + batch_size]]
-        response = await client.embeddings.create(model=EMBED_MODEL, input=batch)
+        async with asyncio.timeout(30):
+            response = await client.embeddings.create(model=EMBED_MODEL, input=batch)
         # API returns embeddings in the same order as input
         all_embeddings.extend(item.embedding for item in response.data)
     return all_embeddings

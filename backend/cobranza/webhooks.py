@@ -12,6 +12,7 @@ SECURITY: All webhook payloads are validated using HMAC-SHA256 signatures
 from the X-Vapi-Signature header to prevent unauthorized requests.
 """
 import logging
+import json
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -21,6 +22,7 @@ from fastapi.responses import JSONResponse
 from database import get_db
 from services.connection_manager import manager
 from webhook_security import verify_vapi_webhook_signature, extract_signature_from_headers
+import state
 
 logger = logging.getLogger("cobranza.webhooks")
 
@@ -28,6 +30,25 @@ vapi_router = APIRouter(tags=["vapi-webhooks"])
 
 # Intentos states that are "terminal" — call-ended must not overwrite them
 _TERMINAL_ESTADOS = {"promesa_de_pago", "escalado", "pagado"}
+
+
+async def _push_dlq(reason: str, payload: dict, error: Exception | None = None) -> None:
+    """Persist a webhook failure payload for later replay/debugging."""
+    try:
+        arq_pool = state.arq_pool
+        if arq_pool is None:
+            logger.warning("[webhook] DLQ unavailable: arq_pool is not ready")
+            return
+        item = {
+            "type": "vapi_webhook",
+            "reason": reason,
+            "error": str(error) if error else "",
+            "payload": payload,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await arq_pool.rpush("dlq:webhooks:vapi", json.dumps(item))
+    except Exception as dlq_exc:
+        logger.error("[webhook] DLQ push failed: %s", dlq_exc)
 
 
 # ── Tool dispatch helper ───────────────────────────────────────────────────────
@@ -121,6 +142,8 @@ async def handle_tool_call(request: Request):
     Invalid signatures are logged and rejected (but still return 200 per Vapi spec).
     Always returns HTTP 200.
     """
+    raw_body = b""
+    body = {}
     try:
         # Read raw body for signature validation
         raw_body = await request.body()
@@ -162,6 +185,8 @@ async def handle_tool_call(request: Request):
 
     except Exception as exc:
         logger.error("[webhook] handle_tool_call top-level error: %s", exc)
+        payload = {"raw_body": raw_body.decode("utf-8", errors="replace"), "body": body}
+        await _push_dlq("handle_tool_call", payload, exc)
         return JSONResponse({"results": []}, status_code=200)
 
 
@@ -256,6 +281,7 @@ async def _process_call_ended(body: dict) -> JSONResponse:
 
     except Exception as exc:
         logger.error("[webhook] _process_call_ended error: %s", exc)
+        await _push_dlq("call_ended", body, exc)
         return JSONResponse({"ok": True})
 
 
