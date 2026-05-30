@@ -445,6 +445,127 @@ function ExtractedParamsCard({ campaign }: { campaign: Record<string, unknown> }
   );
 }
 
+// ── Knowledge Base Panel ──────────────────────────────────────────────────────
+
+function KnowledgeBasePanel() {
+  const [expanded, setExpanded] = useState(false);
+  const [value, setValue] = useState('');
+  const [originalValue, setOriginalValue] = useState('');
+  const [approvedCount, setApprovedCount] = useState(0);
+  const [rejectedCount, setRejectedCount] = useState(0);
+  const [labelState, setLabelState] = useState<'idle' | 'saved' | 'error'>('idle');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/api/knowledge`, { method: 'GET' });
+        if (!res.ok || cancelled) return;
+        const body = await res.json();
+        setValue(body.product_description || '');
+        setOriginalValue(body.product_description || '');
+        setApprovedCount((body.approved_lead_signals || []).length);
+        setRejectedCount((body.rejected_lead_signals || []).length);
+      } catch {
+        // silent — panel is non-critical
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleBlur = async () => {
+    if (value === originalValue) return;  // no change
+    try {
+      const res = await apiFetch(`${API_URL}/api/knowledge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_description: value }),
+      });
+      if (res.ok) {
+        setOriginalValue(value);
+        setLabelState('saved');
+        setTimeout(() => setLabelState('idle'), 1500);
+      } else {
+        setLabelState('error');
+        setTimeout(() => setLabelState('idle'), 2000);
+      }
+    } catch {
+      setLabelState('error');
+      setTimeout(() => setLabelState('idle'), 2000);
+    }
+  };
+
+  const hasSignals = approvedCount > 0 || rejectedCount > 0;
+  const badgeText = hasSignals
+    ? `${approvedCount} aprobados · ${rejectedCount} rechazados`
+    : 'Sin señales aún';
+
+  const fieldLabelColor = labelState === 'saved' ? '#a9dc76' : labelState === 'error' ? '#ff6188' : 'rgba(227,224,241,0.4)';
+  const fieldLabelText = labelState === 'saved' ? 'Guardado ✓' : labelState === 'error' ? 'Error al guardar' : 'Tu producto / ICP';
+
+  return (
+    <div style={{ background: '#12121d', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: '#ab9df2', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+          Base de conocimiento
+        </div>
+        <div style={{
+          fontSize: 11,
+          fontFamily: "'Space Grotesk', system-ui, sans-serif",
+          color: 'rgba(227,224,241,0.4)',
+          border: '1px solid rgba(120,220,232,0.15)',
+          borderRadius: 4,
+          padding: '4px 8px',
+          background: 'rgba(120,220,232,0.04)',
+        }}>
+          {badgeText}
+        </div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'rgba(227,224,241,0.35)',
+            fontSize: 11,
+            cursor: 'pointer',
+            fontFamily: "'Space Grotesk', system-ui, sans-serif",
+          }}
+        >
+          {expanded ? '↑ Ocultar' : '▼ Expandir'}
+        </button>
+      </div>
+      {expanded && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: fieldLabelColor, fontFamily: "'Space Grotesk', system-ui, sans-serif", marginBottom: 6 }}>
+            {fieldLabelText}
+          </div>
+          <textarea
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={handleBlur}
+            placeholder="Describe tu producto, a quién le vendes y qué dolor resuelve..."
+            rows={4}
+            style={{
+              width: '100%',
+              background: '#1b1a26',
+              border: 'none',
+              borderBottom: '1px solid rgba(120,220,232,0.2)',
+              borderRadius: 6,
+              padding: '8px 12px',
+              color: '#e3e0f1',
+              fontSize: 13,
+              fontFamily: "'Space Grotesk', system-ui, sans-serif",
+              resize: 'vertical',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Campaign Chat ─────────────────────────────────────────────────────────────
 
 interface ChatMessage { role: 'user' | 'assistant'; content: string }
@@ -1068,6 +1189,9 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
                   })}
                 </div>
               )}
+
+              {/* Knowledge base panel */}
+              <KnowledgeBasePanel />
 
               {/* MAX PROSPECTS slider */}
               <div style={s.sliderSection}>
