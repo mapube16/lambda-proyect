@@ -1685,9 +1685,30 @@ async def run_prospect(
     await notify(buscador_id, AgentState.TOOL_USE, tool="web_search",
                  status=f"{source_label}: {merged['industria_objetivo']} en {merged['ciudad_objetivo']}")
 
+    def _truthy(val) -> bool:
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("true", "1", "yes")
+
+    use_rues     = _truthy(merged.get("use_rues", False))
+    use_secop    = _truthy(merged.get("use_secop", False))
+    use_fincaraiz = _truthy(merged.get("use_fincaraiz", False))
+
+    active_sources = ["serper"] + ([s for s, v in [("rues", use_rues), ("secop", use_secop), ("fincaraiz", use_fincaraiz)] if v])
+    logger.info(
+        "[Prospect] signal sources active: %s (use_rues=%s use_secop=%s use_fincaraiz=%s)",
+        active_sources, use_rues, use_secop, use_fincaraiz,
+    )
+    await notify(buscador_id, AgentState.TOOL_USE, tool="web_search",
+                 status=f"Fuentes: {', '.join(active_sources)}")
+
     companies = await discover_companies(
         merged["industria_objetivo"], merged["ciudad_objetivo"], max_results, gmaps_key,
-        use_secop=bool(merged.get("use_secop", False)),
+        use_secop=use_secop,
+        use_rues=use_rues,
+        use_fincaraiz=use_fincaraiz,
+        excluded_domains=set(merged.get("excluded_domains") or []),
+        source_priority=merged.get("source_priority", "serper"),
     )
 
     if not companies:
