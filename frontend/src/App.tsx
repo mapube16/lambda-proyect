@@ -15,7 +15,7 @@ import { StaffDashboard } from './components/StaffDashboard';
 import { ClientDashboard } from './components/ClientDashboard';
 import { OfficeCanvas } from './components/OfficeCanvas';
 import { AgentPanel } from './components/AgentPanel';
-import { useWebSocket } from './hooks/useWebSocket';
+import { usePolling } from './hooks/usePolling';
 import { useGameLoop } from './hooks/useGameLoop';
 
 const C = {
@@ -88,7 +88,7 @@ function RailBtn({ icon, active = false, title, onClick }: {
 }
 
 function OfficeView() {
-  const { createAgent, runTask, startProspect, approveLead, rejectLead } = useWebSocket();
+  const { createAgent, runTask, startProspect, approveLead, rejectLead } = usePolling();
   useGameLoop();
   const { userEmail, clearAuth, agents, setAgents } = useOfficeStore();
 

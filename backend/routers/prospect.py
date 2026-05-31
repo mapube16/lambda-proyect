@@ -213,6 +213,57 @@ async def get_runs(current_user: dict = Depends(get_current_user)):
     return await get_runs_by_user(str(current_user["user_id"]))
 
 
+@router.get("/api/runs/{run_id}/status")
+async def get_run_status(run_id: str, current_user: dict = Depends(get_current_user)):
+    """Polling endpoint — replaces WebSocket for prospecting progress."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    run = await db.runs.find_one({"run_id": run_id, "user_id": user_id})
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Leads for this run
+    raw_leads = await db.leads.find({"run_id": run_id, "user_id": user_id}).to_list(length=200)
+    leads = []
+    for l in raw_leads:
+        l["_id"] = str(l["_id"])
+        leads.append({
+            "id": l["_id"],
+            "leadId": l["_id"],
+            "title": l.get("company_name") or l.get("empresa") or l.get("url", ""),
+            "url": l.get("url", ""),
+            "status": "success" if l.get("system_state") == "SUCCESS_READY_FOR_REVIEW" else
+                      "rejected" if l.get("system_state") == "REJECTED_BY_AI" else "error",
+            "markdown": l.get("expediente_markdown"),
+            "json_payload": l.get("expediente_json"),
+            "approved": True if l.get("hitl_status") == "approved" else
+                        False if l.get("hitl_status") == "rejected" else None,
+            "phone": l.get("phone"),
+            "address": l.get("address"),
+            "rating": (l.get("expediente_json") or {}).get("score") if isinstance(l.get("expediente_json"), dict) else None,
+        })
+
+    # Checkpoint leads (HITL pending approval)
+    checkpoint_leads_raw = await db.leads.find(
+        {"run_id": run_id, "user_id": user_id, "estado": "checkpoint"}
+    ).to_list(length=20)
+    checkpoint_leads = [
+        {"leadId": str(l["_id"]), "empresa": l.get("company_name", ""), "puntaje": (l.get("expediente_json") or {}).get("score")}
+        for l in checkpoint_leads_raw
+    ]
+
+    status = run.get("status", "queued")
+    return {
+        "run_id": run_id,
+        "status": status,
+        "leads": leads,
+        "agent_logs": run.get("agent_logs") or {},
+        "checkpoint_leads": checkpoint_leads,
+        "total_analyzed": run.get("total_found", 0),
+        "total_approved": run.get("total_approved", 0),
+    }
+
+
 @router.get("/api/runs/{run_id}/report")
 async def get_run_report(run_id: str, current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["user_id"])

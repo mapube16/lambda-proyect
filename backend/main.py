@@ -27,7 +27,7 @@ from security_headers import SecurityHeadersMiddleware
 from landa.scheduler import start_scheduler, shutdown_scheduler
 import state
 
-from routers import auth, leads, prospect, staff, onboarding, knowledge, whatsapp, secop, agents_legacy, websocket, misc
+from routers import auth, leads, prospect, staff, onboarding, knowledge, whatsapp, secop, agents_legacy, misc
 
 
 @asynccontextmanager
@@ -53,17 +53,19 @@ async def lifespan(app: FastAPI):
     from orchestrator import HiveOrchestrator
     from hive_adapter import HiveAdapter
     from models import AgentRole
-    from services.connection_manager import manager
+
+    async def _noop(_uid: str, _msg: dict) -> None:
+        pass
 
     state.orchestrator = HiveOrchestrator(os.getenv("OPENAI_API_KEY", "demo-key"))
-    state.orchestrator.set_broadcast_callback(manager.broadcast)
+    state.orchestrator.set_broadcast_callback(_noop)
     await state.orchestrator.load_agents_from_db()
 
     if not state.orchestrator.get_all_agents():
         for name, role in [("Investigadora", AgentRole.RESEARCHER), ("Prospector", AgentRole.PLANNER), ("Redactora", AgentRole.WRITER), ("Analista", AgentRole.REVIEWER)]:
             await state.orchestrator.create_agent(name=name, role=role)
 
-    state.hive_adapter = HiveAdapter(send_to_user_callback=manager.send_to_user)
+    state.hive_adapter = HiveAdapter(send_to_user_callback=_noop)
 
     from arq_pool import create_arq_pool
     state.arq_pool = await create_arq_pool()
@@ -128,7 +130,7 @@ app.include_router(knowledge.router)
 app.include_router(whatsapp.router)
 app.include_router(secop.router)
 app.include_router(agents_legacy.router)
-app.include_router(websocket.router)
+
 
 # ── Cobranza (separate product) ───────────────────────────────────────────────
 from cobranza.router import router as cobranza_router
