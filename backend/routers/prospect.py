@@ -8,13 +8,14 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field
 
-from auth import get_current_user
+from auth import get_current_user, require_staff
 from database import (
     get_db, get_active_campaign, save_campaign, get_runs_by_user, get_leads_by_run,
     create_run, update_run_status, get_ideal_leads, get_rejected_leads,
     get_client_profile, get_prospecting_excluded_domains, save_lead,
     upsert_prospecting_knowledge, get_prospecting_knowledge, get_or_create_prospecting_knowledge,
     get_signal_source_config, set_signal_source_config, list_signal_leads,
+    get_or_create_tenant_quota, check_and_reset_quota, get_all_tenant_quotas,
 )
 from onboarding import chat_turn, extract_campaign_from_nl
 from pipeline_helpers import _build_runtime_agents, _normalize_agent_configs
@@ -442,3 +443,46 @@ async def upsert_my_knowledge(
         raise HTTPException(status_code=400, detail="No fields to update")
     await upsert_prospecting_knowledge(user_id, fields)
     return {"status": "ok"}
+
+
+# ── Quota (Phase 24 Wave 4) ───────────────────────────────────────────────────
+
+@router.get("/api/quota/me")
+async def get_my_quota(current_user: dict = Depends(get_current_user)):
+    """Broker-facing: remaining leads quota for the current month."""
+    user_id = str(current_user["user_id"])
+    doc = await check_and_reset_quota(user_id)
+    limit = int(doc.get("monthly_leads_limit") or 1000)
+    used = int(doc.get("monthly_leads_used") or 0)
+    remaining = max(0, limit - used)
+    reset_date = doc.get("reset_date")
+    if hasattr(reset_date, "isoformat"):
+        reset_iso = reset_date.isoformat()
+    else:
+        reset_iso = str(reset_date)
+    days_until_reset = None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        rd = _dt.fromisoformat(reset_iso.replace("Z", "+00:00")) if isinstance(reset_iso, str) else reset_date
+        days_until_reset = max(0, (rd - _dt.now(_tz.utc)).days)
+    except Exception:
+        pass
+    return {
+        "plan": doc.get("plan", "pro"),
+        "monthly_limit": limit,
+        "monthly_used": used,
+        "remaining": remaining,
+        "reset_date": reset_iso,
+        "days_until_reset": days_until_reset,
+        "percentage_used": int((used / limit) * 100) if limit else 0,
+    }
+
+
+@router.get("/api/admin/quotas")
+async def get_all_quotas(_staff: dict = Depends(require_staff)):
+    """Staff-facing: all broker quotas for analytics."""
+    docs = await get_all_tenant_quotas()
+    for d in docs:
+        if "reset_date" in d and hasattr(d["reset_date"], "isoformat"):
+            d["reset_date"] = d["reset_date"].isoformat()
+    return {"total_brokers": len(docs), "quotas": docs}

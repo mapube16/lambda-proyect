@@ -1011,6 +1011,174 @@ function AgentLogModal({ logKey, lines, onClose }: {
   );
 }
 
+// ── Signal Source Definitions ────────────────────────────────────────────────
+
+const SIGNAL_SOURCES = [
+  {
+    id: 'serper',
+    icon: '🌐',
+    title: 'Búsqueda Web',
+    description: 'Google + Bing: empresas en cualquier sector y ciudad',
+    tag: 'Serper',
+    tagColor: '#78dce8',
+    tagBg: 'rgba(120,220,232,0.1)',
+    alwaysOn: true,
+  },
+  {
+    id: 'rues',
+    icon: '🏢',
+    title: 'Empresas recién creadas',
+    description: 'Compañías registradas recientemente en Cámara de Comercio',
+    tag: 'RUES',
+    tagColor: '#ab9df2',
+    tagBg: 'rgba(171,157,242,0.1)',
+    alwaysOn: false,
+  },
+  {
+    id: 'secop',
+    icon: '📋',
+    title: 'Contratistas del Estado',
+    description: 'Proveedores con contratos públicos adjudicados (SECOP)',
+    tag: 'SECOP',
+    tagColor: '#ffd866',
+    tagBg: 'rgba(255,216,102,0.1)',
+    alwaysOn: false,
+  },
+  {
+    id: 'fincaraiz',
+    icon: '🏠',
+    title: 'Propietarios con arriendo',
+    description: 'Inmuebles en arriendo activo en Fincaraíz',
+    tag: 'Fincaraíz',
+    tagColor: '#a9dc76',
+    tagBg: 'rgba(169,220,118,0.1)',
+    alwaysOn: false,
+  },
+] as const;
+
+function SignalSourceSelector({
+  selected,
+  onChange,
+  disabled,
+}: {
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+  disabled?: boolean;
+}) {
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange(next);
+  };
+
+  const activeCount = selected.size;
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ marginBottom: 8 }}>
+        <span style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 11, fontWeight: 600, color: '#e3e0f1', letterSpacing: '0.02em' }}>
+          ¿Cómo quieres encontrar prospectos?
+        </span>
+        <div style={{ fontSize: 11, color: 'rgba(227,224,241,0.4)', marginTop: 2 }}>
+          Elige las fuentes de señales. Puedes combinar varias.
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        {SIGNAL_SOURCES.map(src => {
+          const isSelected = src.alwaysOn || selected.has(src.id);
+          const cardBorder = src.alwaysOn
+            ? '2px solid rgba(120,220,232,0.4)'
+            : isSelected
+            ? '2px solid #78dce8'
+            : '2px solid transparent';
+          const cardBg = isSelected ? '#1b1a26' : '#1b1a26';
+          const cardShadow = isSelected && !src.alwaysOn ? '0 0 0 1px rgba(120,220,232,0.12)' : 'none';
+          return (
+            <button
+              key={src.id}
+              aria-pressed={isSelected}
+              aria-disabled={src.alwaysOn || disabled}
+              aria-label={`Señal ${src.title}: ${src.description}`}
+              disabled={src.alwaysOn || disabled}
+              onClick={() => !src.alwaysOn && !disabled && toggle(src.id)}
+              style={{
+                background: cardBg,
+                border: cardBorder,
+                boxShadow: cardShadow,
+                borderRadius: 8,
+                padding: '10px 12px',
+                textAlign: 'left',
+                cursor: src.alwaysOn || disabled ? 'default' : 'pointer',
+                opacity: disabled && !src.alwaysOn ? 0.6 : 1,
+                transition: 'border-color 0.15s, box-shadow 0.15s',
+                minHeight: 44,
+              }}
+              onMouseEnter={e => {
+                if (!src.alwaysOn && !disabled)
+                  (e.currentTarget as HTMLButtonElement).style.background = '#22212e';
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLButtonElement).style.background = cardBg;
+              }}
+            >
+              <div style={{ fontSize: 24, lineHeight: 1, marginBottom: 4 }}>{src.icon}</div>
+              <div style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 14, fontWeight: 600, color: '#e3e0f1', marginBottom: 2 }}>
+                {src.title}
+              </div>
+              <div style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, color: 'rgba(227,224,241,0.5)', lineHeight: 1.5, marginBottom: 8 }}>
+                {src.description}
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const }}>
+                <span style={{
+                  fontSize: 10, fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                  fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.06em',
+                  padding: '2px 6px', borderRadius: 4,
+                  color: src.tagColor, background: src.tagBg,
+                }}>
+                  {src.tag}
+                </span>
+                {src.alwaysOn && (
+                  <span style={{ fontSize: 10, color: 'rgba(227,224,241,0.35)', alignSelf: 'center' }}>
+                    Siempre activo
+                  </span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {activeCount > 0 && (
+        <div style={{ fontSize: 11, color: 'rgba(227,224,241,0.4)', marginTop: 6 }}>
+          Fuentes seleccionadas: {['Búsqueda Web', ...SIGNAL_SOURCES.filter(s => !s.alwaysOn && selected.has(s.id)).map(s => s.title)].join(', ')}. La IA configurará la búsqueda.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SignalBadge({ selected }: { selected: Set<string> }) {
+  const activeLabels = ['Búsqueda Web', ...SIGNAL_SOURCES.filter(s => !s.alwaysOn && selected.has(s.id)).map(s => s.title)];
+  if (activeLabels.length === 0) return null;
+  return (
+    <div style={{ background: '#12121d', borderRadius: 8, padding: '10px 12px', border: '1px solid rgba(120,220,232,0.05)', gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap' as const, gap: 6, alignItems: 'center', marginBottom: 4 }}>
+      <span style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 9, fontWeight: 600, color: 'rgba(227,224,241,0.35)', textTransform: 'uppercase' as const, letterSpacing: '0.1em', marginRight: 4 }}>
+        FUENTES ACTIVAS:
+      </span>
+      {SIGNAL_SOURCES.filter(s => s.alwaysOn || selected.has(s.id)).map(src => (
+        <span key={src.id} style={{
+          fontSize: 10, fontFamily: "'Space Grotesk', system-ui, sans-serif",
+          fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.06em',
+          padding: '2px 6px', borderRadius: 4,
+          color: src.tagColor, background: src.tagBg,
+        }}>
+          {src.tag}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPanelProps) {
   const {
     agents, connected, prospecting, leads, campaignSummary,
@@ -1022,6 +1190,7 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
   const [campaign, setCampaign] = useState<Record<string, string>>(DEFAULT_CAMPAIGN);
   const [maxResults, setMaxResults] = useState(20);
   const [campaignReady, setCampaignReady] = useState(false);
+  const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
   const [showForm, setShowForm] = useState(false);
   const [chatResetKey, setChatResetKey] = useState(0);
   const [extractedCampaign, setExtractedCampaign] = useState<Record<string, unknown> | null>(null);
@@ -1127,6 +1296,13 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
             </div>
           )}
 
+          {/* Signal source selector (always visible above chat / ready state) */}
+          <SignalSourceSelector
+            selected={selectedSources}
+            onChange={setSelectedSources}
+            disabled={campaignReady && prospecting}
+          />
+
           {/* Chat OR ready state */}
           {!campaignReady ? (
             <>
@@ -1154,6 +1330,11 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
               {/* Extracted params confirmation card (from NL extraction) */}
               {extractedCampaign && (
                 <ExtractedParamsCard campaign={extractedCampaign} />
+              )}
+
+              {/* Active signal sources badge */}
+              {selectedSources.size > 0 && (
+                <SignalBadge selected={selectedSources} />
               )}
 
               {/* Parameter cards grid */}
@@ -1212,12 +1393,20 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
               <button
                 style={{ ...s.launchBtn, opacity: prospecting ? 0.5 : 1, cursor: prospecting ? 'not-allowed' : 'pointer' }}
                 disabled={prospecting}
-                onClick={() => startProspect(campaign, maxResults)}
+                onClick={() => {
+                  const campaignWithSources = {
+                    ...campaign,
+                    use_rues: selectedSources.has('rues') ? 'true' : 'false',
+                    use_secop: selectedSources.has('secop') ? 'true' : 'false',
+                    use_fincaraiz: selectedSources.has('fincaraiz') ? 'true' : 'false',
+                  };
+                  startProspect(campaignWithSources, maxResults);
+                }}
               >
                 {prospecting ? 'AGENTES TRABAJANDO...' : 'INICIAR PROSPECCIÓN 🚀'}
               </button>
 
-              <button style={s.resetBtn} onClick={() => { setCampaignReady(false); setExtractedCampaign(null); setClarificationReply(null); setChatResetKey(k => k + 1); }}>
+              <button style={s.resetBtn} onClick={() => { setCampaignReady(false); setExtractedCampaign(null); setClarificationReply(null); setChatResetKey(k => k + 1); setSelectedSources(new Set()); }}>
                 ↩ Nueva campaña
               </button>
 

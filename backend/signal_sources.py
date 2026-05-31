@@ -113,8 +113,8 @@ class RuesSignalSource:
         return signals
 
 
-    registry = SignalSourceRegistry()
-    registry.register("rues", RuesSignalSource())
+registry = SignalSourceRegistry()
+registry.register("rues", RuesSignalSource())
 
 
 async def store_signals(user_id: str, signals: list[dict]) -> dict:

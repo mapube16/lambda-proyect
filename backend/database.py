@@ -82,6 +82,8 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.signal_source_configs, "user_id", unique=True)
     await _safe_index(db.cost_events, [("user_id", 1), ("timestamp", -1)])
     await _safe_index(db.cost_events, [("user_id", 1), ("source", 1)])
+    await _safe_index(db.tenant_quotas, "user_id", unique=True)
+    await _safe_index(db.tenant_quotas, [("reset_date", 1)])
     # ── Phase 17: Voice Orchestrator (Assembly AI) ───────────────────────────
     await _safe_index(db.cobranza_calls_in_progress, "call_sid", unique=True)
     await _safe_index(db.cobranza_calls_in_progress, [("user_id", 1), ("started_at", -1)])
@@ -1628,3 +1630,78 @@ async def get_or_create_prospecting_knowledge(user_id: str) -> dict:
     await upsert_prospecting_knowledge(user_id, seed)
     return await get_prospecting_knowledge(user_id)
 
+
+# ── Tenant Quota (Phase 24 Wave 4) ────────────────────────────────────────────
+
+_PLAN_LIMITS: dict[str, int] = {
+    "free":       100,
+    "pro":        1000,
+    "enterprise": 999_999,
+}
+
+
+async def get_or_create_tenant_quota(user_id: str, plan: str = "pro") -> dict:
+    """Return quota doc, creating with default plan if missing."""
+    db = get_db()
+    doc = await db.tenant_quotas.find_one({"user_id": user_id})
+    if doc:
+        if "_id" in doc:
+            doc["_id"] = str(doc["_id"])
+        return doc
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        reset_date = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        reset_date = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    new_doc = {
+        "user_id": user_id,
+        "plan": plan,
+        "monthly_leads_limit": _PLAN_LIMITS.get(plan, 1000),
+        "monthly_leads_used": 0,
+        "reset_date": reset_date,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.tenant_quotas.insert_one(new_doc)
+    new_doc["_id"] = str(new_doc.pop("_id", ""))
+    return new_doc
+
+
+async def increment_quota_used(user_id: str, count: int = 1) -> None:
+    """Increment monthly_leads_used after each lead found."""
+    db = get_db()
+    await db.tenant_quotas.update_one(
+        {"user_id": user_id},
+        {"$inc": {"monthly_leads_used": count}, "$set": {"updated_at": datetime.now(timezone.utc)}},
+    )
+
+
+async def check_and_reset_quota(user_id: str) -> dict:
+    """Reset quota if reset_date passed. Returns up-to-date doc."""
+    doc = await get_or_create_tenant_quota(user_id)
+    now = datetime.now(timezone.utc)
+    reset_date = doc.get("reset_date")
+    if isinstance(reset_date, str):
+        reset_date = datetime.fromisoformat(reset_date)
+    if reset_date and now >= reset_date:
+        if now.month == 12:
+            next_reset = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            next_reset = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        db = get_db()
+        await db.tenant_quotas.update_one(
+            {"user_id": user_id},
+            {"$set": {"monthly_leads_used": 0, "reset_date": next_reset, "updated_at": now}},
+        )
+        doc = await get_or_create_tenant_quota(user_id)
+    return doc
+
+
+async def get_all_tenant_quotas() -> list[dict]:
+    """Staff: return all quota docs."""
+    db = get_db()
+    docs = await db.tenant_quotas.find({}).to_list(length=500)
+    for d in docs:
+        if "_id" in d:
+            d["_id"] = str(d["_id"])
+    return docs
