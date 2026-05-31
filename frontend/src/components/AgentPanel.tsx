@@ -1022,7 +1022,7 @@ const SIGNAL_SOURCES = [
     tag: 'Serper',
     tagColor: '#78dce8',
     tagBg: 'rgba(120,220,232,0.1)',
-    alwaysOn: true,
+    alwaysOn: false,
   },
   {
     id: 'rues',
@@ -1150,7 +1150,7 @@ function SignalSourceSelector({
       </div>
       {activeCount > 0 && (
         <div style={{ fontSize: 11, color: 'rgba(227,224,241,0.4)', marginTop: 6 }}>
-          Fuentes seleccionadas: {['Búsqueda Web', ...SIGNAL_SOURCES.filter(s => !s.alwaysOn && selected.has(s.id)).map(s => s.title)].join(', ')}. La IA configurará la búsqueda.
+          Fuentes seleccionadas: {SIGNAL_SOURCES.filter(s => selected.has(s.id)).map(s => s.title).join(', ')}. La IA configurará la búsqueda.
         </div>
       )}
     </div>
@@ -1190,7 +1190,7 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
   const [campaign, setCampaign] = useState<Record<string, string>>(DEFAULT_CAMPAIGN);
   const [maxResults, setMaxResults] = useState(20);
   const [campaignReady, setCampaignReady] = useState(false);
-  const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
+  const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set(['serper']));
   const [showForm, setShowForm] = useState(false);
   const [chatResetKey, setChatResetKey] = useState(0);
   const [extractedCampaign, setExtractedCampaign] = useState<Record<string, unknown> | null>(null);
@@ -1394,11 +1394,15 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
                 style={{ ...s.launchBtn, opacity: prospecting ? 0.5 : 1, cursor: prospecting ? 'not-allowed' : 'pointer' }}
                 disabled={prospecting}
                 onClick={() => {
+                  const useSerper = selectedSources.has('serper');
+                  const useSignal = selectedSources.has('rues') || selectedSources.has('secop') || selectedSources.has('fincaraiz');
+                  const sourcePriority = !useSerper && useSignal ? 'signal_only' : 'serper';
                   const campaignWithSources = {
                     ...campaign,
                     use_rues: selectedSources.has('rues') ? 'true' : 'false',
                     use_secop: selectedSources.has('secop') ? 'true' : 'false',
                     use_fincaraiz: selectedSources.has('fincaraiz') ? 'true' : 'false',
+                    source_priority: sourcePriority,
                   };
                   startProspect(campaignWithSources, maxResults);
                 }}
@@ -1406,7 +1410,7 @@ export function AgentPanel({ startProspect, approveLead, rejectLead }: AgentPane
                 {prospecting ? 'AGENTES TRABAJANDO...' : 'INICIAR PROSPECCIÓN 🚀'}
               </button>
 
-              <button style={s.resetBtn} onClick={() => { setCampaignReady(false); setExtractedCampaign(null); setClarificationReply(null); setChatResetKey(k => k + 1); setSelectedSources(new Set()); }}>
+              <button style={s.resetBtn} onClick={() => { setCampaignReady(false); setExtractedCampaign(null); setClarificationReply(null); setChatResetKey(k => k + 1); setSelectedSources(new Set(['serper'])); }}>
                 ↩ Nueva campaña
               </button>
 

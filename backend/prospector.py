@@ -922,13 +922,18 @@ async def discover_companies(
         "SET" if bright_data_key else "MISSING"
     )
 
-    # Source selection based on client budget/tier
+    # Source selection.
+    # "signal_only" = skip Serper/BrightData web search entirely.
+    # Used when the user deselects web search and picks only RUES/SECOP/Fincaraíz.
     sources_to_use = []
-    bright_data_type = "web_scraper"  # "web_scraper" or "serp"
+    bright_data_type = "web_scraper"
 
-    if source_priority == "bright_data" and bright_data_key:
+    if source_priority == "signal_only":
+        sources_to_use = []
+        logger.info("[Discovery] signal_only mode — skipping web search")
+    elif source_priority == "bright_data" and bright_data_key:
         sources_to_use = ["bright_data"]
-        bright_data_type = "web_scraper"  # Use Web Scraper for premium clients (extracts emails/phones)
+        bright_data_type = "web_scraper"
     elif source_priority == "hybrid" and bright_data_key and serper_key:
         sources_to_use = ["bright_data", "serper"]
         bright_data_type = "web_scraper"
@@ -1015,38 +1020,34 @@ async def discover_companies(
             len(gmaps_results), len(bing_results), len(ddg_results), len(merged), skipped_history, skipped_low_quality
         )
 
-    # SECOP source: government contractors
-    if use_secop and len(merged) < max_results:
+    # SECOP source: government contractors — always runs if selected, regardless of serper quota
+    if use_secop:
         from secop import discover_companies_secop, resolve_secop_urls
-        secop_needed = max_results - len(merged)
-        secop_raw = await discover_companies_secop(industria, ciudad, secop_needed * 2)
+        secop_raw = await discover_companies_secop(industria, ciudad, max_results * 2)
         secop_resolved = await resolve_secop_urls(secop_raw, max_concurrent=3)
-        add_secop(secop_resolved[:secop_needed])
+        add_secop(secop_resolved[:max_results])
         logger.info("[Discovery] SECOP: %d raw → %d resueltas → %d total", len(secop_raw), len(secop_resolved), len(merged))
 
     # RUES source: recently registered companies (Cámara de Comercio)
-    if use_rues and len(merged) < max_results:
+    if use_rues:
         from rues import discover_companies_rues, resolve_rues_urls
-        rues_needed = max_results - len(merged)
         rues_raw = await discover_companies_rues(
             industria, ciudad,
-            max_results=rues_needed * 2,
+            max_results=max_results * 2,
             dias_recientes=rues_dias_recientes,
         )
         rues_resolved = await resolve_rues_urls(rues_raw, max_concurrent=3)
-        add_secop(rues_resolved[:rues_needed])  # reuse add_secop (same NIT-dedup logic)
+        add_secop(rues_resolved[:max_results])
         logger.info("[Discovery] RUES: %d raw → %d resueltas → %d total", len(rues_raw), len(rues_resolved), len(merged))
 
-    # Fincaraíz source: rental property listings (inmobiliarias + particulares)
-    if use_fincaraiz and len(merged) < max_results:
+    # Fincaraíz source: rental property listings — always runs if selected
+    if use_fincaraiz:
         from fincaraiz_signal import discover_via_fincaraiz
-        fincaraiz_needed = max_results - len(merged)
         fincaraiz_results = await discover_via_fincaraiz(
             ciudad=ciudad,
             tipo_inmueble=fincaraiz_tipo,
             only_particular=fincaraiz_only_particular,
-            max_results=fincaraiz_needed,
-            fetch_details=True,
+            max_results=max_results,
         )
         add(fincaraiz_results)
         logger.info("[Discovery] Fincaraíz: %d listings → %d total", len(fincaraiz_results), len(merged))
