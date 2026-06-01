@@ -2,15 +2,22 @@
 vertical_arrendamiento.py — Aggregator for the "arrendamiento" prospecting vertical.
 
 Activated automatically when industria_objetivo contains rental keywords.
-Aggregates results from:
-  1. Fincaraíz   — curated portal, inmobiliarias + particulares
-  2. Mercado Libre — API-based, highest coverage of particulares
-  3. OLX           — classifieds, best source for private landlords
-  4. Metro Cuadrado — agency-heavy, El Tiempo Group
-  5. Ciencuadras   — regional agencies
 
-Never import this from other pipelines — use discover_arrendamiento() only
-when the arrendamiento vertical is detected.
+Portal status (2026-05-31):
+  WORKING:
+    Fincaraíz      — curl_cffi + __NEXT_DATA__ JSON. Inmobiliarias dominan; particulares <5%.
+    Ciencuadras    — curl_cffi + BeautifulSoup card parser. Agencies only.
+    OLX            — curl_cffi scraper. Best source of particulares. DNS blocked in local
+                     Windows dev (asyncio Proactor); works fine on Railway (Linux).
+
+  BLOCKED (require auth / SPA):
+    Mercado Libre  — Pure React CSR. Public API requires OAuth since 2025-Q4.
+                     Implemented as Serper-based fallback: search site:inmuebles.mercadolibre.com.co
+                     via Serper and parse the individual SSR listing pages.
+    Metro Cuadrado — Next.js App Router + REST API requires x-api-key (El Tiempo Group).
+                     Disabled — returns 401 without a partner key.
+
+Never import this from other pipelines.
 """
 from __future__ import annotations
 
@@ -19,6 +26,7 @@ import json
 import logging
 import re
 from typing import Optional
+import os
 
 import httpx
 
@@ -48,68 +56,97 @@ _ML_CATEGORY_RENT = "MCO1459"   # Inmuebles en arriendo — Colombia
 
 async def _fetch_ml_listings(ciudad: str, max_results: int) -> list[dict]:
     """
-    Scrape Mercado Libre inmuebles en arriendo via curl_cffi.
-    ML public API requires OAuth; HTML scraping is the fallback.
-    Targets: inmuebles.mercadolibre.com.co — SSR page with embedded JSON.
+    Mercado Libre inmuebles — via Serper site-search fallback.
+
+    ML's public API requires OAuth (blocked since 2025-Q4) and their search
+    results page is pure React CSR with no SSR data. Strategy:
+    1. Use Serper to search site:inmuebles.mercadolibre.com.co for rental listings.
+    2. Each result URL is a listing page that IS server-rendered (SSR) with ld+json.
+    3. Scrape 3-5 listing pages in parallel to extract owner + price.
+
+    Requires SERPER_API_KEY. Returns empty list if key not set.
     """
+    import os
+    serper_key = os.getenv("SERPER_API_KEY", "")
+    if not serper_key:
+        logger.info("[ML] SERPER_API_KEY not set — skipping ML via Serper")
+        return []
+
     try:
         from curl_cffi.requests import AsyncSession
         from bs4 import BeautifulSoup
     except ImportError:
         return []
 
-    ciudad_slug = (ciudad or "bogota").lower().replace(" ", "-").replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
-    url = f"https://inmuebles.mercadolibre.com.co/departamentos/arriendo/{ciudad_slug}-dc/"
+    ciudad_q = (ciudad or "Bogota").strip().title()
+    query = f'site:inmuebles.mercadolibre.com.co departamento arriendo {ciudad_q}'
     results: list[dict] = []
 
+    # Step 1: Serper search for ML listing URLs
     try:
-        async with AsyncSession(impersonate="chrome131", timeout=20) as s:
-            resp = await s.get(url)
-            if resp.status_code != 200:
-                logger.warning("[ML] HTTP %d", resp.status_code)
-                return []
-            html = resp.text
+        async with AsyncSession(impersonate="chrome131", timeout=15) as s:
+            serper_resp = await s.post(
+                "https://google.serper.dev/search",
+                json={"q": query, "gl": "co", "hl": "es", "num": min(max_results * 2, 20)},
+                headers={"X-API-KEY": serper_key, "Content-Type": "application/json"},
+            )
+            serper_resp.raise_for_status()
+            serper_data = serper_resp.json()
+    except Exception as e:
+        logger.warning("[ML/Serper] search failed: %s", e)
+        return []
 
-        soup = BeautifulSoup(html, "html.parser")
+    listing_urls = [
+        r["link"] for r in serper_data.get("organic", [])
+        if "inmuebles.mercadolibre.com.co" in r.get("link", "")
+        and "/MLM-" in r.get("link", "") or "/MCO-" in r.get("link", "")
+    ][:min(max_results, 8)]
 
-        # ML embeds listing data in <script type="application/ld+json"> ItemList
-        for sc in soup.find_all("script", type="application/ld+json"):
+    if not listing_urls:
+        logger.info("[ML/Serper] no listing URLs from Serper")
+        return []
+
+    # Step 2: Scrape individual listing pages (SSR, have ld+json data)
+    sem = asyncio.Semaphore(3)
+
+    async def _scrape_listing(url: str) -> Optional[dict]:
+        async with sem:
             try:
-                data = json.loads(sc.string or "{}")
-                if data.get("@type") == "ItemList":
-                    for el in (data.get("itemListElement") or [])[:max_results]:
-                        item = el.get("item") or {}
-                        offer = (item.get("offers") or {})
-                        price = offer.get("price", 0)
-                        price_str = f"${price:,.0f} COP" if price else ""
-                        results.append({
-                            "title":        item.get("name", "Departamento en arriendo"),
-                            "url":          item.get("url", ""),
-                            "owner_name":   "",
-                            "owner_type":   "particular",   # ML skews toward particulares
-                            "is_particular": True,
-                            "price":        price_str,
-                            "price_amount": price,
-                            "neighborhood": "",
-                            "city":         ciudad.title(),
-                            "source":       "mercadolibre",
-                        })
-                    if results:
-                        break
-            except Exception:
-                continue
+                async with AsyncSession(impersonate="chrome131", timeout=12) as s:
+                    r = await s.get(url)
+                    if r.status_code != 200:
+                        return None
+                    soup = BeautifulSoup(r.text, "html.parser")
 
-        # Fallback: parse listing cards from HTML
-        if not results:
-            for card in soup.find_all(class_=re.compile(r"ui-search-result", re.I))[:max_results]:
-                title_el = card.find(class_=re.compile(r"title", re.I))
-                price_el = card.find(class_=re.compile(r"price", re.I))
-                link_el = card.find("a", href=True)
-                if not link_el:
-                    continue
-                results.append({
+                # Extract from ld+json Product schema
+                for sc in soup.find_all("script", type="application/ld+json"):
+                    try:
+                        d = json.loads(sc.string or "{}")
+                        if d.get("@type") in ("Product", "Offer", "RealEstateListing"):
+                            offer = d.get("offers") or {}
+                            price = offer.get("price", 0)
+                            seller = d.get("seller") or d.get("brand") or {}
+                            return {
+                                "title":        d.get("name", "Departamento en arriendo"),
+                                "url":          url,
+                                "owner_name":   seller.get("name", ""),
+                                "owner_type":   "particular",
+                                "is_particular": True,
+                                "price":        f"${float(price):,.0f} COP" if price else "",
+                                "price_amount": float(price) if price else 0,
+                                "neighborhood": "",
+                                "city":         ciudad.title(),
+                                "source":       "mercadolibre",
+                            }
+                    except Exception:
+                        continue
+
+                # Fallback: extract from page title + meta
+                title_el = soup.find("h1")
+                price_el = soup.find(class_=re.compile(r"price", re.I))
+                return {
                     "title":        title_el.get_text(strip=True) if title_el else "Departamento en arriendo",
-                    "url":          link_el["href"],
+                    "url":          url,
                     "owner_name":   "",
                     "owner_type":   "particular",
                     "is_particular": True,
@@ -118,12 +155,15 @@ async def _fetch_ml_listings(ciudad: str, max_results: int) -> list[dict]:
                     "neighborhood": "",
                     "city":         ciudad.title(),
                     "source":       "mercadolibre",
-                })
+                }
+            except Exception as e:
+                logger.debug("[ML] listing scrape failed %s: %s", url, e)
+                return None
 
-    except Exception as e:
-        logger.warning("[ML] scrape failed: %s", e)
+    scraped = await asyncio.gather(*[_scrape_listing(u) for u in listing_urls])
+    results = [r for r in scraped if r is not None][:max_results]
 
-    logger.info("[ML] ciudad=%r → %d listings", ciudad, len(results))
+    logger.info("[ML/Serper] ciudad=%r → %d listings from %d URLs", ciudad, len(results), len(listing_urls))
     return results
 
 
@@ -261,57 +301,13 @@ _MC_API = "https://www.metrocuadrado.com/rest-search/search"
 
 async def _fetch_metrocuadrado_listings(ciudad: str, max_results: int) -> list[dict]:
     """
-    Scrape Metro Cuadrado via curl_cffi.
-    Their REST API requires an API key; HTML scraping is the public path.
+    Metro Cuadrado — DISABLED.
+    REST API requires x-api-key (El Tiempo Group partner key).
+    HTML search results page is Next.js App Router with no SSR data (skeleton placeholders).
+    Re-enable when API key is available via partner agreement.
     """
-    try:
-        from curl_cffi.requests import AsyncSession
-        from bs4 import BeautifulSoup
-    except ImportError:
-        return []
-
-    ciudad_slug = (ciudad or "bogota").lower().replace(" ", "-")
-    url = f"https://www.metrocuadrado.com/arriendo/apartamentos/{ciudad_slug}/"
-    results: list[dict] = []
-
-    try:
-        async with AsyncSession(impersonate="chrome131", timeout=20) as s:
-            resp = await s.get(url)
-            if resp.status_code != 200:
-                logger.warning("[MC] HTTP %d", resp.status_code)
-                return []
-            html = resp.text
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Metro Cuadrado uses data-id or class patterns for listing cards
-        for card in soup.find_all(class_=re.compile(r"result-card|listing-card|property-card", re.I))[:max_results]:
-            title_el = card.find(class_=re.compile(r"title", re.I)) or card.find(["h2", "h3"])
-            price_el = card.find(class_=re.compile(r"price|valor", re.I))
-            link_el = card.find("a", href=True)
-            agency_el = card.find(class_=re.compile(r"agency|company|inmobiliaria", re.I))
-            if not link_el:
-                continue
-            href = link_el["href"]
-            full_url = f"https://www.metrocuadrado.com{href}" if href.startswith("/") else href
-            results.append({
-                "title":        title_el.get_text(strip=True) if title_el else "Inmueble en arriendo",
-                "url":          full_url,
-                "owner_name":   agency_el.get_text(strip=True) if agency_el else "",
-                "owner_type":   "inmobiliaria",
-                "is_particular": False,
-                "price":        price_el.get_text(strip=True) if price_el else "",
-                "price_amount": 0,
-                "neighborhood": "",
-                "city":         ciudad.title(),
-                "source":       "metrocuadrado",
-            })
-
-    except Exception as e:
-        logger.warning("[MC] scrape failed: %s", e)
-
-    logger.info("[MC] ciudad=%r → %d listings", ciudad, len(results))
-    return results
+    logger.debug("[MC] disabled — requires partner API key")
+    return []
 
 
 # ── Ciencuadras ───────────────────────────────────────────────────────────────
@@ -402,7 +398,8 @@ async def discover_arrendamiento(
 
     Returns list of dicts with unified schema + portal-specific context field.
     """
-    all_sources = sources or ["fincaraiz", "mercadolibre", "olx", "metrocuadrado", "ciencuadras"]
+    all_sources = sources or ["fincaraiz", "mercadolibre", "olx", "ciencuadras"]
+    # metrocuadrado excluded by default — requires partner API key
     per_source = max(5, int(max_results * _SOURCE_QUOTA))
 
     tasks = {}
