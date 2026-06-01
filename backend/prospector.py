@@ -872,6 +872,11 @@ async def discover_companies(
     """
     from urllib.parse import urlparse
 
+    from vertical_arrendamiento import is_arrendamiento_vertical
+    _is_arrendamiento = is_arrendamiento_vertical(industria)
+    if _is_arrendamiento:
+        logger.info("[Discovery] Arrendamiento vertical detected — will aggregate rental portals")
+
     seen_domains: set[str] = set()
     excluded_domains = {d.lower().strip() for d in (excluded_domains or set()) if d}
     merged: list[dict] = []
@@ -1058,8 +1063,9 @@ async def discover_companies(
         add_secop(rues_resolved[:max_results])
         logger.info("[Discovery] RUES: %d raw → %d resueltas → %d total", len(rues_raw), len(rues_resolved), len(merged))
 
-    # Fincaraíz source: rental property listings — always runs if selected
-    if use_fincaraiz:
+    # Fincaraíz source: legacy flag kept for backwards compat —
+    # when arrendamiento vertical auto-activates it's handled below.
+    if use_fincaraiz and not _is_arrendamiento:
         from fincaraiz_signal import discover_via_fincaraiz
         fincaraiz_results = await discover_via_fincaraiz(
             ciudad=ciudad,
@@ -1068,7 +1074,26 @@ async def discover_companies(
             max_results=max_results,
         )
         add_signal(fincaraiz_results)
-        logger.info("[Discovery] Fincaraíz: %d listings → %d total", len(fincaraiz_results), len(merged))
+        logger.info("[Discovery] Fincaraíz (flag): %d listings → %d total", len(fincaraiz_results), len(merged))
+
+    # ── Arrendamiento vertical — auto-activates from industria keyword ────────
+    # Aggregates Fincaraíz + Mercado Libre + OLX + Metro Cuadrado + Ciencuadras.
+    # Never activates for other verticals (desempleo, empresarial, etc.).
+    if _is_arrendamiento:
+        from vertical_arrendamiento import discover_arrendamiento
+        needed = max_results - len(merged)
+        if needed > 0:
+            arr_results = await discover_arrendamiento(
+                ciudad=ciudad,
+                max_results=needed,
+                include_particulares=True,
+                include_inmobiliarias=True,
+            )
+            add_signal(arr_results)
+            logger.info(
+                "[Discovery] Arrendamiento vertical: %d results → %d total",
+                len(arr_results), len(merged),
+            )
 
     return merged
 

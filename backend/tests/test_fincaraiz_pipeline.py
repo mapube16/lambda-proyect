@@ -136,3 +136,58 @@ async def test_discover_companies_serper_plus_fincaraiz():
     sources = {r.get("source", "unknown") for r in results}
     print(f"  OK Sources present: {sources}")
     assert len(results) > 0
+
+
+# ── Stage 7: vertical_arrendamiento aggregator ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_arrendamiento_keyword_detection():
+    """Stage 7a — is_arrendamiento_vertical() detects correct keywords."""
+    from vertical_arrendamiento import is_arrendamiento_vertical
+    assert is_arrendamiento_vertical("arrendamiento") is True
+    assert is_arrendamiento_vertical("inmobiliarias Bogota") is True
+    assert is_arrendamiento_vertical("propietarios con arriendo") is True
+    assert is_arrendamiento_vertical("desempleo empresas medianas") is False
+    assert is_arrendamiento_vertical("software tecnologia") is False
+    print("\n  OK keyword detection working correctly")
+
+
+@pytest.mark.asyncio
+async def test_arrendamiento_aggregator_multi_source():
+    """Stage 7b — discover_arrendamiento() returns results from multiple portals."""
+    from vertical_arrendamiento import discover_arrendamiento
+    results = await discover_arrendamiento(ciudad="bogota", max_results=15)
+    print(f"\n  OK Aggregator total: {len(results)} results")
+    assert len(results) > 0, "Aggregator returned 0 results"
+
+    sources = {}
+    particulares = 0
+    for r in results:
+        src = r.get("source", "unknown")
+        sources[src] = sources.get(src, 0) + 1
+        if r.get("is_particular"):
+            particulares += 1
+
+    for src, count in sources.items():
+        print(f"    {src}: {count} listings")
+    print(f"    Particulares: {particulares} / {len(results)}")
+
+    assert len(sources) >= 1, "Expected results from at least 1 source"
+
+
+@pytest.mark.asyncio
+async def test_arrendamiento_auto_activates_in_pipeline():
+    """Stage 7c — discover_companies() auto-activates vertical on 'arrendamiento' keyword."""
+    from prospector import discover_companies
+    results = await discover_companies(
+        industria="arrendamiento",
+        ciudad="bogota",
+        max_results=10,
+        source_priority="signal_only",
+    )
+    print(f"\n  OK pipeline auto-vertical: {len(results)} results")
+    assert len(results) > 0, "Pipeline did not activate arrendamiento vertical"
+    sources = {r.get("source") for r in results}
+    print(f"  OK sources: {sources}")
+    rental_sources = {"fincaraiz", "mercadolibre", "olx", "metrocuadrado", "ciencuadras"}
+    assert sources & rental_sources, f"No rental portal sources in results: {sources}"
