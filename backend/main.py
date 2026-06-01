@@ -27,7 +27,7 @@ from security_headers import SecurityHeadersMiddleware
 from landa.scheduler import start_scheduler, shutdown_scheduler
 import state
 
-from routers import auth, leads, prospect, staff, onboarding, knowledge, whatsapp, secop, agents_legacy, misc
+from routers import auth, leads, prospect, staff, onboarding, knowledge, whatsapp, secop, agents_legacy, misc, landa
 
 
 @asynccontextmanager
@@ -130,6 +130,7 @@ app.include_router(knowledge.router)
 app.include_router(whatsapp.router)
 app.include_router(secop.router)
 app.include_router(agents_legacy.router)
+app.include_router(landa.router)
 
 
 # ── Cobranza (separate product) ───────────────────────────────────────────────
