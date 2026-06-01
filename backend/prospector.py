@@ -896,6 +896,24 @@ async def discover_companies(
                 seen_domains.add(domain)
                 merged.append(item)
 
+    def add_signal(items: list[dict]):
+        """Add curated signal-source results (Fincaraíz, RUES resolved).
+        Skips the low-quality/directory filter — these are known, curated sources."""
+        for item in items:
+            if len(merged) >= max_results:
+                return
+            url = item.get("url", "")
+            domain = urlparse(url).netloc.replace("www.", "")
+            # Still exclude explicitly blacklisted tenant domains
+            if domain and domain in excluded_domains:
+                continue
+            if domain and domain not in seen_domains:
+                seen_domains.add(domain)
+                merged.append(item)
+            elif not domain:
+                # No domain yet (URL will be resolved later) — still add
+                merged.append(item)
+
     def add_secop(items: list[dict]):
         """Add SECOP companies (may not have URLs yet — kept as-is for URL resolution step)."""
         nonlocal skipped_history
@@ -1000,8 +1018,8 @@ async def discover_companies(
             "[Discovery] Sources=%s Results=%s enriched=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
             sources_str, discovery_results, enriched_count, len(merged), skipped_history, skipped_low_quality
         )
-    else:
-        # No Serper key — try Bing + DDG (may be blocked in cloud environments)
+    elif source_priority != "signal_only":
+        # No Serper key and not signal-only — try Bing + DDG fallback
         logger.warning("[Discovery] SERPER_API_KEY not set — falling back to Bing/DDG (may fail in prod)")
         bing_task = discover_companies_bing(industria, ciudad, per_source)
         ddg_task = loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, per_source)
@@ -1049,7 +1067,7 @@ async def discover_companies(
             only_particular=fincaraiz_only_particular,
             max_results=max_results,
         )
-        add(fincaraiz_results)
+        add_signal(fincaraiz_results)
         logger.info("[Discovery] Fincaraíz: %d listings → %d total", len(fincaraiz_results), len(merged))
 
     return merged
