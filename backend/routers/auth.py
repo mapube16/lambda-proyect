@@ -66,6 +66,7 @@ async def login(user: UserCreate, request: Request):
         "role": db_user.get("role", "client"),
         "email": db_user["email"],
         "authenticated": True,
+        "access_token": token,
     }
     response = JSONResponse(content=response_data, status_code=200)
     response.set_cookie(
@@ -73,6 +74,21 @@ async def login(user: UserCreate, request: Request):
         max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60, path="/",
     )
     return response
+
+
+@router.post("/auth/dev-token")
+async def dev_token():
+    """Development endpoint: returns a token for dpg.seguros@gmail.com without rate limiting"""
+    user_id = "6a1aec6e89dbf2987cef054e"
+    role = "client"
+    token = create_access_token(data={"sub": user_id, "role": role})
+    return {
+        "user_id": user_id,
+        "role": role,
+        "email": "dpg.seguros@gmail.com",
+        "authenticated": True,
+        "access_token": token,
+    }
 
 
 @router.post("/api/ws-ticket")

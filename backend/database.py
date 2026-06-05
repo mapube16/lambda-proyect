@@ -520,11 +520,12 @@ async def get_runs_by_user(user_id: str) -> list:
 
 # ── Leads ─────────────────────────────────────────────────────────────────────
 
-async def save_lead(run_id: str, user_id: str, lead_data: dict) -> str:
+async def save_lead(run_id: str, user_id: str, lead_data: dict, campaign_id: str = None) -> str:
     db = get_db()
     result = await db.leads.insert_one({
         "run_id": run_id,
         "user_id": user_id,
+        "campaign_id": campaign_id,
         "company_name": lead_data.get("company_name", ""),
         "url": lead_data.get("url", ""),
         "phone": lead_data.get("phone", ""),

@@ -8,6 +8,9 @@ import asyncio
 import logging
 import os
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import database
 from arq_pool import redis_settings_from_url
 from hive_adapter import HiveAdapter
@@ -20,6 +23,7 @@ async def run_prospecting_job(
     ctx: dict,
     run_id: str,
     user_id: str,
+    campaign_id: str,
     campaign: dict,
     max_results: int,
     personality_prompt: str,
@@ -35,6 +39,10 @@ async def run_prospecting_job(
 
     adapter = HiveAdapter(send_to_user_callback=noop_event)
     try:
+        # Wrap save_lead to include campaign_id from the job parameter
+        async def save_lead_with_campaign(run_id: str, user_id: str, lead_data: dict) -> str:
+            return await database.save_lead(run_id, user_id, lead_data, campaign_id)
+
         await adapter.start_run(
             user_id=user_id,
             inputs={
@@ -46,7 +54,7 @@ async def run_prospecting_job(
                 "source_priority": source_priority,
             },
             run_id=run_id,
-            save_lead=database.save_lead,
+            save_lead=save_lead_with_campaign,
         )
         task = adapter._runs.get(user_id)
         if isinstance(task, asyncio.Task):
