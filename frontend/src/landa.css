@@ -135,3 +135,4 @@ html, body { margin: 0; padding: 0; }
 
 .lc .row-enter { animation: lc-fade .3s ease both; }
 @keyframes lc-fade { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes lc-spin { to { transform: rotate(360deg); } }

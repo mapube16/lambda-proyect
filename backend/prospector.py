@@ -147,6 +147,11 @@ LOW_QUALITY_DISCOVERY_DOMAINS = {
     "glassdoor.com",
     "g2.com",
     "capterra.com",
+    # Document / slide hosting (not companies — added Phase 25)
+    "scribd.com", "es.scribd.com", "slideshare.net", "es.slideshare.net",
+    "issuu.com", "prezi.com", "medium.com", "studocu.com", "coursehero.com",
+    "academia.edu", "docplayer.es", "docplayer.net", "calameo.com",
+    "slideplayer.es", "yumpu.com",
 }
 
 LOW_QUALITY_DOMAIN_SUFFIXES = (
@@ -199,6 +204,13 @@ def _is_low_quality_candidate(url: str, title: str = "") -> bool:
         "las mejores", "los mejores", "top 10", "top 5", "más prometedoras",
         "informe top", "ecosistema startup", "mejores startups",
     )):
+        return True
+    # PDF / documentos / slides — no son sitios de empresa
+    if path.endswith((".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx")):
+        return True
+    if any(seg in path for seg in ("/document/", "/documents/", "/presentation/", "/file/d/", "/slides/")):
+        return True
+    if " | pdf" in title_l or title_l.endswith(" pdf") or "scribd" in title_l:
         return True
     return False
 
@@ -872,10 +884,12 @@ async def discover_companies(
     """
     from urllib.parse import urlparse
 
-    from vertical_arrendamiento import is_arrendamiento_vertical
-    _is_arrendamiento = is_arrendamiento_vertical(industria)
-    if _is_arrendamiento:
-        logger.info("[Discovery] Arrendamiento vertical detected — will aggregate rental portals")
+    # Agregador de portales (Fincaraíz/OLX/ML/…) DESHABILITADO para lead-gen:
+    # solo devuelve anuncios anónimos sin contacto del dueño. El vertical de
+    # arrendamiento ahora apunta a INMOBILIARIAS (empresas contactables) vía web.
+    # El código del agregador se conserva en vertical_arrendamiento.py por si se
+    # usa luego como señal de volumen para rankear inmobiliarias.
+    _is_arrendamiento = False
 
     seen_domains: set[str] = set()
     excluded_domains = {d.lower().strip() for d in (excluded_domains or set()) if d}
@@ -1533,16 +1547,6 @@ def _enrich_rejection_payload(result_json: dict, analysis: dict, company: dict) 
 
 # ── Multi-agent analysis pipeline ─────────────────────────────────────────────
 
-async def analyze_company(
-    company: dict,
-    campaign: dict,
-    client: AsyncOpenAI,
-    on_stage: callable = None,   # async callback(stage: str, status: str)
-    personality_prompt: str = "",  # client-specific analyst prompt (from Queen onboarding)
-) -> dict:
-    """
-
-
 def _append_signal_context(prompt: str, signals: list[dict] | None) -> str:
     if not signals:
         return prompt
@@ -1563,6 +1567,16 @@ def _append_signal_context(prompt: str, signals: list[dict] | None) -> str:
         else:
             lines.append(f"- {sig_type or 'señal'}: {value}")
     return prompt + "\n" + "\n".join(lines)
+
+
+async def analyze_company(
+    company: dict,
+    campaign: dict,
+    client: AsyncOpenAI,
+    on_stage: callable = None,   # async callback(stage: str, status: str)
+    personality_prompt: str = "",  # client-specific analyst prompt (from Queen onboarding)
+) -> dict:
+    """
     3-stage multi-agent pipeline per company:
       Stage 1 (Scraper)      — fetch + clean HTML
       Stage 2 (Analista B2B) — LLM analyzes company profile

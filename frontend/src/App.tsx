@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './landa.css';
 import * as api from './api';
+import { CobranzaTab } from './components/CobranzaTab';
 
 // ============ ICON COMPONENT ============
 function Icon({ name, size = 18, stroke = 1.5 }: any) {
@@ -29,6 +30,7 @@ function Icon({ name, size = 18, stroke = 1.5 }: any) {
     globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8',
     building: 'M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21',
     home2: 'M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25',
+    phone: 'M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25z',
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">
@@ -87,56 +89,67 @@ const EMPTY_KPIS = [
 
 // ============ VIEWS ============
 
-function ViewInicio({ campaignId }: any) {
-  const [running, setRunning] = useState(true);
+function ViewInicio({ campaignId, onNavigate }: any) {
   const [kpis, setKpis] = useState(EMPTY_KPIS);
-  const AGENT_TASKS = {
-    buscador: ['Buscando en Bogotá...', 'Rastreando SECOP II...', 'Explorando Medellín...', 'Consultando directorios...'],
-    scraper: ['Leyendo web de empresa...', 'Extrayendo contactos...', 'Analizando descripción...', 'Verificando flota...'],
-    analista: ['Evaluando activos físicos...', 'Calculando score...', 'Verificando decisor...', 'Aplicando scoring B2B...'],
-    redactor: ['Personalizando apertura...', 'Ajustando tono...', 'Finalizando ≤80 palabras...', 'Redactando correo...'],
-  };
-  const [agentStates, setAgentStates] = useState([
-    { role: 'buscador', task: 'Buscando en Bogotá...', count: 38 },
-    { role: 'scraper', task: 'Leyendo web de empresa...', count: 24 },
-    { role: 'analista', task: 'Evaluando activos físicos...', count: 12 },
-    { role: 'redactor', task: 'Personalizando apertura...', count: 8 },
-  ]);
+  const [raw, setRaw] = useState<any>(null);
+  const [recent, setRecent] = useState<any[]>([]);
+  const [running, setRunning] = useState(false);
 
   useEffect(() => {
+    if (!api.getToken() || !campaignId) return;
+    let alive = true;
     (async () => {
       try {
-        if (!api.getToken() || !campaignId) return;
         const data = await api.getKPIs(campaignId);
-        if (data.kpis) setKpis(data.kpis);
-      } catch (err) {
-        console.log('Failed to load KPIs:', err);
-      }
+        if (alive) { if (data.kpis) setKpis(data.kpis); setRaw(data.raw || null); }
+      } catch (err) { console.log('Failed to load KPIs:', err); }
+      try {
+        const d = await api.getLeads(campaignId, 8, 0);
+        if (alive) setRecent((d.leads || []));
+      } catch {}
+      try {
+        const r = await api.getCampaignRuns(campaignId);
+        const list = (r.runs || r || []) as any[];
+        if (alive) setRunning(list.some((x: any) => x.status === 'queued' || x.status === 'running'));
+      } catch {}
     })();
+    return () => { alive = false; };
   }, [campaignId]);
 
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => {
-      setAgentStates(prev => prev.map((a: any) => {
-        const tasks = (AGENT_TASKS as any)[a.role];
-        return { ...a, task: tasks[Math.floor(Math.random() * tasks.length)] };
-      }));
-    }, 2400);
-    return () => clearInterval(id);
-  }, [running]);
+  // Conteos reales (acumulados) derivados de KPIs. No es un ticker en vivo falso.
+  const totalLeads = raw?.leads_qualified ?? 0;
+  const approved = raw?.leads_approved ?? 0;
+  const rejected = raw?.leads_rejected ?? 0;
+  const sent = raw?.leads_sent ?? 0;
+  const pending = Math.max(0, totalLeads - approved - rejected);
+  const stageCounts: Record<string, number> = {
+    buscador: totalLeads,
+    scraper: totalLeads,
+    analista: approved + rejected,
+    redactor: approved,
+  };
+  const agentStates = [
+    { role: 'buscador', count: stageCounts.buscador },
+    { role: 'scraper', count: stageCounts.scraper },
+    { role: 'analista', count: stageCounts.analista },
+    { role: 'redactor', count: stageCounts.redactor },
+  ];
 
   return (
     <div style={{ padding: '24px 28px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
-          <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6 }}>Buenos días, DPG Seguros</h1>
-          <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>Tu equipo encontró <strong style={{ color: 'var(--ink)' }}>8 leads nuevos</strong> para revisar hoy.</p>
+          <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6, textTransform: 'capitalize' }}>Buenos días{(() => { const n = (api.getCachedUser()?.email || '').split('@')[0].replace(/[._-]/g, ' ').trim(); return n ? ', ' + n : ''; })()}</h1>
+          <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>
+            {!campaignId ? 'Selecciona o lanza una campaña para ver tu actividad.'
+              : pending > 0 ? <>Tienes <strong style={{ color: 'var(--ink)' }}>{pending} lead{pending === 1 ? '' : 's'}</strong> pendiente{pending === 1 ? '' : 's'} de revisar.</>
+              : <>Sin leads pendientes por ahora.</>}
+          </p>
         </div>
-        <button className={'btn ' + (running ? 'btn-soft' : 'btn-primary')} onClick={() => setRunning(r => !r)} style={{ fontFamily: 'inherit' }}>
-          <Icon name={running ? 'pause' : 'play'} size={15} />
-          {running ? 'Pausar campaña' : 'Reanudar campaña'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: running ? 'var(--green)' : 'var(--text-faint)' }}>
+          {running && <span className="live" style={{ width: 9, height: 9, borderRadius: '50%', background: 'var(--green)', color: 'var(--green)' }} />}
+          {running ? 'Campaña corriendo' : 'Sin corrida activa'}
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16 }}>
@@ -172,20 +185,22 @@ function ViewInicio({ campaignId }: any) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 22px 1fr 22px 1fr 22px 1fr', alignItems: 'stretch', gap: 0 }}>
           {agentStates.map((a: any, i: any) => {
             const r = (ROLES as any)[a.role];
-            const progPct = [72, 58, 44, 30][i];
+            const maxCount = Math.max(agentStates[0].count, 1);
+            const progPct = Math.round((a.count / maxCount) * 100);
+            const has = a.count > 0;
             return (
               <React.Fragment key={a.role}>
-                <div style={{ borderRadius: 14, border: '1.5px solid ' + (running ? r.color + '44' : 'var(--border)'), background: running ? r.soft : 'var(--surface-2)', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ borderRadius: 14, border: '1.5px solid ' + (has ? r.color + '44' : 'var(--border)'), background: has ? r.soft : 'var(--surface-2)', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <AgentAvatar role={a.role} size={36} live={running} />
-                    <span style={{ fontSize: 22, fontWeight: 800, color: running ? r.color : 'var(--text-faint)' }}>{a.count}</span>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: has ? r.color : 'var(--text-faint)' }}>{a.count}</span>
                   </div>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--ink)', marginBottom: 3 }}>{r.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.4, minHeight: 30 }}>{running ? a.task : r.job}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.4, minHeight: 30 }}>{r.job}</div>
                   </div>
                   <div style={{ height: 5, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', borderRadius: 999, background: running ? r.color : 'var(--border-2)', width: (running ? progPct : 0) + '%' }} />
+                    <div style={{ height: '100%', borderRadius: 999, background: has ? r.color : 'var(--border-2)', width: progPct + '%' }} />
                   </div>
                 </div>
                 {i < 3 && (
@@ -203,36 +218,39 @@ function ViewInicio({ campaignId }: any) {
         <div className="card" style={{ padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <h3 style={{ fontSize: 16, margin: 0 }}>Listos para revisar</h3>
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: 'var(--primary)', borderRadius: 999, padding: '3px 9px' }}>8 nuevos</span>
+            {pending > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: 'var(--primary)', borderRadius: 999, padding: '3px 9px' }}>{pending} nuevos</span>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {campaignId ? (
-              <>
-                <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>Cargando leads de la campaña...</p>
-                <button className="btn btn-soft" style={{ justifyContent: 'center', marginTop: 4, fontSize: 13, fontFamily: 'inherit' }}>Ver todos los leads →</button>
-              </>
-            ) : (
+            {!campaignId ? (
               <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>Selecciona una campaña para ver leads</p>
+            ) : totalLeads === 0 ? (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>Aún no hay leads. Lanza una corrida.</p>
+            ) : (
+              <>
+                <div style={{ fontSize: 13.5, color: 'var(--text)' }}>{approved} aprobados · {pending} pendientes · {sent} enviados</div>
+                <button className="btn btn-soft" style={{ justifyContent: 'center', marginTop: 4, fontSize: 13, fontFamily: 'inherit' }} onClick={() => onNavigate && onNavigate('aprobados')}>Ver todos los leads →</button>
+              </>
             )}
           </div>
         </div>
         <div className="card" style={{ padding: 20 }}>
-          <h3 style={{ fontSize: 16, margin: 0, marginBottom: 14 }}>Actividad reciente</h3>
+          <h3 style={{ fontSize: 16, margin: 0, marginBottom: 14 }}>Leads recientes</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {[
-              { id: 1, text: 'Constructora Vértice — Score 91 · Aprobada', time: 'hace 1 min', color: 'var(--green)' },
-              { id: 2, text: 'Ferretería Los Alpes — Score 52 · Descartada', time: 'hace 3 min', color: 'var(--red)' },
-              { id: 3, text: 'Correo listo para Transportes Andina', time: 'hace 5 min', color: 'var(--primary)' },
-              { id: 4, text: 'Manufacturas Lumen — Score 82 · Aprobada', time: 'hace 7 min', color: 'var(--green)' },
-            ].map((f) => (
-              <div key={f.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                <div style={{ width: 9, height: 9, borderRadius: '50%', background: f.color, flex: 'none', marginTop: 5 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.4 }}>{f.text}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>{f.time}</div>
+            {recent.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--text-faint)' }}>Sin actividad todavía.</p>
+            ) : recent.slice(0, 5).map((l: any) => {
+              const ok = l.status === 'opened' || l.status === 'approved';
+              const color = ok ? 'var(--green)' : l.status === 'pending' ? 'var(--amber)' : 'var(--text-faint)';
+              return (
+                <div key={l.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ width: 9, height: 9, borderRadius: '50%', background: color, flex: 'none', marginTop: 5 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.name || 'Empresa'}{l.score ? ` — Score ${l.score}` : ''}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>{l.ciudad || l.sector || '—'}</div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -247,9 +265,9 @@ const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena
 // (use_rues / use_secop / use_fincaraiz) that hive_tools reads from the campaign doc.
 const PIPELINE_TEMPLATES = [
   { id: 'scraping',  icon: 'globe',    title: 'Scraping de empresas',     desc: 'Búsqueda web abierta de empresas en cualquier sector y ciudad.',         flags: { source_priority: 'serper' }, tag: 'Web' },
-  { id: 'arriendos', icon: 'home2',    title: 'Búsqueda de arriendos',    desc: 'Propietarios con inmuebles en arriendo activo (Fincaraíz).',             flags: { use_fincaraiz: true },       tag: 'Fincaraíz' },
-  { id: 'secop',     icon: 'list',     title: 'Pólizas de cumplimiento',  desc: 'Contratistas del Estado con contratos adjudicados (SECOP).',             flags: { use_secop: true },           tag: 'SECOP' },
-  { id: 'rues',      icon: 'building', title: 'Empresas recién creadas',  desc: 'Compañías registradas recientemente en Cámara de Comercio (RUES).',      flags: { use_rues: true },            tag: 'RUES' },
+  { id: 'arriendos', icon: 'home2',    title: 'Seguro de arrendamiento',  desc: 'Inmobiliarias que administran arriendos (empresas contactables, no anuncios).', flags: { source_priority: 'serper' }, tag: 'Inmobiliarias' },
+  { id: 'secop',     icon: 'list',     title: 'Pólizas de cumplimiento',  desc: 'Todas las empresas que se presentan a procesos públicos (SECOP), de cualquier sector y ciudad.', flags: { use_secop: true, source_priority: 'secop' }, tag: 'SECOP' },
+  { id: 'rues',      icon: 'building', title: 'Empresas recién creadas',  desc: 'Compañías registradas recientemente en Cámara de Comercio (RUES).',      flags: { use_rues: true, source_priority: 'rues' }, tag: 'RUES' },
 ];
 
 const WIZARD_STEPS = [
@@ -262,7 +280,7 @@ const WIZARD_STEPS = [
   { title: 'Resumen y lanzamiento', subtitle: 'Revisa todo y lanza tu campaña.' },
 ];
 
-function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard }: any) {
+function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched }: any) {
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -313,11 +331,13 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard }: any) {
     })();
   }, [reloadKey]);
 
+  // SECOP trae empresas de TODOS los sectores y ciudades → no exige esos filtros.
+  const ignoresSectorCity = form.pipeline === 'secop';
   const canAdvance = () => {
     if (step === 0) return form.pipeline.length > 0;
     if (step === 1) return form.name.trim().length > 0;
-    if (step === 2) return form.sector.length > 0;
-    if (step === 3) return form.cities.length > 0;
+    if (step === 2) return ignoresSectorCity || form.sector.length > 0;
+    if (step === 3) return ignoresSectorCity || form.cities.length > 0;
     return true;
   };
 
@@ -331,11 +351,15 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard }: any) {
     try {
       const tmpl = PIPELINE_TEMPLATES.find(t => t.id === form.pipeline);
       const flags = (tmpl?.flags || {}) as any;
+      // Vertical arrendamiento → apunta a INMOBILIARIAS (empresas contactables), no anuncios.
+      const isArr = form.pipeline === 'arriendos';
+      const sectors = isArr ? ['inmobiliarias administradoras de arriendo'] : (form.sector ? [form.sector] : []);
       const created = await api.createCampaign({
         name: form.name,
-        sectors: form.sector ? [form.sector] : [],
+        sectors,
+        industria_objetivo: isArr ? 'inmobiliarias administradoras de arriendo' : (form.sector || ''),
         cities: form.cities,
-        icp_description: form.targetProfile,
+        icp_description: isArr ? 'Inmobiliarias que administran arriendos — prospecto para alianza de seguro de arrendamiento.' : form.targetProfile,
         // Signal-source flags — consumed by hive_tools.discover_companies
         use_rues: !!flags.use_rues,
         use_secop: !!flags.use_secop,
@@ -345,13 +369,14 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard }: any) {
       });
       const newId = created.campaign_id || created.id;
       try {
-        await api.launchCampaign(newId);
+        const launch = await api.launchCampaign(newId);
+        if (launch?.run_id) onLaunched && onLaunched({ runId: launch.run_id, campaignId: newId, campaignName: form.name });
       } catch (e: any) {
         console.warn('launch failed:', e.message);
+        alert('La campaña se creó, pero no se pudo lanzar: ' + (e.message || ''));
       }
       setShowWizard(false);
       setReloadKey(k => k + 1);
-      if (newId) onSelectCampaign && onSelectCampaign(newId);
     } catch (err: any) {
       alert('Error al crear la campaña: ' + err.message);
     } finally {
@@ -467,19 +492,31 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard }: any) {
               )}
 
               {step === 2 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {SECTOR_OPTIONS.map((s) => (
-                    <button key={s} onClick={() => setForm({ ...form, sector: s })} className="btn btn-ghost" style={{ justifyContent: 'flex-start', background: form.sector === s ? 'var(--primary-soft)' : 'var(--surface-2)', color: form.sector === s ? 'var(--primary-700)' : 'var(--text)', border: form.sector === s ? '1px solid var(--primary)' : '1px solid var(--border-2)', padding: '12px 14px' }}>{s}</button>
-                  ))}
-                </div>
+                ignoresSectorCity ? (
+                  <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--primary-softer)', border: '1px solid var(--primary-soft)', fontSize: 13.5, color: 'var(--text)' }}>
+                    SECOP trae <strong>todas las empresas que se presentan a procesos públicos</strong>, sin importar su sector. Este filtro no aplica — puedes continuar.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {SECTOR_OPTIONS.map((s) => (
+                      <button key={s} onClick={() => setForm({ ...form, sector: s })} className="btn btn-ghost" style={{ justifyContent: 'flex-start', background: form.sector === s ? 'var(--primary-soft)' : 'var(--surface-2)', color: form.sector === s ? 'var(--primary-700)' : 'var(--text)', border: form.sector === s ? '1px solid var(--primary)' : '1px solid var(--border-2)', padding: '12px 14px' }}>{s}</button>
+                    ))}
+                  </div>
+                )
               )}
 
               {step === 3 && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  {CITY_OPTIONS.map((c) => (
-                    <button key={c} onClick={() => setForm({ ...form, cities: form.cities.includes(c) ? form.cities.filter(x => x !== c) : [...form.cities, c] })} className="btn btn-ghost" style={{ justifyContent: 'flex-start', background: form.cities.includes(c) ? 'var(--primary-soft)' : 'var(--surface-2)', color: form.cities.includes(c) ? 'var(--primary-700)' : 'var(--text)', border: form.cities.includes(c) ? '1px solid var(--primary)' : '1px solid var(--border-2)', padding: '10px 12px', fontSize: 13 }}>{c}</button>
-                  ))}
-                </div>
+                ignoresSectorCity ? (
+                  <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--primary-softer)', border: '1px solid var(--primary-soft)', fontSize: 13.5, color: 'var(--text)' }}>
+                    Aplica a <strong>todas las ciudades</strong> — cualquier empresa presentándose a un proceso necesita su póliza de cumplimiento.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {CITY_OPTIONS.map((c) => (
+                      <button key={c} onClick={() => setForm({ ...form, cities: form.cities.includes(c) ? form.cities.filter(x => x !== c) : [...form.cities, c] })} className="btn btn-ghost" style={{ justifyContent: 'flex-start', background: form.cities.includes(c) ? 'var(--primary-soft)' : 'var(--surface-2)', color: form.cities.includes(c) ? 'var(--primary-700)' : 'var(--text)', border: form.cities.includes(c) ? '1px solid var(--primary)' : '1px solid var(--border-2)', padding: '10px 12px', fontSize: 13 }}>{c}</button>
+                    ))}
+                  </div>
+                )
               )}
 
               {step === 4 && (
@@ -527,13 +564,30 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard }: any) {
   );
 }
 
-function ViewAprobados({ campaignId }: any) {
+function ViewAprobados({ campaignId, onNavigate }: any) {
   const [leads, setLeads] = useState<any[]>([]);
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const onChanged = () => setReloadKey(k => k + 1);
+
+  const [emailConnected, setEmailConnected] = useState<boolean | null>(null);
+  const [compose, setCompose] = useState({ subject: '', body: '' });
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    api.getEmailStatus().then(s => setEmailConnected(!!s.connected)).catch(() => setEmailConnected(false));
+  }, []);
+
+  // Prefill el borrador editable al abrir un lead.
+  useEffect(() => {
+    if (!selectedLead) return;
+    setCompose({
+      subject: `Propuesta para ${selectedLead.name}`,
+      body: `Hola ${selectedLead.decisor || ''},\n\nTe escribo de parte de nuestro equipo. Creemos que podemos ayudar a ${selectedLead.name} con una propuesta a la medida.\n\n¿Tendrías 15 minutos esta semana para conversarlo?\n\nSaludos,`,
+    });
+  }, [selectedLead]);
 
   useEffect(() => {
     (async () => {
@@ -556,83 +610,88 @@ function ViewAprobados({ campaignId }: any) {
     })();
   }, [campaignId, reloadKey]);
 
+  const qualified = leads.filter((l: any) => l.qualified);
+  const descartados = leads.filter((l: any) => !l.qualified);
+  const sentCount = leads.filter((l: any) => l.status === 'opened' || l.status === 'sent').length;
+  const withContact = qualified.filter((l: any) => l.email || l.phone).length;
+  const scoreColor = (s: number) => s >= 75 ? 'var(--green)' : s >= 50 ? 'var(--amber)' : 'var(--text-faint)';
+
   return (
     <div style={{ padding: '24px 28px', height: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
-        <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6 }}>Aprobados para enviar</h1>
-        <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>{leads.length} leads listos. {leads.filter(l => l.opens > 0).length} abiertos, {leads.filter(l => l.replies > 0).length} respondieron.</p>
+        <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6 }}>Leads para revisar</h1>
+        <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>{qualified.length} calificados por la IA · {withContact} con contacto · {descartados.length} descartados.</p>
       </div>
 
       {error && <div style={{ padding: 20, background: 'var(--red-soft)', color: 'var(--red)', borderRadius: 10, textAlign: 'center' }}>{error}</div>}
       {loading && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Cargando leads...</div>}
-
-      {!error && !loading && leads.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>No hay leads en esta campaña.</div>}
+      {!error && !loading && leads.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>No hay leads en esta campaña. Lanza una corrida.</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
-        <div className="card" style={{ padding: 16 }}>
-          <div className="label" style={{ marginBottom: 8 }}>Enviados</div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--primary)' }}>{leads.length}</div>
-        </div>
-        <div className="card" style={{ padding: 16 }}>
-          <div className="label" style={{ marginBottom: 8 }}>Abiertos</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--green)' }}>{leads.filter(l => l.opens > 0).length}</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--green)' }}>100%</div>
+        {[
+          { label: 'Calificados', value: qualified.length, color: 'var(--primary)' },
+          { label: 'Con contacto', value: withContact, color: 'var(--green)' },
+          { label: 'Enviados', value: sentCount, color: 'var(--r-scraper)' },
+          { label: 'Descartados', value: descartados.length, color: 'var(--text-faint)' },
+        ].map((k) => (
+          <div key={k.label} className="card" style={{ padding: 16 }}>
+            <div className="label" style={{ marginBottom: 8 }}>{k.label}</div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: k.color }}>{k.value}</div>
           </div>
-        </div>
-        <div className="card" style={{ padding: 16 }}>
-          <div className="label" style={{ marginBottom: 8 }}>Click-Through</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--amber)' }}>{leads.filter(l => l.clicks > 0).length}</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--amber)' }}>50%</div>
-          </div>
-        </div>
-        <div className="card" style={{ padding: 16 }}>
-          <div className="label" style={{ marginBottom: 8 }}>Respuestas</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--r-analista)' }}>{leads.filter(l => l.replies > 0).length}</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--r-analista)' }}>20%</div>
-          </div>
-        </div>
+        ))}
       </div>
 
-      <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 0.8fr 0.9fr 1fr', gap: 12, padding: '10px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-          {['Empresa', 'Decisor', 'Enviado', 'Aperturas', 'Clicks', 'Estado'].map((h, i) => <span key={i} className="label" style={{ fontSize: 10.5 }}>{h}</span>)}
+      {/* Calificados — accionables, ordenados por score (backend) */}
+      <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 200 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '54px 2fr 1.4fr 1.4fr 1fr', gap: 12, padding: '10px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+          {['Score', 'Empresa', 'Decisor', 'Contacto', 'Estado'].map((h, i) => <span key={i} className="label" style={{ fontSize: 10.5 }}>{h}</span>)}
         </div>
-
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {leads.map((l) => (
-            <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 0.8fr 0.9fr 1fr', gap: 12, padding: '14px 20px', borderBottom: '1px solid var(--border)', alignItems: 'center', cursor: 'pointer' }} onClick={() => setSelectedLead(l)}>
+          {qualified.length === 0 && !loading && (
+            <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-faint)', fontSize: 13.5 }}>Ningún lead calificado todavía. Revisa los descartados abajo o ajusta la búsqueda.</div>
+          )}
+          {qualified.map((l: any) => (
+            <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '54px 2fr 1.4fr 1.4fr 1fr', gap: 12, padding: '14px 20px', borderBottom: '1px solid var(--border)', alignItems: 'center', cursor: 'pointer' }} onClick={() => setSelectedLead(l)}>
+              <div style={{ fontSize: 17, fontWeight: 800, color: scoreColor(l.score) }}>{l.score || '—'}</div>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--ink)' }}>{l.name}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>{l.sector}</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.name || 'Empresa'}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>{l.ciudad || l.sector || '—'}</div>
               </div>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{l.decisor}</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.decisor || '—'}</div>
                 <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{l.cargo}</div>
               </div>
-              <div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>hace 2 días</div>
-                <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>15:04</div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 16, fontWeight: 800, color: l.opens > 0 ? 'var(--primary)' : 'var(--text-faint)' }}>{l.opens}</div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 16, fontWeight: 800, color: l.clicks > 0 ? 'var(--amber)' : 'var(--text-faint)' }}>{l.clicks}</div>
+              <div style={{ minWidth: 0, fontSize: 12.5, color: l.email || l.phone ? 'var(--text)' : 'var(--text-faint)' }}>
+                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.email || 'sin email'}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{l.phone || ''}</div>
               </div>
               <div>
-                <span className="chip" style={{ background: l.status === 'opened' ? 'var(--green-soft)' : l.status === 'pending' ? 'var(--amber-soft)' : 'var(--red-soft)', color: l.status === 'opened' ? 'var(--green)' : l.status === 'pending' ? 'var(--amber)' : 'var(--red)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  {l.status === 'opened' && <><Icon name="check" size={13} /> Abierto</>}
-                  {l.status === 'pending' && <><Icon name="clock" size={13} /> Pendiente</>}
-                  {l.status === 'bounce' && <><Icon name="x" size={13} /> Bounce</>}
+                <span className="chip" style={{ background: l.status === 'opened' ? 'var(--green-soft)' : 'var(--amber-soft)', color: l.status === 'opened' ? 'var(--green)' : 'var(--amber)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  {l.status === 'opened' ? <><Icon name="check" size={13} /> Enviado</> : <><Icon name="clock" size={13} /> Pendiente</>}
                 </span>
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {/* Descartados — colapsado, con motivo */}
+      {descartados.length > 0 && (
+        <details className="card" style={{ padding: '14px 20px' }}>
+          <summary style={{ cursor: 'pointer', fontSize: 13.5, fontWeight: 700, color: 'var(--text-muted)' }}>
+            {descartados.length} descartados por la IA (ver motivos)
+          </summary>
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {descartados.slice(0, 30).map((l: any) => (
+              <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5 }}>
+                <span style={{ width: 34, fontWeight: 700, color: 'var(--text-faint)' }}>{l.score || 0}</span>
+                <span style={{ flex: 1, minWidth: 0, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.name || 'Empresa'}</span>
+                <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>{l.motivo || 'sin motivo'}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
 
       {selectedLead && (
         <>
@@ -646,13 +705,43 @@ function ViewAprobados({ campaignId }: any) {
               <button className="btn btn-icon btn-ghost" onClick={() => setSelectedLead(null)}><Icon name="x" size={22} /></button>
             </div>
             <div style={{ flex: 1, padding: 24, overflowY: 'auto' }}>
-              <p style={{ margin: 0, color: 'var(--text)' }}>Score: <strong>{selectedLead.score}</strong></p>
-              <p style={{ margin: 0, marginTop: 12, color: 'var(--text-muted)' }}>Email: {selectedLead.email}</p>
-              <p style={{ margin: 0, marginTop: 8, color: 'var(--text-muted)' }}>Teléfono: {selectedLead.phone}</p>
-              <button className="btn btn-soft" style={{ width: '100%', marginTop: 24, justifyContent: 'center', fontFamily: 'inherit' }} onClick={async () => {
+              {/* Sobre la empresa */}
+              <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, marginBottom: 18 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', marginBottom: 10 }}>
+                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Score <strong style={{ color: 'var(--ink)' }}>{selectedLead.score}</strong></span>
+                  {selectedLead.nit && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>NIT {selectedLead.nit}</span>}
+                  {selectedLead.ciudad && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{selectedLead.ciudad}</span>}
+                  {selectedLead.contratos_secop != null && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{selectedLead.contratos_secop} contratos · {selectedLead.valor_total || ''}</span>}
+                  {selectedLead.fecha_matricula && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Matrícula {selectedLead.fecha_matricula}</span>}
+                </div>
+                {(selectedLead.resumen || selectedLead.reason) && (
+                  <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text)', lineHeight: 1.5 }}>{selectedLead.resumen || selectedLead.reason}</p>
+                )}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 12, fontSize: 13 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>👤 {selectedLead.decisor || 'decisor no identificado'}{selectedLead.cargo ? ` · ${selectedLead.cargo}` : ''}</span>
+                  <span style={{ color: selectedLead.email ? 'var(--text)' : 'var(--text-faint)' }}>✉ {selectedLead.email || 'sin email'}</span>
+                  {selectedLead.phone && <span style={{ color: 'var(--text)' }}>☎ {selectedLead.phone}</span>}
+                  {selectedLead.url && <a href={selectedLead.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>🌐 sitio</a>}
+                </div>
+              </div>
+
+              {emailConnected === false && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 14px', borderRadius: 10, background: 'var(--amber-soft)', color: 'var(--amber)', marginBottom: 16, fontSize: 13.5, fontWeight: 600 }}>
+                  <span>No tienes un buzón conectado para enviar.</span>
+                  <button className="btn btn-soft" style={{ flex: 'none' }} onClick={() => { setSelectedLead(null); onNavigate && onNavigate('ajustes'); }}>Ir a Ajustes</button>
+                </div>
+              )}
+
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>Asunto</label>
+              <input value={compose.subject} onChange={(e) => setCompose({ ...compose, subject: e.target.value })} style={{ width: '100%', border: '1px solid var(--border-2)', background: 'var(--surface-2)', borderRadius: 10, padding: '10px 12px', fontFamily: 'inherit', fontSize: 14, color: 'var(--text)', outline: 'none', marginBottom: 14 }} />
+
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>Mensaje</label>
+              <textarea value={compose.body} onChange={(e) => setCompose({ ...compose, body: e.target.value })} style={{ width: '100%', minHeight: 180, resize: 'vertical', border: '1px solid var(--border-2)', background: 'var(--surface-2)', borderRadius: 10, padding: '10px 12px', fontFamily: 'inherit', fontSize: 14, color: 'var(--text)', outline: 'none', lineHeight: 1.5 }} />
+
+              <button className="btn btn-soft" style={{ width: '100%', marginTop: 18, justifyContent: 'center', fontFamily: 'inherit' }} onClick={async () => {
                 try {
                   await api.approveLead(campaignId, selectedLead.id, 'Aprobado desde UI');
-                  alert('Lead aprobado exitosamente');
+                  alert('Lead aprobado');
                   setSelectedLead(null);
                   onChanged && onChanged();
                 } catch (err: any) {
@@ -661,17 +750,20 @@ function ViewAprobados({ campaignId }: any) {
               }}>
                 <Icon name="check" size={16} /> Aprobar
               </button>
-              <button className="btn btn-primary" style={{ width: '100%', marginTop: 12, justifyContent: 'center', fontFamily: 'inherit' }} onClick={async () => {
+              <button className="btn btn-primary" disabled={sending || emailConnected === false || compose.body.trim().length < 10} style={{ width: '100%', marginTop: 12, justifyContent: 'center', fontFamily: 'inherit', opacity: (sending || emailConnected === false) ? 0.6 : 1 }} onClick={async () => {
+                setSending(true);
                 try {
-                  await api.sendLead(campaignId, selectedLead.id, 'email', 'Propuesta de valor personalizada para tu empresa.', 'Oportunidad para tu empresa');
-                  alert('Lead enviado exitosamente');
+                  await api.sendLead(campaignId, selectedLead.id, 'email', compose.body, compose.subject);
+                  alert('Correo enviado a ' + (selectedLead.email || 'el decisor'));
                   setSelectedLead(null);
                   onChanged && onChanged();
                 } catch (err: any) {
-                  alert('Error al enviar: ' + err.message);
+                  alert('Error al enviar: ' + (err.message || ''));
+                } finally {
+                  setSending(false);
                 }
               }}>
-                <Icon name="send" size={16} /> Enviar por email
+                <Icon name="send" size={16} /> {sending ? 'Enviando…' : 'Enviar por email'}
               </button>
             </div>
           </div>
@@ -681,39 +773,74 @@ function ViewAprobados({ campaignId }: any) {
   );
 }
 
-function ViewResultados() {
-  const funnel = [
-    ['Descubiertas', 142, 'var(--primary)'],
-    ['Analizadas', 96, 'var(--r-scraper)'],
-    ['Calificadas', 24, 'var(--amber)'],
-    ['Aprobadas', 16, 'var(--green)'],
-    ['Enviadas', 16, 'var(--r-buscador)'],
-    ['Abiertas', 11, 'var(--r-analista)'],
-    ['Respondidas', 4, 'var(--r-redactor)'],
+function ViewResultados({ campaignId }: any) {
+  const [kpis, setKpis] = useState<any>(null);
+  const [metrics, setMetrics] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!campaignId) { setLoading(false); return; }
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const [k, m] = await Promise.all([
+          api.getKPIs(campaignId),
+          api.getMetrics(campaignId),
+        ]);
+        if (!alive) return;
+        setKpis(k.raw);
+        setMetrics(m);
+      } catch (e) {
+        console.warn('Resultados load failed:', e);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [campaignId]);
+
+  if (!campaignId) {
+    return (
+      <div style={{ padding: '24px 28px 28px' }}>
+        <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6 }}>Resultados de campaña</h1>
+        <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>Selecciona una campaña en Campañas para ver sus resultados.</p>
+      </div>
+    );
+  }
+
+  const pct = (x: number) => Math.round((x || 0) * 100) + '%';
+  const cards = [
+    { label: 'Tasa de apertura', value: pct(metrics?.open_rate), color: 'var(--green)' },
+    { label: 'Tasa de respuesta', value: pct(metrics?.reply_rate), color: 'var(--primary)' },
+    { label: 'Tasa de clics', value: pct(metrics?.click_rate), color: 'var(--r-scraper)' },
+    { label: 'Correos enviados', value: metrics?.total_sent ?? 0, color: 'var(--r-redactor)' },
+  ];
+
+  // Embudo a partir de datos reales: calificadas → aprobadas → enviadas → abiertas → respondidas.
+  const funnel: [string, number, string][] = [
+    ['Calificadas', kpis?.leads_qualified ?? 0, 'var(--amber)'],
+    ['Aprobadas', kpis?.leads_approved ?? 0, 'var(--green)'],
+    ['Enviadas', kpis?.leads_sent ?? 0, 'var(--r-buscador)'],
+    ['Abiertas', metrics?.opens ?? 0, 'var(--r-analista)'],
+    ['Respondidas', metrics?.replies ?? 0, 'var(--r-redactor)'],
   ];
 
   return (
     <div style={{ padding: '24px 28px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
         <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6 }}>Resultados de campaña</h1>
-        <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>Seguros corporativos · Bogotá, Medellín, Cali · últimos 30 días</p>
+        <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>{loading ? 'Cargando métricas…' : 'Métricas de correo de la campaña seleccionada'}</p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
-        {[
-          { label: 'Tasa de apertura', value: '69%', trend: '+6%', spark: [48, 52, 55, 58, 62, 65, 69], color: 'var(--green)' },
-          { label: 'Tasa de respuesta', value: '25%', trend: '+3%', spark: [14, 16, 18, 19, 22, 23, 25], color: 'var(--primary)' },
-          { label: 'Costo por lead', value: '$4.2', trend: '−$0.6', spark: [6.1, 5.8, 5.4, 5.0, 4.8, 4.5, 4.2], color: 'var(--r-scraper)' },
-          { label: 'Reuniones agendadas', value: 7, trend: '+2', spark: [1, 2, 3, 3, 5, 6, 7], color: 'var(--r-redactor)' },
-        ].map((k: any) => (
+        {cards.map((k: any) => (
           <div key={k.label} className="card" style={{ padding: 18 }}>
             <span className="label">{k.label}</span>
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 12 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                 <span style={{ fontSize: 28, fontWeight: 800, color: 'var(--ink)' }}>{k.value}</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--green)' }}>{k.trend}</span>
               </div>
-              <Spark data={k.spark} color={k.color} />
             </div>
           </div>
         ))}
@@ -723,7 +850,7 @@ function ViewResultados() {
         <h3 style={{ fontSize: 17, margin: 0, marginBottom: 4 }}>Embudo de conversión</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 18 }}>
           {funnel.map(([label, val, color]: any) => {
-            const fMax = funnel[0][1] as number;
+            const fMax = Math.max(funnel[0][1] as number, 1);
             const pct = Math.round(((val as number) / fMax) * 100);
             return (
               <div key={label}>
@@ -744,17 +871,36 @@ function ViewResultados() {
 }
 
 function ViewChat() {
-  const [messages, setMessages] = useState([
-    { id: 1, role: 'assistant', text: 'Hola, soy la Reina de Landa. Cuéntame sobre tus resultados o pídeme ajustar la campaña.', time: '09:15' },
-    { id: 2, role: 'user', text: '¿Cuál es el sector con mejor tasa?', time: '09:17' },
-    { id: 3, role: 'assistant', text: 'Construcción lidera con 74%, seguido por Logística (68%) e Industria (64%).', time: '09:18' },
+  const [messages, setMessages] = useState<any[]>([
+    { id: 1, role: 'assistant', text: 'Hola, soy la Reina de Landa. Descríbeme a quién quieres prospectar y armo la campaña por ti.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
   ]);
   const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
 
-  const handleSend = () => {
-    if (!input.trim()) return;
-    setMessages([...messages, { id: Date.now(), role: 'user', text: input, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+  const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setMessages((m) => [...m, { id: Date.now(), role: 'user', text, time: now() }]);
     setInput('');
+    setSending(true);
+    try {
+      const res = await api.sendChatMessage(text);
+      let reply: string;
+      if (res.status === 'extracted' && res.campaign) {
+        const c = res.campaign;
+        const desc = c.name || c.nombre || [c.industria_objetivo, c.ciudad_objetivo].filter(Boolean).join(' · ') || 'tu campaña';
+        reply = `✓ Campaña lista: ${desc}. La encuentras en Campañas para lanzarla.`;
+      } else {
+        reply = res.reply || 'No entendí del todo, ¿puedes darme más detalle?';
+      }
+      setMessages((m) => [...m, { id: Date.now() + 1, role: 'assistant', text: reply, time: now() }]);
+    } catch (e: any) {
+      setMessages((m) => [...m, { id: Date.now() + 1, role: 'assistant', text: `Error: ${e.message || 'no pude responder'}`, time: now() }]);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -777,8 +923,8 @@ function ViewChat() {
           ))}
         </div>
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: 10 }}>
-          <input type="text" placeholder="Escribe tu pregunta..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} style={{ flex: 1, border: '1px solid var(--border-2)', background: 'var(--surface-2)', borderRadius: 10, padding: '11px 14px', fontFamily: 'inherit', fontSize: 14, color: 'var(--text)', outline: 'none' }} />
-          <button onClick={handleSend} className="btn btn-primary" style={{ padding: '10px 16px', fontFamily: 'inherit' }}><Icon name="send" size={16} /></button>
+          <input type="text" placeholder={sending ? 'La Reina está pensando…' : 'Describe a quién prospectar...'} value={input} disabled={sending} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} style={{ flex: 1, border: '1px solid var(--border-2)', background: 'var(--surface-2)', borderRadius: 10, padding: '11px 14px', fontFamily: 'inherit', fontSize: 14, color: 'var(--text)', outline: 'none', opacity: sending ? 0.6 : 1 }} />
+          <button onClick={handleSend} disabled={sending} className="btn btn-primary" style={{ padding: '10px 16px', fontFamily: 'inherit', opacity: sending ? 0.6 : 1 }}><Icon name="send" size={16} /></button>
         </div>
       </div>
     </div>
@@ -786,53 +932,89 @@ function ViewChat() {
 }
 
 function ViewAprendizaje() {
+  const [stats, setStats] = useState<any>(null);
+  const [patterns, setPatterns] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [patternsError, setPatternsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const s = await api.getLearningStats();
+        if (alive) setStats(s);
+        // Los patrones solo existen si hay suficientes aprobaciones (ready_for_patterns)
+        if (s?.ready_for_patterns) {
+          try {
+            const p = await api.getLearningPatterns();
+            const list = Array.isArray(p?.patterns) ? p.patterns : (p?.patterns ? [p.patterns] : []);
+            if (alive) setPatterns(list);
+          } catch (e: any) {
+            if (alive) setPatternsError(e.message || 'No se pudieron calcular patrones');
+          }
+        }
+      } catch (e) {
+        console.warn('Aprendizaje load failed:', e);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const idealCount = stats?.ideal_count ?? 0;
+  const rejectedCount = stats?.rejected_count ?? 0;
+
   return (
     <div style={{ padding: '24px 28px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
         <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6 }}>Aprendizaje</h1>
-        <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>Lo que Landa aprendió de tus aprobaciones para afinar la próxima corrida.</p>
+        <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>{loading ? 'Cargando…' : 'Lo que Landa aprendió de tus aprobaciones para afinar la próxima corrida.'}</p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div className="card" style={{ padding: 22 }}>
-          <h3 style={{ fontSize: 17, margin: 0, marginBottom: 4 }}>Tu cliente ideal</h3>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 18px' }}>Perfil que más aprobaste, con nivel de confianza.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {[
-              { attr: 'Tamaño', value: '100–300 empleados', conf: 88 },
-              { attr: 'Activos físicos', value: 'Flota o planta propia', conf: 82 },
-              { attr: 'Decisor', value: 'Director de Operaciones / COO', conf: 76 },
-            ].map((r) => (
-              <div key={r.attr}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-faint)', fontWeight: 600 }}>{r.attr}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>{r.conf}%</span>
-                </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 7 }}>{r.value}</div>
-                <div style={{ height: 6, background: 'var(--surface-3)', borderRadius: 999, overflow: 'hidden' }}>
-                  <div style={{ width: r.conf + '%', height: '100%', background: 'var(--primary)', borderRadius: 999 }} />
-                </div>
-              </div>
-            ))}
+          <h3 style={{ fontSize: 17, margin: 0, marginBottom: 4 }}>Base de aprendizaje</h3>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 18px' }}>Leads que aprobaste vs. rechazaste. La Reina necesita 3+ aprobaciones para detectar patrones.</p>
+          <div style={{ display: 'flex', gap: 14 }}>
+            <div style={{ flex: 1, background: 'var(--green-soft)', borderRadius: 12, padding: 16 }}>
+              <div style={{ fontSize: 30, fontWeight: 800, color: 'var(--green)' }}>{idealCount}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 600 }}>Aprobados (ideales)</div>
+            </div>
+            <div style={{ flex: 1, background: 'var(--red-soft)', borderRadius: 12, padding: 16 }}>
+              <div style={{ fontSize: 30, fontWeight: 800, color: 'var(--red)' }}>{rejectedCount}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 600 }}>Rechazados</div>
+            </div>
           </div>
+          {!stats?.ready_for_patterns && !loading && (
+            <p style={{ fontSize: 12.5, color: 'var(--text-faint)', marginTop: 14, marginBottom: 0 }}>
+              Aprueba {Math.max(0, 3 - idealCount)} lead(s) más para desbloquear patrones predictivos.
+            </p>
+          )}
         </div>
 
         <div className="card" style={{ padding: 22 }}>
           <h3 style={{ fontSize: 17, margin: 0, marginBottom: 4 }}>Señales predictivas</h3>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 14px' }}>Patrones que la Reina detectó en lo que apruebas.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {[
-              { text: 'Tiene flota o planta propia que asegurar', weight: '+34%', up: true },
-              { text: 'Abrió una nueva sede en los últimos 6 meses', weight: '+28%', up: true },
-              { text: 'El decisor respondió en menos de 24 h', weight: '+19%', up: true },
-            ].map((s) => (
-              <div key={s.text} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 13px', borderRadius: 12, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-                <div style={{ width: 26, height: 26, borderRadius: 7, flex: 'none', display: 'grid', placeItems: 'center', background: s.up ? 'var(--green-soft)' : 'var(--red-soft)', color: s.up ? 'var(--green)' : 'var(--red)' }}>
-                  {s.up ? '↑' : '↓'}
+            {patternsError && <span style={{ fontSize: 13, color: 'var(--red)' }}>{patternsError}</span>}
+            {!patternsError && patterns.length === 0 && (
+              <span style={{ fontSize: 13.5, color: 'var(--text-faint)' }}>
+                {stats?.ready_for_patterns ? 'Sin patrones aún.' : 'Disponible cuando tengas 3+ aprobaciones.'}
+              </span>
+            )}
+            {patterns.map((s: any, i: number) => {
+              const text = typeof s === 'string' ? s : (s.text || s.signal || s.description || JSON.stringify(s));
+              const weight = typeof s === 'object' ? (s.weight || s.impact || '') : '';
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 13px', borderRadius: 12, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 7, flex: 'none', display: 'grid', placeItems: 'center', background: 'var(--green-soft)', color: 'var(--green)' }}>↑</div>
+                  <span style={{ flex: 1, fontSize: 13.5, color: 'var(--text)' }}>{text}</span>
+                  {weight && <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--green)' }}>{weight}</span>}
                 </div>
-                <span style={{ flex: 1, fontSize: 13.5, color: 'var(--text)' }}>{s.text}</span>
-                <span style={{ fontSize: 14, fontWeight: 800, color: s.up ? 'var(--green)' : 'var(--red)' }}>{s.weight}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -840,8 +1022,171 @@ function ViewAprendizaje() {
   );
 }
 
+// ============ AJUSTES → EMAIL ============
+function ViewAjustes() {
+  const [status, setStatus] = useState<any>(null);
+  const [smtp, setSmtp] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [smtpForm, setSmtpForm] = useState({ email: '', password: '', smtp_host: '', smtp_port: 587 });
+  const [tpl, setTpl] = useState<{ subject_prefix: string; body_template: string; footer: string }>({ subject_prefix: '', body_template: '', footer: '' });
+  const [testTo, setTestTo] = useState('');
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [s, sm, t] = await Promise.all([
+        api.getEmailStatus().catch(() => null),
+        api.getSmtpStatus().catch(() => null),
+        api.getEmailTemplate().catch(() => ({})),
+      ]);
+      setStatus(s);
+      setSmtp(sm);
+      setTpl({ subject_prefix: t?.subject_prefix || '', body_template: t?.body_template || '', footer: t?.footer || '' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    reload();
+    // Toast de retorno OAuth (?oauth_success=true&oauth_provider=gmail)
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('oauth_success')) {
+      const ok = params.get('oauth_success') === 'true';
+      const prov = params.get('oauth_provider') || 'email';
+      setMsg({ ok, text: ok ? `${prov} conectado correctamente` : `No se pudo conectar ${prov}` });
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const flash = (ok: boolean, text: string) => { setMsg({ ok, text }); setTimeout(() => setMsg(null), 4000); };
+
+  const connected = status?.connected;
+  const smtpConfigured = smtp?.configured;
+
+  const handleSaveSmtp = async () => {
+    if (!smtpForm.email || !smtpForm.password || !smtpForm.smtp_host) { flash(false, 'Completa email, contraseña y host'); return; }
+    setBusy(true);
+    try { await api.saveSmtpConfig(smtpForm); flash(true, 'SMTP guardado'); await reload(); }
+    catch (e: any) { flash(false, e.message || 'Error guardando SMTP'); }
+    finally { setBusy(false); }
+  };
+
+  const handleTest = async () => {
+    setBusy(true);
+    try { const r = await api.sendTestEmail(testTo.trim() || undefined); flash(true, r.message || 'Correo de prueba enviado'); }
+    catch (e: any) { flash(false, e.message || 'No se pudo enviar la prueba'); }
+    finally { setBusy(false); }
+  };
+
+  const handleSaveTpl = async () => {
+    setBusy(true);
+    try { await api.saveEmailTemplate(tpl); flash(true, 'Plantilla guardada'); }
+    catch (e: any) { flash(false, e.message || 'Error guardando plantilla'); }
+    finally { setBusy(false); }
+  };
+
+  const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid var(--border-2)', background: 'var(--surface-2)', borderRadius: 10, padding: '10px 12px', fontFamily: 'inherit', fontSize: 14, color: 'var(--text)', outline: 'none' };
+
+  return (
+    <div style={{ padding: '24px 28px 28px', display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 760 }}>
+      <div>
+        <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6 }}>Ajustes</h1>
+        <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>Conecta tu buzón para enviar los correos de prospección desde tu propia dirección.</p>
+      </div>
+
+      {msg && (
+        <div style={{ padding: '10px 14px', borderRadius: 10, fontSize: 13.5, fontWeight: 600, background: msg.ok ? 'var(--green-soft)' : 'var(--red-soft)', color: msg.ok ? 'var(--green)' : 'var(--red)' }}>{msg.text}</div>
+      )}
+
+      {/* Estado de conexión */}
+      <div className="card" style={{ padding: 22 }}>
+        <h3 style={{ fontSize: 17, margin: 0, marginBottom: 4 }}>Buzón de correo</h3>
+        {loading ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Cargando…</p>
+        ) : connected ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--green)' }} />
+              <div>
+                <div style={{ fontWeight: 700, color: 'var(--ink)' }}>{status.email}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--text-faint)', textTransform: 'capitalize' }}>{status.provider}</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-soft" disabled={busy} onClick={handleTest}>Enviar prueba</button>
+              <button className="btn btn-ghost" disabled={busy} onClick={async () => { await api.disconnectEmail().catch(() => {}); flash(true, 'Buzón desconectado'); reload(); }}>Desconectar</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p style={{ fontSize: 13.5, color: 'var(--text-muted)', margin: '8px 0 16px' }}>No tienes un buzón conectado. Conecta uno para poder enviar correos reales.</p>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
+              <button className="btn btn-primary" onClick={() => { window.location.href = api.emailConnectUrl('gmail'); }}>Conectar Gmail</button>
+              <button className="btn btn-ghost" onClick={() => { window.location.href = api.emailConnectUrl('outlook'); }}>Conectar Outlook</button>
+            </div>
+
+            {/* SMTP alternativo */}
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <span className="label">o vía SMTP</span>
+                {smtpConfigured && <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--green)' }}>SMTP configurado</span>}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <input style={inputStyle} placeholder="tu@correo.com" value={smtpForm.email} onChange={(e) => setSmtpForm({ ...smtpForm, email: e.target.value })} />
+                <input style={inputStyle} type="password" placeholder="Contraseña / App password" value={smtpForm.password} onChange={(e) => setSmtpForm({ ...smtpForm, password: e.target.value })} />
+                <input style={inputStyle} placeholder="smtp.gmail.com" value={smtpForm.smtp_host} onChange={(e) => setSmtpForm({ ...smtpForm, smtp_host: e.target.value })} />
+                <input style={inputStyle} type="number" placeholder="587" value={smtpForm.smtp_port} onChange={(e) => setSmtpForm({ ...smtpForm, smtp_port: Number(e.target.value) })} />
+              </div>
+              <button className="btn btn-soft" disabled={busy} style={{ marginTop: 12 }} onClick={handleSaveSmtp}>Guardar SMTP</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Probar envío — disponible con OAuth o SMTP */}
+      {(connected || smtpConfigured) && (
+        <div className="card" style={{ padding: 22 }}>
+          <h3 style={{ fontSize: 17, margin: 0, marginBottom: 4 }}>Probar envío</h3>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 14px' }}>Envía un correo de prueba para confirmar que tu buzón {connected ? `(${status?.provider})` : '(SMTP)'} funciona. Si dejas el campo vacío, se envía a tu propia dirección.</p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <input style={{ ...inputStyle, flex: 1, minWidth: 220 }} type="email" placeholder="correo de destino (opcional)" value={testTo} onChange={(e) => setTestTo(e.target.value)} />
+            <button className="btn btn-primary" disabled={busy} style={{ flex: 'none' }} onClick={handleTest}>{busy ? 'Enviando…' : 'Enviar correo de prueba'}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Plantilla de correo */}
+      <div className="card" style={{ padding: 22 }}>
+        <h3 style={{ fontSize: 17, margin: 0, marginBottom: 4 }}>Plantilla de correo</h3>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 16px' }}>Prefijo de asunto, cuerpo por defecto y firma. Usa <code>{'{nombre}'}</code>, <code>{'{mensaje}'}</code>, <code>{'{firma}'}</code>.</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <input style={inputStyle} placeholder="Prefijo de asunto (ej: [Landa])" value={tpl.subject_prefix} onChange={(e) => setTpl({ ...tpl, subject_prefix: e.target.value })} />
+          <textarea style={{ ...inputStyle, minHeight: 140, resize: 'vertical', fontFamily: 'inherit' }} placeholder="Cuerpo del correo…" value={tpl.body_template} onChange={(e) => setTpl({ ...tpl, body_template: e.target.value })} />
+          <input style={inputStyle} placeholder="Pie / firma" value={tpl.footer} onChange={(e) => setTpl({ ...tpl, footer: e.target.value })} />
+          <button className="btn btn-soft" disabled={busy} style={{ alignSelf: 'flex-start' }} onClick={handleSaveTpl}>Guardar plantilla</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ COBRANZA ============
+// Re-aloja el módulo de cobranza (CobranzaTab, ya cableado a /api/cobranza/*)
+// dentro del nuevo Landa. CobranzaTab trae su propio tema oscuro y maneja su
+// propio estado/fetch — aquí solo lo contenemos.
+function ViewCobranza() {
+  return (
+    <div style={{ height: '100%', overflow: 'auto' }}>
+      <CobranzaTab />
+    </div>
+  );
+}
+
 // ============ SIDEBAR ============
-function Sidebar({ view, setView }: any) {
+function Sidebar({ view, setView, user, onLogout }: any) {
   const nav = [
     ['inicio', 'home', 'Inicio'],
     ['campanas', 'rocket', 'Campañas'],
@@ -849,7 +1194,39 @@ function Sidebar({ view, setView }: any) {
     ['aprobados', 'check', 'Aprobados'],
     ['chat', 'chat', 'Chat'],
     ['aprendizaje', 'spark', 'Aprendizaje'],
+    ['ajustes', 'gear', 'Ajustes'],
   ];
+
+  const [quota, setQuota] = useState<any>(null);
+  const [cobranzaEnabled, setCobranzaEnabled] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const q = await api.getQuota();
+        if (alive) setQuota(q);
+      } catch (e) {
+        console.warn('Quota load failed:', e);
+      }
+      try {
+        const s = await api.getCobranzaStatus();
+        if (alive) setCobranzaEnabled(!!s.enabled);
+      } catch (e) {
+        console.warn('Cobranza status load failed:', e);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const navItems = cobranzaEnabled ? [...nav, ['cobranza', 'phone', 'Cobranza']] : nav;
+
+  const emailName = (user?.email || '').split('@')[0].replace(/[._-]/g, ' ').trim();
+  const userName = emailName || 'Mi cuenta';
+  const userInitials = (emailName ? emailName.split(' ').filter(Boolean).slice(0, 2).map((s: string) => s[0]).join('') : 'U').toUpperCase();
+
+  const usagePct = Math.round(quota?.usage_percent ?? 0);
+  const planLabel = quota?.plan ? `Plan ${String(quota.plan).charAt(0).toUpperCase() + String(quota.plan).slice(1)}` : 'Plan';
+  const fmt = (n: number) => (n ?? 0).toLocaleString('es-CO');
 
   return (
     <aside style={{ width: 248, flex: 'none', background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', padding: 16 }}>
@@ -864,11 +1241,10 @@ function Sidebar({ view, setView }: any) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {nav.map(([key, ic, label]) => (
+        {navItems.map(([key, ic, label]) => (
           <div key={key} onClick={() => setView(key)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 12px', borderRadius: 10, color: view === key ? 'var(--primary-700)' : 'var(--text-muted)', fontWeight: view === key ? 700 : 600, fontSize: 14, cursor: 'pointer', background: view === key ? 'var(--primary-soft)' : 'transparent', transition: 'all .12s' }}>
             <span style={{ display: 'flex' }}><Icon name={ic} size={19} /></span>
             <span>{label}</span>
-            {key === 'resultados' && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#fff', background: 'var(--primary)', borderRadius: 999, padding: '2px 8px' }}>8</span>}
           </div>
         ))}
       </div>
@@ -876,22 +1252,24 @@ function Sidebar({ view, setView }: any) {
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 14, padding: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span className="label">Plan Pro</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>62%</span>
+            <span className="label">{planLabel}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>{usagePct}%</span>
           </div>
           <div style={{ height: 7, background: '#E9E9F1', borderRadius: 999, overflow: 'hidden' }}>
-            <div style={{ width: '62%', height: '100%', background: 'var(--primary)', borderRadius: 999 }} />
+            <div style={{ width: usagePct + '%', height: '100%', background: 'var(--primary)', borderRadius: 999 }} />
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 8 }}>8.420 / 13.500 créditos</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 8 }}>
+            {quota ? `${fmt(quota.credits_remaining)} / ${fmt(quota.credits_total)} créditos` : 'Cargando créditos…'}
+          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, borderRadius: 12, cursor: 'pointer' }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#F59E0B,#EF6C5A)', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 800, fontSize: 14 }}>DP</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, borderRadius: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#F59E0B,#EF6C5A)', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 800, fontSize: 14, flex: 'none' }}>{userInitials}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--ink)' }}>DPG Seguros</div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>dpg.seguros@gmail.com</div>
+            <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--ink)', textTransform: 'capitalize' }}>{userName}{user?.role === 'staff' && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--primary)', marginLeft: 6, textTransform: 'uppercase' }}>staff</span>}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || '—'}</div>
           </div>
-          <span style={{ display: 'flex', color: 'var(--text-faint)' }}><Icon name="gear" size={16} /></span>
+          <button onClick={onLogout} title="Cerrar sesión" style={{ display: 'flex', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 4 }}><Icon name="arrow" size={16} /></button>
         </div>
       </div>
     </aside>
@@ -917,29 +1295,337 @@ function Topbar({ onLaunch }: any) {
 }
 
 // ============ APP ============
+// ============ ONBOARDING (wizard real: describe → propuesta) ============
+function OnbStepIndicator({ step, total }: any) {
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
+      {Array.from({ length: total }).map((_, i) => (
+        <div key={i} style={{ width: i <= step ? 32 : 8, height: 8, borderRadius: 999, background: i <= step ? 'var(--primary)' : 'var(--border-2)', transition: 'all .3s ease' }} />
+      ))}
+    </div>
+  );
+}
+
+function ViewOnboarding({ onComplete, onSkip }: any) {
+  const [step, setStep] = useState(0);
+  const [product, setProduct] = useState('');
+  const [icp, setIcp] = useState('');
+  const [progress, setProgress] = useState(0);
+  const [proposal, setProposal] = useState<any>(null);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const input: React.CSSProperties = { width: '100%', border: '1px solid var(--border-2)', background: 'var(--surface-2)', borderRadius: 10, padding: '12px 14px', fontFamily: 'inherit', fontSize: 14.5, color: 'var(--text)', outline: 'none', minHeight: 90, resize: 'vertical', lineHeight: 1.5 };
+
+  // Paso 2 → guarda knowledge y arranca el análisis real.
+  const startAnalysis = async () => {
+    setBusy(true);
+    try {
+      await api.saveKnowledge({ product_description: product, icp_summary: icp }).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+    setStep(2);
+    runAnalysis();
+  };
+
+  // Paso 3 → llama /api/chat/prospect (que extrae y guarda la campaña real).
+  const runAnalysis = async () => {
+    setProgress(0);
+    setAnalyzeError(null);
+    const timer = setInterval(() => setProgress((p) => (p < 90 ? p + Math.random() * 18 : p)), 500);
+    try {
+      const msg = `Mi empresa: ${product || 'servicios B2B'}. Cliente ideal: ${icp || 'empresas medianas en Colombia'}. Arma una campaña de prospección.`;
+      const res = await api.sendChatMessage(msg);
+      clearInterval(timer);
+      setProgress(100);
+      if (res.status === 'extracted' && res.campaign) {
+        setProposal(res.campaign);
+      } else {
+        setAnalyzeError(res.reply || 'No pudimos proponer una campaña automáticamente. Puedes crearla manualmente.');
+      }
+      setTimeout(() => setStep(3), 600);
+    } catch (e: any) {
+      clearInterval(timer);
+      setProgress(100);
+      setAnalyzeError(e.message || 'Error analizando');
+      setTimeout(() => setStep(3), 400);
+    }
+  };
+
+  const Chip = ({ children, primary }: any) => (
+    <span className="chip" style={{ background: primary ? 'var(--primary-soft)' : 'var(--surface-2)', color: primary ? 'var(--primary-700)' : 'var(--text)', border: '1px solid var(--border)' }}>{children}</span>
+  );
+
+  const asArray = (v: any) => Array.isArray(v) ? v : (v ? [v] : []);
+
+  return (
+    <div className="lc" style={{ minHeight: '100vh', height: '100vh', overflow: 'auto', background: 'linear-gradient(135deg, var(--primary-softer) 0%, var(--surface) 100%)', padding: 40, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      <div style={{ width: '100%', maxWidth: 540, display: 'flex', flexDirection: 'column', gap: 28 }}>
+        <OnbStepIndicator step={step} total={5} />
+        <div className="card" style={{ padding: 36 }}>
+
+          {step === 0 && (
+            <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
+              <div style={{ width: 64, height: 64, borderRadius: 18, background: 'linear-gradient(135deg, var(--primary), #7C74F0)', display: 'grid', placeItems: 'center', boxShadow: '0 8px 24px -8px rgba(79,70,229,.5)' }}>
+                <div style={{ width: 22, height: 22, borderRadius: 6, background: '#fff' }} />
+              </div>
+              <div>
+                <h1 style={{ fontSize: 28, margin: '0 0 10px' }}>Bienvenido a Landa</h1>
+                <p style={{ margin: 0, fontSize: 15.5, color: 'var(--text-muted)', maxWidth: 460, lineHeight: 1.6 }}>Cuéntanos sobre tu empresa y Landa propondrá a quién buscar. Toma 1 minuto.</p>
+              </div>
+              <button className="btn btn-primary" style={{ marginTop: 8, paddingLeft: 28, paddingRight: 28 }} onClick={() => setStep(1)}>Empezar <Icon name="arrow" size={16} /></button>
+              <button onClick={onSkip} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Saltar por ahora</button>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div>
+                <h2 style={{ fontSize: 23, margin: '0 0 6px' }}>Cuéntanos de tu empresa</h2>
+                <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>Con esto entendemos tu modelo y tu cliente ideal.</p>
+              </div>
+              <div>
+                <label className="label" style={{ display: 'block', marginBottom: 6 }}>¿Qué vende tu empresa?</label>
+                <textarea style={input} placeholder="Ej: Pólizas de seguros corporativos para flotas y plantas industriales…" value={product} onChange={(e) => setProduct(e.target.value)} />
+              </div>
+              <div>
+                <label className="label" style={{ display: 'block', marginBottom: 6 }}>¿Quién es tu cliente ideal?</label>
+                <textarea style={input} placeholder="Ej: Empresas de logística e industria con 100–500 empleados en Bogotá y Medellín…" value={icp} onChange={(e) => setIcp(e.target.value)} />
+              </div>
+              <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={busy || product.trim().length < 5} onClick={startAnalysis}>{busy ? 'Guardando…' : 'Analizar'} <Icon name="arrow" size={16} /></button>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 26 }}>
+              <div>
+                <h2 style={{ fontSize: 23, margin: '0 0 6px' }}>Landa está analizando</h2>
+                <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>Esto toma solo un momento.</p>
+              </div>
+              <div style={{ width: 180, height: 180, position: 'relative', display: 'grid', placeItems: 'center' }}>
+                <svg width="180" height="180" style={{ position: 'absolute', transform: 'rotate(-90deg)' }}>
+                  <circle cx="90" cy="90" r="80" fill="none" stroke="var(--border-2)" strokeWidth="8" />
+                  <circle cx="90" cy="90" r="80" fill="none" stroke="var(--primary)" strokeWidth="8" strokeDasharray={`${502 * progress / 100} 502`} strokeLinecap="round" style={{ transition: 'stroke-dasharray .3s ease' }} />
+                </svg>
+                <div className="num" style={{ fontSize: 34, fontWeight: 800, color: 'var(--primary)' }}>{Math.round(progress)}%</div>
+              </div>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div>
+                <h2 style={{ fontSize: 23, margin: '0 0 6px' }}>Tu campaña propuesta</h2>
+                <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>Basado en lo que nos contaste.</p>
+              </div>
+              {analyzeError && !proposal && (
+                <div style={{ padding: '11px 14px', borderRadius: 10, background: 'var(--amber-soft)', color: 'var(--amber)', fontSize: 13.5 }}>{analyzeError}</div>
+              )}
+              {proposal && (
+                <div className="card" style={{ padding: 22 }}>
+                  {proposal.industria_objetivo && (<>
+                    <div className="label" style={{ marginBottom: 10 }}>Industria objetivo</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9, marginBottom: 16 }}>{asArray(proposal.industria_objetivo).map((s: string) => <Chip key={s} primary>{s}</Chip>)}</div>
+                  </>)}
+                  {proposal.ciudad_objetivo && (<>
+                    <div className="label" style={{ marginBottom: 10 }}>Ciudades</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9, marginBottom: 16 }}>{asArray(proposal.ciudad_objetivo).map((c: string) => <Chip key={c}>{c}</Chip>)}</div>
+                  </>)}
+                  {proposal.dolor_operativo && (<>
+                    <div className="label" style={{ marginBottom: 8 }}>Dolor que resolvemos</div>
+                    <p style={{ margin: '0 0 16px', fontSize: 13.5, color: 'var(--text)', lineHeight: 1.5 }}>{proposal.dolor_operativo}</p>
+                  </>)}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9 }}>
+                    {asArray(proposal.signal_sources).map((s: string) => <Chip key={s}>{s}</Chip>)}
+                    {proposal.max_results && <Chip>{proposal.max_results} leads/corrida</Chip>}
+                  </div>
+                </div>
+              )}
+              <div className="card" style={{ padding: 14, background: 'var(--primary-softer)', border: '1px solid var(--primary-soft)' }}>
+                <div style={{ display: 'flex', gap: 11, alignItems: 'flex-start' }}>
+                  <Icon name="spark" size={18} />
+                  <div style={{ fontSize: 13.5, color: 'var(--text)', lineHeight: 1.5 }}><strong>Consejo:</strong> tus agentes aprenderán de los leads que apruebes y refinarán la búsqueda automáticamente.</div>
+                </div>
+              </div>
+              <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setStep(4)}><Icon name="rocket" size={16} /> {proposal ? 'Ver mi campaña' : 'Ir a campañas'}</button>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
+              <div style={{ width: 70, height: 70, borderRadius: '50%', background: 'var(--green)', display: 'grid', placeItems: 'center', boxShadow: '0 12px 32px -8px rgba(21,165,106,.4)' }}>
+                <Icon name="check" size={34} stroke={2.5} />
+              </div>
+              <div>
+                <h1 style={{ fontSize: 26, margin: '0 0 6px' }}>{proposal ? '¡Campaña creada!' : '¡Todo listo!'}</h1>
+                <p style={{ margin: 0, fontSize: 15, color: 'var(--text-muted)', lineHeight: 1.6 }}>{proposal ? 'La encuentras en Campañas, lista para lanzar.' : 'Ya puedes crear tu primera campaña.'}</p>
+              </div>
+              <button className="btn btn-primary" onClick={onComplete}>Abrir panel <Icon name="arrow" size={16} /></button>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ RUN STATUS BANNER ============
+// Da visibilidad en vivo del run de prospección: en cola → corriendo → completado/error,
+// con conteos y el motivo cuando termina con 0 leads.
+function RunStatusBanner({ run, onClose, onViewLeads }: any) {
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    if (!run?.runId) return;
+    let alive = true;
+    let timer: any;
+    const poll = async () => {
+      try {
+        const d = await api.getRunStatus(run.runId);
+        if (!alive) return;
+        setData(d);
+        const st = d.status;
+        if (st === 'complete' || st === 'error') return; // detener
+      } catch { /* reintenta */ }
+      if (alive) timer = setTimeout(poll, 3000);
+    };
+    poll();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [run?.runId]);
+
+  if (!run?.runId) return null;
+
+  const status = data?.status || 'queued';
+  const leadCount = (data?.leads || []).length;
+  const analyzed = data?.total_analyzed ?? 0;
+  const running = status === 'queued' || status === 'running';
+
+  let tone = 'var(--primary)', soft = 'var(--primary-soft)', text = '', icon = 'clock';
+  if (status === 'queued') text = 'En cola… esperando al worker';
+  else if (status === 'running') text = `Buscando y analizando empresas…${analyzed ? ` ${analyzed} encontradas` : ''}`;
+  else if (status === 'complete') {
+    if (leadCount > 0) { tone = 'var(--green)'; soft = 'var(--green-soft)'; icon = 'check'; text = `✓ ${leadCount} lead${leadCount === 1 ? '' : 's'} listo${leadCount === 1 ? '' : 's'} para revisar`; }
+    else { tone = 'var(--amber)'; soft = 'var(--amber-soft)'; icon = 'bell'; text = `Se encontraron empresas pero ninguna pasó el análisis (0 leads). Causa típica: scraping bloqueado / proxy no configurado.`; }
+  } else if (status === 'error') { tone = 'var(--red)'; soft = 'var(--red-soft)'; icon = 'x'; text = 'El run falló. Revisa los logs del worker.'; }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px', margin: '12px 28px 0', borderRadius: 12, background: soft, border: `1px solid ${tone}33` }}>
+      {running
+        ? <span style={{ width: 16, height: 16, border: `2px solid ${tone}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'lc-spin 0.7s linear infinite', flex: 'none' }} />
+        : <span style={{ color: tone, display: 'flex', flex: 'none' }}><Icon name={icon} size={18} /></span>}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: tone }}>{run.campaignName || 'Campaña'}</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{text}</div>
+      </div>
+      {status === 'complete' && leadCount > 0 && (
+        <button className="btn btn-soft" style={{ flex: 'none' }} onClick={() => onViewLeads(run.campaignId)}>Ver leads</button>
+      )}
+      {!running && (
+        <button onClick={onClose} title="Cerrar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', display: 'flex', flex: 'none' }}><Icon name="x" size={16} /></button>
+      )}
+    </div>
+  );
+}
+
+// ============ LOGIN ============
+function Login({ onLogin }: { onLogin: (u: api.AuthUser) => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const doLogin = async () => {
+    if (!email || !password) { setError('Ingresa email y contraseña'); return; }
+    setBusy(true); setError(null);
+    try { onLogin(await api.login(email, password)); }
+    catch (e: any) { setError(e.message || 'No se pudo iniciar sesión'); }
+    finally { setBusy(false); }
+  };
+
+  const doDemo = async () => {
+    setBusy(true); setError(null);
+    try { onLogin(await api.initAuth()); }
+    catch (e: any) { setError(e.message || 'No se pudo entrar como demo'); }
+    finally { setBusy(false); }
+  };
+
+  const input: React.CSSProperties = { width: '100%', border: '1px solid var(--border-2)', background: 'var(--surface-2)', borderRadius: 10, padding: '12px 14px', fontFamily: 'inherit', fontSize: 14.5, color: 'var(--text)', outline: 'none' };
+
+  return (
+    <div className="lc" style={{ display: 'grid', placeItems: 'center', height: '100vh', background: 'var(--bg)', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      <div style={{ width: 380, maxWidth: '90%', display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center', marginBottom: 4 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 11, background: 'linear-gradient(135deg, var(--primary), #7C74F0)', display: 'grid', placeItems: 'center', boxShadow: '0 6px 16px -6px rgba(79,70,229,.6)' }}>
+            <div style={{ width: 15, height: 15, borderRadius: 5, background: '#fff' }} />
+          </div>
+          <div style={{ fontWeight: 800, fontSize: 22, color: 'var(--ink)', letterSpacing: '-0.02em' }}>Landa</div>
+        </div>
+        <div className="card" style={{ padding: 28, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <h1 style={{ fontSize: 21, margin: 0 }}>Inicia sesión</h1>
+            <p style={{ margin: '6px 0 0', fontSize: 13.5, color: 'var(--text-muted)' }}>Accede a tu panel de prospección.</p>
+          </div>
+          {error && <div style={{ padding: '9px 12px', borderRadius: 8, background: 'var(--red-soft)', color: 'var(--red)', fontSize: 13, fontWeight: 600 }}>{error}</div>}
+          <input style={input} type="email" placeholder="tu@correo.com" value={email} disabled={busy} autoFocus onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && doLogin()} />
+          <input style={input} type="password" placeholder="Contraseña" value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && doLogin()} />
+          <button className="btn btn-primary" disabled={busy} style={{ width: '100%', justifyContent: 'center', fontFamily: 'inherit', marginTop: 2 }} onClick={doLogin}>{busy ? 'Entrando…' : 'Entrar'}</button>
+          <button className="btn btn-ghost" disabled={busy} style={{ width: '100%', justifyContent: 'center', fontFamily: 'inherit' }} onClick={doDemo}>Entrar como demo</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
+  const [user, setUser] = useState<api.AuthUser | null>(() => {
+    const hasToken = api.loadToken();
+    const cached = api.getCachedUser();
+    if (cached) return cached;
+    if (hasToken) return { email: '', role: 'client' };
+    return null;
+  });
   const [view, setView] = useState('inicio');
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [showWizard, setShowWizard] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [activeRun, setActiveRun] = useState<any>(null);
 
+  const handleLogout = () => { api.logout(); setUser(null); setView('inicio'); setShowOnboarding(false); };
+
+  // Si cualquier llamada recibe 401 (token expirado), volver al login.
   useEffect(() => {
-    // Try to auto-login on app start and retry if rate limited
-    const attemptLogin = async () => {
-      try {
-        // First, check if there's a token in localStorage
-        if (api.loadToken()) {
-          return;
-        }
-        // Otherwise, try to get one
-        await api.initAuth('dpg.seguros@gmail.com', 'seguros2026');
-        console.log('Auto-login successful');
-      } catch (err: any) {
-        console.warn('Auto-login failed:', err.message);
-        // Retry in 5 seconds
-        setTimeout(attemptLogin, 5000);
-      }
-    };
-    attemptLogin();
+    const onUnauth = () => { setUser(null); setView('inicio'); setShowOnboarding(false); };
+    window.addEventListener('landa:unauthorized', onUnauth);
+    return () => window.removeEventListener('landa:unauthorized', onUnauth);
+  }, []);
+
+  const finishOnboarding = (goToCampaigns: boolean) => {
+    localStorage.setItem('landa_onboarded', '1');
+    setShowOnboarding(false);
+    if (goToCampaigns) setView('campanas');
+  };
+
+  // Onboarding de primera vez: usuario autenticado, sin flag y sin campañas.
+  useEffect(() => {
+    if (!user) return;
+    if (localStorage.getItem('landa_onboarded')) return;
+    let alive = true;
+    api.getCampaigns(1, 0).then((d: any) => {
+      if (!alive) return;
+      const count = (d?.campaigns || []).length;
+      if (count === 0) setShowOnboarding(true);
+      else localStorage.setItem('landa_onboarded', '1');
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [user]);
+
+  // Tras volver del OAuth de email (?oauth_success=...), abre Ajustes para mostrar el resultado.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('oauth_success')) {
+      setView('ajustes');
+    }
   }, []);
 
   // Close the wizard when navigating away from the campaigns view
@@ -985,18 +1671,24 @@ export function App() {
     });
   }, []);
 
+  if (!user) return <Login onLogin={(u) => { setUser(u); setView('inicio'); }} />;
+  if (showOnboarding) return <ViewOnboarding onComplete={() => finishOnboarding(true)} onSkip={() => finishOnboarding(false)} />;
+
   return (
     <div className="lc" style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)', fontFamily: "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" }}>
-      <Sidebar view={view} setView={setView} />
+      <Sidebar view={view} setView={setView} user={user} onLogout={handleLogout} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Topbar onLaunch={() => { setView('campanas'); setShowWizard(true); }} />
+        {activeRun && <RunStatusBanner run={activeRun} onClose={() => setActiveRun(null)} onViewLeads={(cid: string) => { setCampaignId(cid); setActiveRun(null); setView('aprobados'); }} />}
         <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
-          {view === 'inicio' && <ViewInicio campaignId={campaignId} />}
-          {view === 'aprobados' && <ViewAprobados campaignId={campaignId} />}
-          {view === 'resultados' && <ViewResultados />}
-          {view === 'campanas' && <ViewCampanas showWizard={showWizard} setShowWizard={setShowWizard} onSelectCampaign={(id: string) => { setCampaignId(id); setView('aprobados'); }} />}
+          {view === 'inicio' && <ViewInicio campaignId={campaignId} onNavigate={setView} />}
+          {view === 'aprobados' && <ViewAprobados campaignId={campaignId} onNavigate={setView} />}
+          {view === 'resultados' && <ViewResultados campaignId={campaignId} />}
+          {view === 'campanas' && <ViewCampanas showWizard={showWizard} setShowWizard={setShowWizard} onLaunched={(r: any) => setActiveRun(r)} onSelectCampaign={(id: string) => { setCampaignId(id); setView('aprobados'); }} />}
           {view === 'chat' && <ViewChat />}
           {view === 'aprendizaje' && <ViewAprendizaje />}
+          {view === 'ajustes' && <ViewAjustes />}
+          {view === 'cobranza' && <ViewCobranza />}
         </div>
       </main>
     </div>

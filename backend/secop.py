@@ -12,9 +12,12 @@ Endpoint: SECOP II — Contratos
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import httpx
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 SECOP_CONTRATOS_URL = "https://www.datos.gov.co/resource/jbjy-vk9h.json"
 
@@ -135,7 +138,7 @@ async def fetch_secop_providers(
 
     # Sort by number of contracts (most active contractors first)
     results = sorted(seen.values(), key=lambda x: x["contratos"], reverse=True)
-    print(f"[SECOP] keyword='{keyword}' ciudad='{ciudad}' → {len(rows)} rows → {len(results)} empresas únicas")
+    logger.info("[SECOP] keyword=%r ciudad=%r -> %d rows -> %d empresas unicas", keyword, ciudad, len(rows), len(results))
     return results[:max_results]
 
 

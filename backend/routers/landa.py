@@ -401,26 +401,41 @@ async def list_leads(
 
     total = await db.leads.count_documents(query)
 
+    def _shape(l: dict) -> dict:
+        exp = l.get("expediente_json") or {}
+        dec = exp.get("decisor") or {}
+        return {
+            "id": str(l["_id"]),
+            "company_name": l.get("company_name") or exp.get("empresa", ""),
+            "sector": l.get("sector", ""),
+            "city": l.get("city", ""),
+            "score": l.get("score") or exp.get("score", 0) or 0,
+            # system_state: veredicto de la IA (SUCCESS_READY_FOR_REVIEW vs REJECTED_BY_AI)
+            "system_state": l.get("system_state") or exp.get("system_state", ""),
+            "qualified": (l.get("system_state") or exp.get("system_state", "")) == "SUCCESS_READY_FOR_REVIEW",
+            "decision_maker": l.get("decision_maker") or dec.get("nombre", ""),
+            "cargo": dec.get("cargo", ""),
+            "email": l.get("email") or dec.get("email", ""),
+            "phone": l.get("phone") or dec.get("telefono", ""),
+            # Para aprobados: evidencia/resumen. Para descartados: motivo.
+            "reason": l.get("reason") or exp.get("evidencia_encontrada") or exp.get("resumen_empresa", ""),
+            "resumen": exp.get("resumen_empresa", ""),
+            "nit": l.get("nit") or exp.get("nit", ""),
+            "url": l.get("url", ""),
+            # Contexto del vertical (SECOP: contratos; RUES: fecha; etc.)
+            "contratos_secop": exp.get("contratos_secop"),
+            "valor_total": exp.get("valor_total"),
+            "fecha_matricula": exp.get("fecha_matricula"),
+            "motivo": exp.get("motivo_descalificacion", ""),
+            "status": l.get("hitl_status") or "pending",
+            "sent_at": l.get("sent_at"),
+            "opens": l.get("email_events", {}).get("opens", 0),
+            "clicks": l.get("email_events", {}).get("clicks", 0),
+            "replies": l.get("email_events", {}).get("replies", 0),
+        }
+
     return {
-        "leads": [
-            {
-                "id": str(l["_id"]),
-                "company_name": l.get("company_name", ""),
-                "sector": l.get("sector", ""),
-                "city": l.get("city", ""),
-                "score": l.get("score", 0),
-                "decision_maker": l.get("decision_maker", ""),
-                "email": l.get("email", ""),
-                "phone": l.get("phone", ""),
-                "reason": l.get("reason", ""),
-                "status": l.get("hitl_status") or "pending",
-                "sent_at": l.get("sent_at"),
-                "opens": l.get("email_events", {}).get("opens", 0),
-                "clicks": l.get("email_events", {}).get("clicks", 0),
-                "replies": l.get("email_events", {}).get("replies", 0),
-            }
-            for l in leads
-        ],
+        "leads": [_shape(l) for l in leads],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -490,12 +505,50 @@ async def send_lead(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    # TODO: Implement email/WhatsApp sending logic
-    # For now, just mark as sent and store tracking ID
     import uuid
     tracking_id = str(uuid.uuid4())
 
-    result = await db.leads.update_one(
+    # Envío real por el buzón conectado del cliente (OAuth Gmail/Outlook).
+    # WhatsApp aún no implementado → se marca sent sin enviar (gap de canales).
+    if request.channel == "email":
+        to_email = lead.get("email") or (lead.get("decision_maker_email") or "")
+        if not to_email:
+            raise HTTPException(status_code=422, detail="El lead no tiene email del decisor")
+
+        from database import get_email_oauth_tokens
+        tokens_info = await get_email_oauth_tokens(user_id)
+        if not tokens_info:
+            raise HTTPException(
+                status_code=422,
+                detail="No tienes un buzón conectado. Conéctalo en Ajustes para enviar correos.",
+            )
+
+        from email_oauth import decrypt_tokens
+        from email_sender_oauth import send_email_oauth
+        provider = tokens_info.get("provider")
+        sender_email = tokens_info.get("email_sender_address")
+        to_name = lead.get("decision_maker") or lead.get("company_name") or ""
+        # El cuerpo viene del compose editable del cliente; soporta texto plano.
+        html_body = request.body if "<" in request.body else request.body.replace("\n", "<br>")
+        try:
+            tokens = decrypt_tokens(tokens_info.get("encrypted_tokens"))
+            ok = await send_email_oauth(
+                provider=provider,
+                access_token=tokens.get("access_token"),
+                to_email=to_email,
+                to_name=to_name,
+                subject=request.subject or "Propuesta de colaboración",
+                html_body=html_body,
+                sender_email=sender_email,
+                sender_name=sender_email.split("@")[0] if sender_email else "",
+            )
+        except Exception as e:
+            logger.exception("[send_lead] OAuth send failed: %s", e)
+            raise HTTPException(status_code=502, detail="No se pudo enviar el correo. Intenta de nuevo.")
+        if not ok:
+            raise HTTPException(status_code=502, detail="El proveedor de correo rechazó el envío.")
+
+    await db.leads.update_one(
         {"_id": obj_id},
         {
             "$set": {
@@ -505,17 +558,10 @@ async def send_lead(
                 "subject": request.subject,
                 "tracking_id": tracking_id,
                 "sent_at": datetime.now(timezone.utc),
-                "email_events": {
-                    "opens": 0,
-                    "clicks": 0,
-                    "replies": 0,
-                },
+                "email_events": {"opens": 0, "clicks": 0, "replies": 0},
             }
         },
     )
-
-    if result.modified_count == 0:
-        raise HTTPException(status_code=400, detail="Failed to send lead")
 
     return {
         "status": "sent",
