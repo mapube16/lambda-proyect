@@ -25,7 +25,16 @@
       "Bash(python3 -c \"import secrets; print\\(secrets.token_urlsafe\\(32\\)\\)\")",
       "WebFetch(domain:app.softseguros.com)",
       "Bash(cd /c/Users/maxim/Desktop/hive-pixel-office/backend && grep -n \"def get_poliza\\\\|def list_polizas\\\\|def parse_next_page\\\\|/api/poliza\\\\|api-token-auth\\\\|def authenticate\\\\|class SoftSeguros\" softseguros/adapter.py)",
-      "Read(//c/c/Users/maxim/Desktop/hive-pixel-office/backend/softseguros/**)"
+      "Read(//c/c/Users/maxim/Desktop/hive-pixel-office/backend/softseguros/**)",
+      "Bash(cd /c/Users/maxim/Desktop/hive-pixel-office && grep -n \"company_voice\\\\|softseguros_enabled\\\\|auth_headers\\\\|fixture\\\\|conftest\\\\|reset_db\\\\|jwt\\\\|token\" backend/tests/test_softseguros.py | head -30)",
+      "Read(//c/c/Users/maxim/Desktop/hive-pixel-office/backend/tests/**)",
+      "Bash(cd /c/Users/maxim/Desktop/hive-pixel-office && grep -n \"softseguros_poliza_id\\\\|create_index\\\\|sparse\\\\|partialFilter\" backend/database.py)",
+      "Read(//c/c/Users/maxim/Desktop/hive-pixel-office/backend/**)",
+      "Bash(cd /c/Users/maxim/Desktop/hive-pixel-office && grep -n \"rateLimitStart\\\\|setRateLimitStart\\\\|countdown = useMemo\" frontend/src/components/DebtorsSoftSegurosTab.tsx)",
+      "Read(//c/c/Users/maxim/Desktop/hive-pixel-office/frontend/src/components/**)",
+      "Bash(sed -i 's/assert pre.json\\(\\) == {\"configured\": False, \"configured_at\": None}/_b = pre.json\\(\\); assert _b[\"configured\"] is False and _b[\"configured_at\"] is None/' backend/tests/test_softseguros.py)",
+      "Bash(sed -i 's/assert resp.json\\(\\) == {\"configured\": False, \"configured_at\": None}/_b = resp.json\\(\\); assert _b[\"configured\"] is False and _b[\"configured_at\"] is None/' backend/tests/test_softseguros.py)",
+      "Bash(grep -n \"SyncStatusBadge\\\\|showReimport\\\\|tabs.length\\\\|{/\\\\\\\\* Header\" frontend/src/components/DebtorsSoftSegurosTab.tsx)"
     ]
   }
 }
