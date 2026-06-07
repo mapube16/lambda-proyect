@@ -96,6 +96,43 @@
 - **SCAL-02**: Clay enrichment para datos adicionales de empresa
 - **SCAL-03**: Migración de SQLite a PostgreSQL para 3+ clientes concurrentes
 
+### INFRA — Infrastructure (Milestone v1.0)
+
+- [x] **INFRA-01**: Developer can deploy API, Worker, and Redis as 3 separate Railway services from one repo
+- [x] **INFRA-02**: Worker service processes ARQ jobs from Redis without blocking the API service
+- [x] **INFRA-03**: API service enqueues prospecting campaigns as ARQ jobs and returns run_id immediately
+
+### TENANT — Tenant Isolation (Milestone v1.0)
+
+- [ ] **TENANT-01**: All MongoDB collections (campaigns, leads, company_voice) include tenant_id = user_id on every document
+- [ ] **TENANT-02**: All read queries filter by tenant_id to prevent cross-tenant data access
+- [ ] **TENANT-03**: Redis pub/sub channels use namespacing pattern `ws:{tenant_id}:{run_id}`
+- [ ] **TENANT-04**: Worker events reach only the WebSocket connection matching the correct tenant_id
+
+### VERTICAL — Pipeline Verticals (Milestone v1.0)
+
+- [ ] **VERTICAL-01**: User can select an insurance vertical (desempleo, arrendamiento, empresarial) when configuring a campaign
+- [ ] **VERTICAL-02**: VerticalConfig dataclass defines signal_sources, scoring_weights, and prompt_fragments per vertical
+- [ ] **VERTICAL-03**: Pipeline loads the correct signal_sources at runtime from VerticalConfig
+
+### SIGNAL — SignalLead Contract (Milestone v1.0)
+
+- [ ] **SIGNAL-01**: All signal_sources return a SignalLead TypedDict with fields: company_name, url, industry, city, source
+- [ ] **SIGNAL-02**: Serper signal_source implements SignalLead contract
+
+### SCRAPE — Scraping Improvements (Milestone v1.0)
+
+- [x] **SCRAPE-01**: Scraper uses curl_cffi AsyncSession(impersonate="chrome131") instead of httpx
+- [x] **SCRAPE-02**: Scraped HTML converts to compressed Markdown via Crawl4AI before LLM analysis
+- [x] **SCRAPE-03**: DIRECTORY_DOMAINS blocklist filters aggregator sites from Serper results before scraping
+- [x] **SCRAPE-04**: extract_homepage(url) normalizes blog/directory URLs to company homepages
+
+### COST — Cost Tracking (Milestone v1.0)
+
+- [ ] **COST-01**: Every LLM call logs CostEvent(tenant_id, run_id, model, input_tokens, output_tokens, cost_usd)
+- [ ] **COST-02**: Every Serper call logs CostEvent(tenant_id, run_id, credits_used)
+- [ ] **COST-03**: User can query total cost per run_id via API endpoint
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -105,8 +142,10 @@
 | Self-improving graph (auto-evolución) | Requiere harness de evaluación que no existe aún — v3+ |
 | Next.js / SSR migration | El canvas pixel art con game loop ya funciona en React/Vite — SSR no agrega valor |
 | Auth0 / Clerk / Supabase Auth | JWT in-house es suficiente para MVP piloto — sin dependencia de vendor externo |
-| SQLAlchemy ORM / Alembic | Overhead innecesario para MVP — queries directas con aiosqlite |
-| Playwright / Crawl4AI | `aden_tools web_scrape_tool` primero — instalar headless browser solo si falla |
+| SQLAlchemy ORM / Alembic | Overhead innecesario para MVP — queries directas con Motor async |
+| Playwright headless browser | curl_cffi + Crawl4AI cubre los casos de anti-bot sin headless browser |
+| Apollo.io enrichment | Fuera de scope v1.0 — añadir como signal_source en v1.1+ |
+| Org hierarchy (org → N users) | tenant_id = user_id es suficiente para 20-50 brokers — orgs en v2 |
 
 ## Traceability
 
@@ -137,35 +176,31 @@
 | VIZ-01 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-02 | Phase 8 — Real-Time Visualization | Pending |
 | VIZ-03 | Phase 8 — Real-Time Visualization | Pending |
-| SOFTSEG-01 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-02 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-03 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-04 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-05 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-06 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-07 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-08 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-09 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-| SOFTSEG-10 | Phase 18 — SOFTSEGUROS Deudores Sync | Complete |
-
-### SOFTSEGUROS Deudores Sync (Phase 18)
-
-- **SOFTSEG-01**: Token-based auth contra `POST /api-token-auth/`; header `Authorization: Token <x>` (NO Bearer); re-auth transparente en 401
-- **SOFTSEG-02**: Tabla `softseguros_credentials` con Fernet encryption per-user; validación al guardar (auth real); jamás loggear credenciales
-- **SOFTSEG-03**: Paginar `/api/pagopoliza/` (10/página fijo) filtrando `comisionada=false`; enriquecer con `/api/poliza/{id}` → `/api/cliente/{id}`; cache de cliente/poliza en memoria por sync
-- **SOFTSEG-04**: `asyncio.Semaphore(5)` + tenacity retry exponencial en 429/5xx con `Retry-After`; sync no crashea ante errores; `sync_log` marca `failed`
-- **SOFTSEG-05**: Clasificación `ya_vencidos` (fecha_pago < hoy) y `proximos_a_vencer` (entre hoy y hoy+30), recalculada en cada sync
-- **SOFTSEG-06**: 3 modos — onboarding (one-shot), cron diario APScheduler default 3am, manual rate-limited 1/5min
-- **SOFTSEG-07**: `GET /api/debtors/{id}/verify-fresh` para voice agent; comportamiento: already_paid (marca local pagado+inactive), not_found (marca eliminado), outdated (actualiza local), ok (proceder), fail-open en timeout
-- **SOFTSEG-08**: REST API filtrada (`?status=...`) con JWT + multi-tenant strict (user A no ve nada de B); endpoints sync-status, sync-logs, configure-softseguros
-- **SOFTSEG-09**: Soft-delete only (`is_active=0`); cuotas ausentes del listado se verifican puntualmente para distinguir pagado vs eliminado; nunca hard-delete
-- **SOFTSEG-10**: SoftSegurosSetupPage (form + validación + loader onboarding); DebtorsPage (2 tabs + DebtorCard + SyncStatusBadge + botón actualizar disabled durante rate-limit); empty/error states
+| INFRA-01 | Phase 18 — Infrastructure Foundation | Complete |
+| INFRA-02 | Phase 18 — Infrastructure Foundation | Complete |
+| INFRA-03 | Phase 18 — Infrastructure Foundation | Complete |
+| TENANT-01 | Phase 19 — Tenant Isolation | Pending |
+| TENANT-02 | Phase 19 — Tenant Isolation | Pending |
+| TENANT-03 | Phase 19 — Tenant Isolation | Pending |
+| TENANT-04 | Phase 19 — Tenant Isolation | Pending |
+| VERTICAL-01 | Phase 21 — Pipeline Parametrization | Pending |
+| VERTICAL-02 | Phase 21 — Pipeline Parametrization | Pending |
+| VERTICAL-03 | Phase 21 — Pipeline Parametrization | Pending |
+| SIGNAL-01 | Phase 21 — Pipeline Parametrization | Pending |
+| SIGNAL-02 | Phase 21 — Pipeline Parametrization | Pending |
+| SCRAPE-01 | Phase 20 — Scraping Improvements | Complete |
+| SCRAPE-02 | Phase 20 — Scraping Improvements | Complete |
+| SCRAPE-03 | Phase 20 — Scraping Improvements | Complete |
+| SCRAPE-04 | Phase 20 — Scraping Improvements | Complete |
+| COST-01 | Phase 22 — Cost Observability | Pending |
+| COST-02 | Phase 22 — Cost Observability | Pending |
+| COST-03 | Phase 22 — Cost Observability | Pending |
 
 **Coverage:**
-- v1 requirements: 35 total
-- Mapped to phases: 35
-- Unmapped: 0
+- v0.6 requirements: 25 (AUTH/HIVE/PIPE/HITL/CONF/LEAD/VIZ) + 16 (LANDA/COBR)
+- v1.0 requirements: 19 new (INFRA/TENANT/VERTICAL/SIGNAL/SCRAPE/COST)
+- Total mapped: all
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-05-12 — Phase 18 (SOFTSEG-01..10) added*
+*Last updated: 2026-05-26 — Milestone v1.0 traceability updated: INFRA→18, TENANT→19, SCRAPE→20, VERTICAL/SIGNAL→21, COST→22*

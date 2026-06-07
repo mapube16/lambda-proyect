@@ -8,51 +8,45 @@ Test suite for 4 critical endpoints before Phase 16 UI rollout:
 import pytest
 from httpx import AsyncClient
 import database
-from auth import create_access_token
+import auth
 from datetime import datetime, timezone
 
 
-@pytest.fixture
-async def client_token(async_client: AsyncClient):
-    """Create a client user and return JWT token."""
-    await async_client.post(
-        "/auth/register",
-        json={"email": "client@test.com", "password": "test123"}
-    )
-    resp = await async_client.post(
-        "/auth/login",
-        json={"email": "client@test.com", "password": "test123"}
-    )
-    return resp.json()["access_token"]
-
-
-@pytest.fixture
-async def staff_token(async_client: AsyncClient):
-    """Create a staff user and return JWT token."""
-    await async_client.post(
-        "/auth/register",
-        json={"email": "staff@test.com", "password": "test123"}
-    )
+async def _make_test_user(email: str, role: str = "client") -> str:
+    """Insert user directly and return JWT token."""
     db = database.get_db()
-    await db.users.update_one(
-        {"email": "staff@test.com"},
-        {"$set": {"role": "staff"}}
-    )
-    resp = await async_client.post(
-        "/auth/login",
-        json={"email": "staff@test.com", "password": "test123"}
-    )
-    return resp.json()["access_token"]
+    result = await db.users.insert_one({
+        "email": email,
+        "hashed_password": auth.hash_password("test123"),
+        "role": role,
+        "created_at": datetime.now(timezone.utc),
+    })
+    user_id = str(result.inserted_id)
+    return auth.create_access_token({"sub": user_id, "role": role})
 
 
 @pytest.fixture
-async def lead_doc(async_client: AsyncClient, client_token: str):
+async def client_token():
+    """Create a client user and return JWT token."""
+    return await _make_test_user("client@test.com", "client")
+
+
+@pytest.fixture
+async def staff_token():
+    """Create a staff user and return JWT token."""
+    return await _make_test_user("staff@test.com", "staff")
+
+
+@pytest.fixture
+async def lead_doc(client_token: str):
     """Create a sample lead and return its ID."""
     db = database.get_db()
-    
-    # Get client user_id from token
-    client_data = await database.get_user_by_email("client@test.com")
-    client_id = str(client_data.get("_id") or client_data.get("id"))
+
+    # Decode token to get client user_id
+    from auth import SECRET_KEY, ALGORITHM
+    from jose import jwt as _jwt
+    payload = _jwt.decode(client_token, SECRET_KEY, algorithms=[ALGORITHM])
+    client_id = payload["sub"]
     
     lead = {
         "user_id": client_id,
@@ -110,18 +104,8 @@ class TestGetLeadDetail:
     
     async def test_get_lead_cross_tenant_blocked(self, async_client: AsyncClient, lead_doc: str):
         """Another client cannot see this lead."""
-        # Create second client
-        await async_client.post(
-            "/auth/register",
-            json={"email": "other@test.com", "password": "test123"}
-        )
-        resp = await async_client.post(
-            "/auth/login",
-            json={"email": "other@test.com", "password": "test123"}
-        )
-        other_token = resp.json()["access_token"]
-        
-        # Try to access original lead
+        other_token = await _make_test_user("other@test.com", "client")
+
         resp = await async_client.get(
             f"/api/leads/{lead_doc}",
             headers={"Authorization": f"Bearer {other_token}"}
@@ -154,8 +138,10 @@ class TestGetLeadDraft:
     async def test_get_draft_no_expediente(self, async_client: AsyncClient, client_token: str):
         """Draft endpoint handles missing expediente gracefully."""
         db = database.get_db()
-        client_data = await database.get_user_by_email("client@test.com")
-        client_id = str(client_data.get("_id") or client_data.get("id"))
+        from auth import SECRET_KEY, ALGORITHM
+        from jose import jwt as _jwt
+        payload = _jwt.decode(client_token, SECRET_KEY, algorithms=[ALGORITHM])
+        client_id = payload["sub"]
         
         lead = {
             "user_id": client_id,

@@ -55,15 +55,18 @@ async def test_hive_adapter_is_only_seam():
 async def test_start_run_no_error():
     """HiveAdapter.start_run(user_id, inputs) completes without raising."""
     from hive_adapter import HiveAdapter
+    from unittest.mock import AsyncMock, patch
     messages_sent = []
 
     async def mock_send(user_id: str, message: dict):
         messages_sent.append((user_id, message))
 
-    adapter = HiveAdapter(send_to_user_callback=mock_send)
-    run_id = await adapter.start_run("test_user", {"empresa_url": "https://example.com"})
-    assert run_id is not None
-    await asyncio.sleep(0.05)  # let background task start
+    with patch("hive_adapter.GraphExecutor") as mock_executor_cls:
+        mock_executor_cls.return_value.execute = AsyncMock()
+        adapter = HiveAdapter(send_to_user_callback=mock_send)
+        run_id = await adapter.start_run("test_user", {"empresa_url": "https://example.com"})
+        assert run_id is not None
+        await asyncio.sleep(0.05)  # let background task start
 
 
 # ─── HIVE-03: WebSocket routing by user_id ────────────────────────────────────
@@ -120,21 +123,25 @@ async def test_ws_delivery_correct_user():
 # ─── HIVE-04: Per-run SharedMemory isolation ──────────────────────────────────
 
 async def test_shared_memory_per_run_isolation():
-    """Two start_run() calls create two separate AgentRunner instances."""
+    """Two start_run() calls create two separate background tasks in _runs."""
     from hive_adapter import HiveAdapter
+    from unittest.mock import AsyncMock, patch
 
     async def mock_send(user_id: str, message: dict):
         pass
 
-    adapter = HiveAdapter(send_to_user_callback=mock_send)
-    await adapter.start_run("user_a", {})
-    await adapter.start_run("user_b", {})
+    with patch("hive_adapter.GraphExecutor") as mock_executor_cls:
+        # Make execute block until cancelled so tasks stay in _runs
+        mock_executor_cls.return_value.execute = AsyncMock()
+        adapter = HiveAdapter(send_to_user_callback=mock_send)
+        await adapter.start_run("user_a", {})
+        await adapter.start_run("user_b", {})
 
-    runner_a = adapter._runs.get("user_a")
-    runner_b = adapter._runs.get("user_b")
-    assert runner_a is not None
-    assert runner_b is not None
-    assert runner_a is not runner_b, "Each user must have a separate AgentRunner instance"
+        runner_a = adapter._runs.get("user_a")
+        runner_b = adapter._runs.get("user_b")
+        assert runner_a is not None
+        assert runner_b is not None
+        assert runner_a is not runner_b, "Each user must have a separate task"
 
 
 # ─── HIVE-05: EventBus events map to AgentState ───────────────────────────────

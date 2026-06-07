@@ -8,15 +8,20 @@ from datetime import datetime, timezone
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _register_and_login(async_client, email="landa_user@test.com", password="pass1234"):
-    """Register a user and return their access token and user_id."""
-    await async_client.post("/auth/register", json={"email": email, "password": password})
-    resp = await async_client.post("/auth/login", json={"email": email, "password": password})
-    token = resp.json()["access_token"]
-    from jose import jwt as jose_jwt
-    from auth import SECRET_KEY, ALGORITHM
-    payload = jose_jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    return token, payload["sub"]
+async def _register_and_login(async_client=None, email="landa_user@test.com", password="pass1234"):
+    """Insert user directly and return (token, user_id)."""
+    from datetime import timezone
+    from database import get_db
+    import auth
+    result = await get_db().users.insert_one({
+        "email": email,
+        "hashed_password": auth.hash_password(password),
+        "role": "client",
+        "created_at": datetime.now(timezone.utc),
+    })
+    user_id = str(result.inserted_id)
+    token = auth.create_access_token({"sub": user_id, "role": "client"})
+    return token, user_id
 
 
 async def _insert_lead(user_id: str, estado: str = "checkpoint", **extra) -> str:

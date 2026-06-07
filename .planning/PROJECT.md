@@ -10,6 +10,23 @@ El backend actual (FastAPI + WebSocket + HiveOrchestrator) se reemplaza con el f
 
 Un cliente piloto puede entrar a la oficina, configurar su agente prospector con las 10 variables del negocio, ver los agentes trabajar en tiempo real en la oficina pixel art, y recibir expedientes + correos listos para enviar.
 
+## Current Milestone: v1.0 Multi-Tenant SaaS Pipeline
+
+**Goal:** Convertir el pipeline de prospección single-tenant en una plataforma SaaS multi-tenant para brokers de seguros con aislamiento real de tenants, cola de trabajos asíncrona, verticales de seguro parametrizables y observabilidad de costos.
+
+**Target features:**
+- Infraestructura Railway: API + Worker + Redis (3 servicios separados)
+- ARQ job queue (asyncio-native, reemplaza ejecución in-process)
+- tenant_id en todos los modelos MongoDB + queries aisladas por tenant
+- VerticalConfig dataclass: parametriza pipeline por vertical (desempleo, arrendamiento, empresarial)
+- SignalLead contract: output estándar de todos los signal_sources
+- curl_cffi + Crawl4AI: scraping anti-bot con ~80% menos tokens GPT-4o
+- Redis pub/sub WebSocket bridge: worker publica eventos → frontend
+- CostEvent: tracking de costos por tenant (GPT-4o, Serper, Apollo)
+- DIRECTORY_DOMAINS filter + extract_homepage() fix del scraper
+
+**Tenant model:** tenant_id = user_id (1:1, sin orgs, escala a 20-50 brokers)
+
 ## Requirements
 
 ### Validated
@@ -21,25 +38,26 @@ Un cliente piloto puede entrar a la oficina, configurar su agente prospector con
 
 ### Active
 
-**Integración Hive:**
-- [ ] Reemplazar HiveOrchestrator con AgentRunner + GraphExecutor real de aden-hive/hive
-- [ ] Implementar grafo prospector: sourcing → scoring → veto → SPICED → email → expediente → HITL
-- [ ] Conectar herramientas MCP (web_search_tool, web_scrape_tool) al ToolRegistry de Hive
-- [ ] Integrar personalidad.md como system prompt del nodo central prospector
+**Infraestructura multi-tenant:**
+- [ ] Railway 3-service deployment: API service, Worker service, Redis service
+- [ ] ARQ worker process con Redis como broker de cola
+- [ ] tenant_id = user_id en todos los documentos MongoDB (campaigns, leads, company_voice, etc.)
+- [ ] Redis pub/sub WebSocket bridge: worker publica a `ws:{tenant_id}:{run_id}`, API forwardea al frontend
 
-**UI de configuración de agentes:**
-- [ ] Panel en la oficina que muestra la configuración completa de cada agente (personalidad, módulos, variables)
-- [ ] Al hacer click en un personaje de la oficina, ver su configuración (nombre, rol, system prompt, variables de campaña)
-- [ ] Formulario para configurar las 10 variables de campaña antes de lanzar prospección
+**Pipeline parametrizable:**
+- [ ] VerticalConfig dataclass con todos los parámetros por vertical de seguro
+- [ ] SignalLead TypedDict como contrato de output de todos los signal_sources
+- [ ] Registro de signal_sources por vertical en VerticalConfig
 
-**Flujo de prospección:**
-- [ ] Input de URL de empresa → agente scraper → pipeline completo → expediente
-- [ ] Nodo HITL: pausa en la oficina para revisión humana antes de aprobar/rechazar lead
-- [ ] Dashboard de leads: expedientes generados con score, decisor, email borrador
+**Scraping mejorado:**
+- [ ] curl_cffi AsyncSession(impersonate="chrome131") reemplaza httpx en el scraper
+- [ ] Crawl4AI: HTML → Markdown comprimido antes de pasar a GPT-4o
+- [ ] DIRECTORY_DOMAINS blocklist (ciencuadras.com, computrabajo.com, etc.)
+- [ ] extract_homepage(url): extrae homepage desde URLs de blog/directorio
 
-**Auth y multi-usuario:**
-- [ ] Login básico (email/password) para separar sesiones de clientes
-- [ ] Cada usuario tiene sus propios agentes y runs aislados
+**Observabilidad:**
+- [ ] CostEvent dataclass para tracking de costos por tenant
+- [ ] Logging de costos GPT-4o, Serper, Apollo por run_id y tenant_id
 
 ### Out of Scope
 
@@ -85,5 +103,22 @@ Un cliente piloto puede entrar a la oficina, configurar su agente prospector con
 | personalidad.md como primer agente seed | Tiene los 4 módulos completos y probados — es el MVP del agente prospector | — Pending |
 | HITL en la oficina (pausa visual) | El flujo de aprobación de leads ocurre en la oficina, no en email — más engaging para el cliente | — Pending |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd:transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd:complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-03-17 after initialization*
+*Last updated: 2026-05-26 — Milestone v1.0 Multi-Tenant SaaS Pipeline started*

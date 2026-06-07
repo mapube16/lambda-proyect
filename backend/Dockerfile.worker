@@ -1,0 +1,16 @@
+FROM mcr.microsoft.com/playwright/python:v1.49.0-noble
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Chromium is already in the base image at /ms-playwright.
+# CRAWL4AI_MODE=api tells crawl4ai-setup to skip its own playwright install.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV CRAWL4AI_MODE=api
+
+COPY . .
+RUN crawl4ai-setup
+
+CMD ["arq", "worker.WorkerSettings"]

@@ -1,40 +1,35 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.6
-milestone_name: milestone
-status: executing
-stopped_at: Completed 18-05-PLAN.md
-last_updated: "2026-05-12T23:31:54.699Z"
-last_activity: "2026-05-12 — Phase 18 Plan 05 complete: frontend SOFTSEGUROS tab + E2E integration test"
+milestone: v1.0
+milestone_name: — Multi-Tenant SaaS Pipeline
+status: Ready to execute
+stopped_at: Completed 23-03-PLAN.md
+last_updated: "2026-05-30T01:51:46.203Z"
 progress:
-  total_phases: 18
+  total_phases: 23
   completed_phases: 7
-  total_plans: 48
-  completed_plans: 44
-  percent: 46
+  total_plans: 55
+  completed_plans: 46
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-17)
+See: .planning/PROJECT.md (updated 2026-05-26)
 
 **Core value:** Un cliente piloto puede configurar su agente prospector, ver los agentes trabajar en la oficina pixel art en tiempo real, y recibir expedientes con correos listos para enviar.
-**Current focus:** Phase 18 — SOFTSEGUROS Deudores Sync
+**Current focus:** Phase 23 — intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base
 
 ## Current Position
 
-Phase: 18 of 18 (SOFTSEGUROS Deudores Sync)
-Plan: 05 of 05
-Status: Executing (18-05 complete — all Phase 18 plans done, awaiting phase verifier)
-Last activity: 2026-05-12 — Phase 18 Plan 05 complete: frontend SOFTSEGUROS tab + E2E integration test
-
-Progress: [█████░░░░░] 46%
+Phase: 23 (intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base) — EXECUTING
+Plan: 5 of 5
 
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 3
 - Average duration: ~10 min
 - Total execution time: ~0.5 hours
@@ -69,11 +64,16 @@ Progress: [█████░░░░░] 46%
 | Phase 17-voice-cobranza-agent P04 | 9min | 2 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P07 | 9min | 2 tasks | 3 files |
 | Phase 17-voice-cobranza-agent P08 | 8min | 3 tasks | 4 files |
-| Phase 18-softseguros-sync P01 | 3min | 1 tasks | 1 files |
-| Phase 18-softseguros-sync P02 | ~12min | 3 tasks | 8 files |
-| Phase 18-softseguros-sync P03 | ~25min | 4 tasks | 7 files |
-| Phase 18-softseguros-sync P04 | ~20min | 2 tasks | 5 files |
-| Phase 18-softseguros-sync P05 | ~25min | 6 tasks | 5 files |
+| Phase 18 P01 | 5 | 1 tasks | 1 files |
+| Phase 18-infrastructure-foundation P02 | 741 | 4 tasks | 7 files |
+| Phase 20 P01 | 5 | 1 tasks | 2 files |
+| Phase 20-scraping-improvements P02 | 2min | 2 tasks | 1 files |
+| Phase 20 P03 | 10min | 2 tasks | 1 files |
+| Phase 20-scraping-improvements P04 | 5min | 2 tasks | 2 files |
+| Phase 23 P01 | 142 | 1 tasks | 1 files |
+| Phase 23 P02 | 15 | 2 tasks | 3 files |
+| Phase 23-intelligent-prospecting-chat-with-nl-input-and-company-knowledge-base P04 | 3min | 2 tasks | 1 files |
+| Phase 23 P03 | 13min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -81,6 +81,18 @@ Progress: [█████░░░░░] 46%
 
 - Phase 15 added: Pipeline Enrichment + Real Channel Activation (SECOP bridge, NIT enricher, WhatsApp fallback)
 - Phase 16 added: WhatsApp Conversational Advisor Bot (LLM tool-calling bot para asesores via Twilio)
+- Phases 18-22 added: Milestone v1.0 Multi-Tenant SaaS Pipeline (Railway infra, tenant isolation, scraping improvements, pipeline parametrization, cost observability)
+- Phase 23 added: Intelligent prospecting chat with NL input and company knowledge base
+
+### Milestone v1.0 Phase Structure
+
+| Phase | Name | Requirements |
+|-------|------|--------------|
+| 18 | Infrastructure Foundation | INFRA-01, INFRA-02, INFRA-03 |
+| 19 | Tenant Isolation | TENANT-01, TENANT-02, TENANT-03, TENANT-04 |
+| 20 | Scraping Improvements | SCRAPE-01, SCRAPE-02, SCRAPE-03, SCRAPE-04 |
+| 21 | Pipeline Parametrization | VERTICAL-01, VERTICAL-02, VERTICAL-03, SIGNAL-01, SIGNAL-02 |
+| 22 | Cost Observability | COST-01, COST-02, COST-03 |
 
 ### Decisions
 
@@ -154,17 +166,38 @@ Recent decisions affecting current work:
 - [Phase 17-05]: Terminal estados (promesa_de_pago, escalado, pagado) are never overwritten by endedReason mapping — tool calls set state mid-call
 - [Phase 17-07]: CustomEvent bridge (cobr:debtor_update) preferred over store coupling — CobranzaTab is self-contained with no store mutations
 - [Phase 17-07]: Section switcher uses display:none for leads panel when cobranza active — avoids remount and preserves leads scroll position
-- [Phase 18-softseguros-sync]: strict=False xfail markers + lazy main import + self-contained reset_db fixture — mirrors Phase 16/17 scaffold pattern
-- [Phase 18-02]: credentials.py fails-fast at module import if SOFTSEGUROS_ENCRYPTION_KEY missing — prevents silent misconfig
-- [Phase 18-02]: SoftSegurosAdapter constructor takes explicit username/password/base_url (no env reads inside) — testable + multi-tenant safe
-- [Phase 18-02]: 401 re-auth handled inside _request body (not via tenacity) — exactly one attempt, no infinite loop risk
-- [Phase 18-02]: 429 handling sleeps Retry-After then raises SoftSegurosRateLimitError to drive tenacity exponential backoff — composed retry strategy
-- [Phase 18-02]: Authorization header is `Token <x>` (Django REST Framework), NEVER Bearer — verified by test_softseg_01_header_uses_token_not_bearer
-- [Phase 18-02]: conftest.py seeds SOFTSEGUROS_ENCRYPTION_KEY via os.environ.setdefault BEFORE any softseguros.* import — only way to satisfy fail-fast contract
-- [Phase 18-04]: verify_poliza_fresh treats 'futuro'/'pagado' classification as not-callable-now → mark pagado+inactive; fail-open (should_call=true, warning) on timeout/5xx/unexpected with NO local mutation
-- [Phase 18-04]: /api/debtors literal routes (sync-status, sync-logs, configure-softseguros, health) declared before /{debtor_id}; BackgroundTasks sync wrapped in _safe_run_sync
-- [Phase 18-04]: test JWT minted via auth.create_access_token (login only sets httpOnly Secure cookie, not persisted over http://test); flipped all 8 remaining SOFTSEG stubs → 21 passed / 0 xfailed
-- [Phase 18-05]: frontend SOFTSEGUROS surface — useSoftSegurosDebtors hook (single instance in DebtorsSoftSegurosTab, no second poller in CobranzaTab), onboarding = poll /sync-status every 3s, 429 → client-side "Espera Ns" countdown; E2E integration test relies on Starlette BackgroundTasks completing within the ASGITransport request cycle
+- [v1.0 Roadmap]: Phase 18 (INFRA) is the foundation — phases 19-22 all depend on ARQ Worker and Redis being operational
+- [v1.0 Roadmap]: Phase 20 (SCRAPE) does not depend on TENANT or VERTICAL — self-contained scraping fixes; placed after INFRA, parallel with TENANT conceptually but sequenced after it for clean dependency ordering
+- [v1.0 Roadmap]: Phase 21 (VERTICAL+SIGNAL) groups VERTICAL and SIGNAL together — VerticalConfig registers signal_sources and SignalLead is their output contract; inseparable
+- [v1.0 Roadmap]: Phase 22 (COST) depends on TENANT (needs tenant_id on CostEvent) and INFRA (run_id comes from ARQ jobs); placed last
+- [Phase 18]: strict=False on all 5 xfail markers — stubs show as xfail not failures; CI never blocks on unimplemented infra features — consistent with Phase 16/17 pattern
+- [Phase 18]: create_user() returns dict with 'id' key — stubs use user['id'] not str(uid) directly (per actual database.py signature)
+- [Phase 18-infrastructure-foundation]: isinstance(task, asyncio.Task) guard in worker.py — prevents MagicMock from being awaited when HiveAdapter is patched in tests
+- [Phase 18-infrastructure-foundation]: UUID4 run_id stored as run_id field in MongoDB runs collection; update_run_status queries by run_id field (not ObjectId _id) for ARQ/UUID compatibility
+- [Phase 18-infrastructure-foundation]: arq_pool.py shared helper: redis_settings_from_url() parses Railway redis://:pw@host:port URLs correctly via urlparse
+- [Phase 20-scraping-improvements]: markdownify==1.2.2 chosen over Crawl4AI for HTML→Markdown — Crawl4AI requires Playwright (mandatory dep, ~300 MB browser binaries, incompatible with Railway ARQ worker); markdownify reuses beautifulsoup4 already installed
+- [Phase 20-scraping-improvements]: curl_cffi AsyncSession(impersonate="chrome131") replaces httpx.AsyncClient in scrape_url() only — httpx retained for API calls (Serper, GMaps, BrightData)
+- [Phase 20-scraping-improvements]: ua_profiles loop removed from scrape_url() — curl_cffi generates authentic browser headers from impersonate target; manual headers degrade the fingerprint
+- [Phase 20-scraping-improvements]: tldextract PSL pre-warm at module level (tldextract.extract("")) prevents cold-start network call per request on Railway
+- [Phase 20-scraping-improvements]: Two-layer discovery bug fix: strengthened _DIRECTOR_PROMPT (prompt-level) + _GENERIC_INDUSTRY_TERMS guard in _discover_companies() (runtime-level)
+- [Phase 20]: strict=False on all 4 xfail markers — stubs show as xfail not failures; CI never blocks on unimplemented scraping features — consistent with Phase 16/17/18 pattern
+- [Phase 20-scraping-improvements]: Crawl4AI DefaultMarkdownGenerator chosen for html_to_compressed_markdown() per plan critical_notes — processes HTML without browser launch; lazy import + bs4 fallback for graceful degradation
+- [Phase 20-scraping-improvements]: extract_homepage() reuses LOW_QUALITY_PATH_MARKERS tuple — no duplication; tldextract.extract('') at module top pre-warms PSL cache at Railway pod start
+- [Phase 20]: curl_cffi AsyncSession(impersonate='chrome131') replaces httpx.AsyncClient in scrape_url() — one session per call, TLS fingerprint defeats WAF detection
+- [Phase 20]: ua_profiles loop removed from scrape_url() — curl_cffi auto-generates authentic browser headers; manual headers degrade fingerprint
+- [Phase 20]: html_to_compressed_markdown(html) wired at end of scrape_url() replacing old soup.get_text() block — soup retained for contact extraction above it
+- [Phase 20]: extract_homepage(url) wired before BLOCKED_DOMAINS check in discover_via_serper() — normalizes blog/subpage URLs to company homepages before dedup
+- [Phase 20-scraping-improvements]: Two-layer discovery bug fix: strengthened _DIRECTOR_PROMPT (prompt-level) + _GENERIC_INDUSTRIA_TERMS guard in _discover_companies() (runtime-level)
+- [Phase 20-scraping-improvements]: _GENERIC_INDUSTRIA_TERMS defined as local frozenset inside _discover_companies() — not module-level to avoid confusion with COMPETITOR_GENERIC_WORDS
+- [Phase 23]: strict=False on all 8 xfail markers — stubs show as xfail not failures; CI never blocks on unimplemented Phase 23 features — consistent with Phase 16/17/18/20 pattern
+- [Phase 23]: Lazy imports inside test bodies (from onboarding import, from database import, import auth) — modules do not exist yet at collection time; consistent with Phase 17/18 pattern
+- [Phase 23]: extract_campaign_from_nl uses same gpt-5.4-2026-03-05 model and extra_body syntax as chat_turn() — string-marker parsing over Structured Outputs for compatibility
+- [Phase 23]: prospecting_knowledge collection: upsert_prospecting_knowledge includes user_id in $set (not only $setOnInsert) — ensures user_id always present for query consistency
+- [Phase 23]: _build_nl_context() caps signal lists at 20 items and total context at 1500 chars — prevents context window overflow (RESEARCH pitfall 3)
+- [Phase 23-04]: NLProspectInput placed above CampaignChat; CampaignChat retained unchanged as clarification fallback via clarificationReply state
+- [Phase 23-04]: KnowledgeBasePanel uses auto-save on blur (no save button); value===originalValue guard avoids unnecessary POSTs; collapsed by default, local React state only
+- [Phase 23]: import database as _database in leads.py — module reference required for monkeypatch.setattr patchability; direct from-import breaks test interception
+- [Phase 23]: test_prospect_chat.py uses insert_one + create_access_token directly; REST /auth/register route returns 404 from test client — matches test_cobranza.py pattern
 
 ### Pending Todos
 
@@ -177,6 +210,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-05-12T18:40:00.000Z
-Stopped at: Completed 18-05-PLAN.md
+Last session: 2026-05-30T01:51:46.193Z
+Stopped at: Completed 23-03-PLAN.md
 Resume file: None

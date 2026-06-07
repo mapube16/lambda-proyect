@@ -25,6 +25,14 @@ async def reset_db():
     await database.get_db().debtors.drop()
 
 
+@pytest.fixture(autouse=True)
+def bypass_vapi_signature():
+    """Bypass HMAC signature check for all webhook tests."""
+    with patch("cobranza.webhooks.verify_vapi_webhook_signature", return_value=True), \
+         patch("cobranza.webhooks.extract_signature_from_headers", return_value="dummy-sig"):
+        yield
+
+
 @pytest_asyncio.fixture
 async def async_client():
     from main import app
@@ -213,7 +221,7 @@ async def test_call_ended_no_answer_sets_sin_contacto(async_client, sample_debto
     """POST /api/vapi/call-ended with no-answer sets debtor estado=sin_contacto."""
     call_id = sample_debtor["call_id"]
 
-    with patch("main.manager") as mock_manager:
+    with patch("cobranza.webhooks.manager") as mock_manager:
         mock_manager.send_to_user = AsyncMock()
         payload = {
             "message": {
@@ -248,7 +256,7 @@ async def test_call_ended_keeps_promesa_de_pago(async_client, sample_debtor):
     await db.debtors.update_one({"_id": debtor_id}, {"$set": {"estado": "promesa_de_pago"}})
 
     call_id = sample_debtor["call_id"]
-    with patch("main.manager") as mock_manager:
+    with patch("cobranza.webhooks.manager") as mock_manager:
         mock_manager.send_to_user = AsyncMock()
         payload = {
             "message": {
@@ -271,7 +279,7 @@ async def test_call_ended_pushes_ws_event(async_client, sample_debtor):
     """POST /api/vapi/call-ended pushes debtor_update WS event to debtor user_id."""
     call_id = sample_debtor["call_id"]
 
-    with patch("main.manager") as mock_manager:
+    with patch("cobranza.webhooks.manager") as mock_manager:
         mock_manager.send_to_user = AsyncMock()
         payload = {
             "message": {
@@ -322,7 +330,7 @@ async def test_call_ended_agotado_when_max_intentos_reached(async_client, sample
     await db.debtors.update_one({"_id": debtor_id}, {"$set": {"intentos": 4, "max_intentos": 5}})
 
     call_id = sample_debtor["call_id"]
-    with patch("main.manager") as mock_manager:
+    with patch("cobranza.webhooks.manager") as mock_manager:
         mock_manager.send_to_user = AsyncMock()
         payload = {
             "message": {

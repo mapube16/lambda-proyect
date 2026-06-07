@@ -103,3 +103,44 @@ async def chat_turn(
         extra_body={"max_completion_tokens": 500},
     )
     return response.choices[0].message.content or ""
+
+
+# ── NL Single-Turn Extraction ─────────────────────────────────────────────────
+
+NL_EXTRACT_SYSTEM = """Eres un extractor de parametros de campana B2B para prospeccion.
+El usuario describe en una frase a quien quiere prospectar.
+Tu tarea: inferir TODOS los parametros de campana y emitir INMEDIATAMENTE:
+
+CAMPAIGN_READY:
+{"nombre_remitente": "...", "empresa_remitente": "...", "industria_objetivo": "...", "ciudad_objetivo": "...", "dolor_operativo": "...", "solucion_ofrecida": "...", "software_clave": "...", "jerarquia_decisores": "...", "signal_sources": ["serper"], "max_results": 20}
+
+REGLAS:
+- Si la ciudad no se menciona, usa "Bogota"
+- Si signal_sources no aplica, usa ["serper"]
+- Si max_results no se menciona, usa 20
+- Responde SOLO con el bloque CAMPAIGN_READY sin texto adicional
+- TODOS los campos deben estar presentes con valores razonables (nunca null)
+"""
+
+
+async def extract_campaign_from_nl(
+    message: str,
+    openai_api_key: str,
+    context: str = "",
+) -> str:
+    """Single-turn NL -> CAMPAIGN_READY extraction. Returns raw LLM reply string."""
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=openai_api_key)
+    system = NL_EXTRACT_SYSTEM
+    if context and context.strip():
+        system += f"\n\n=== CONTEXTO DEL NEGOCIO ===\n{context.strip()}"
+    response = await client.chat.completions.create(
+        model="gpt-5.4-2026-03-05",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": message},
+        ],
+        temperature=0.2,
+        extra_body={"max_completion_tokens": 400},
+    )
+    return response.choices[0].message.content or ""

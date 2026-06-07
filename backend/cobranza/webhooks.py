@@ -19,6 +19,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from database import get_db
+from services.connection_manager import manager
 from webhook_security import verify_vapi_webhook_signature, extract_signature_from_headers
 
 logger = logging.getLogger("cobranza.webhooks")
@@ -270,9 +271,7 @@ async def _process_call_ended(body: dict) -> JSONResponse:
         )
 
         # Push real-time WebSocket event to the debtor owner
-        # Lazy import inside function body to avoid circular import at module load
         try:
-            from main import manager  # noqa: PLC0415
             await manager.send_to_user(
                 str(debtor["user_id"]),
                 {

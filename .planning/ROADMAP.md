@@ -4,6 +4,8 @@
 
 The project migrates a working pixel art office frontend from a hand-rolled orchestrator to the real `aden-hive/hive` framework while adding the complete B2B prospecting pipeline, multi-tenant auth, a campaign configuration surface, a lead dashboard, and real-time character animations tied to live graph node events. Phases 1-2 lay the architectural foundation that everything else depends on. Phases 3-5 build the full backend pipeline. Phases 6-8 wire the frontend to real events and deliver the pilot-ready user-facing features.
 
+Milestone v1.0 (Multi-Tenant SaaS Pipeline) adds Phases 18-22: Railway infrastructure, tenant isolation, scraping improvements, pipeline parametrization, and cost observability.
+
 ## Phases
 
 **Phase Numbering:**
@@ -20,6 +22,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 6: Campaign Configuration** - 10-variable campaign form with SQLite persistence; AgentPanel config transparency display
 - [ ] **Phase 7: Lead Dashboard** - Expediente cards with score, decisor, email draft; kill switch rejection display; one-click email copy
 - [ ] **Phase 8: Real-Time Visualization** - Map all 9 graph node states to character animations; WebSocket delivery without UI block; error states on pipeline failure
+- [ ] **Phase 18: Infrastructure Foundation** - Railway 3-service deployment (API + Worker + Redis); ARQ job queue replaces in-process execution; API enqueues jobs and returns run_id immediately
+- [ ] **Phase 19: Tenant Isolation** - tenant_id on all MongoDB documents; all queries filtered by tenant_id; Redis pub/sub WebSocket bridge routes Worker events to the correct frontend connection
+- [x] **Phase 20: Scraping Improvements** - curl_cffi Chrome131 TLS impersonation replaces httpx; Crawl4AI compresses HTML to Markdown before LLM; DIRECTORY_DOMAINS blocklist; extract_homepage() normalization
+ (completed 2026-05-28)
+- [ ] **Phase 21: Pipeline Parametrization** - VerticalConfig dataclass per insurance vertical; SignalLead TypedDict contract for all signal_sources; user selects vertical at campaign configuration
+- [ ] **Phase 22: Cost Observability** - CostEvent logged per LLM and Serper call with tenant_id + run_id; user can query total cost per run via API
 
 ## Phase Details
 
@@ -339,12 +347,6 @@ Plans:
   3. Un asesor interno puede escribir "empresas de construcción en Bogotá en SECOP" y recibir una lista de prospectos con NIT, decisor y valor de contratos — conversación multi-turno con contexto
   4. El cliente puede configurar su `notification_channel` ("web", "whatsapp", "both") desde el StaffDashboard y la preferencia persiste — sin necesidad de tocar código
 
-**Arquitectura:**
-- Webhook entrante: `POST /api/whatsapp/incoming` (Twilio o Meta Cloud API)
-- Router de notificaciones: al emitir `lead_checkpoint`, `lead_handover`, etc., el sistema consulta `company_voice.notification_channel` y enruta a WebSocket, WA, o ambos
-- LLM con tool calling: intención libre → herramientas (buscar_licitaciones, aprobar_lead, rechazar_lead, ver_handover, enriquecer_nit)
-- Sesiones por número de teléfono en MongoDB (reemplaza dict en memoria de whatsapp_agent.py)
-- Dos perfiles de usuario: `asesor_interno` (acceso a SECOP, gestión de múltiples clientes) y `cliente` (acceso solo a sus propios leads)
 **Plans:** 6/6 plans complete
 
 Plans:
@@ -364,14 +366,6 @@ Plans:
   3. Al aprobar la campaña, el agente inicia llamadas outbound via Vapi — durante la llamada puede consultar la deuda, negociar y registrar promesas de pago usando tool calls a los endpoints de Landa
   4. El dashboard muestra el estado de cada deudor en tiempo real: `pendiente → llamando → promesa_de_pago → pagado → sin_contacto`, con historial de intentos y notas
 
-**Arquitectura:**
-- Colección MongoDB `debtors`: nombre, teléfono, monto, vencimiento, estado, historial_llamadas
-- CSV upload endpoint + parser en backend
-- `cobranza_agent.py`: lógica de conversación (identificación → deuda → negociación → acuerdo/rechazo)
-- Vapi assistant config: guión + tools (consultar_deuda, registrar_promesa, escalar_a_humano)
-- Webhooks Vapi: `POST /api/vapi/tool-call` para tool calls durante llamadas, `POST /api/vapi/call-ended` para actualizar estado
-- ClientDashboard: tab de cobranza con estado por deudor en tiempo real via WebSocket
-
 **Plans**: 8 plans
 
 Plans:
@@ -386,49 +380,110 @@ Plans:
 
 ---
 
-### Phase 18: SOFTSEGUROS Deudores Sync
+## Milestone v1.0 — Multi-Tenant SaaS Pipeline
 
-**Goal**: El corredor de seguros conecta sus credenciales SOFTSEGUROS y carga automáticamente toda su cartera de deudores (cuotas pendientes de pólizas), clasificada en dos vistas (próximos a vencer / ya vencidos), con sincronización diaria automática, botón de actualización manual rate-limited, y verificación puntual antes de cada llamada del voice agent (Phase 17) para evitar llamar a deudores que ya pagaron.
-**Depends on**: Phase 1, Phase 2, Phase 17
-**Requirements**: SOFTSEG-01, SOFTSEG-02, SOFTSEG-03, SOFTSEG-04, SOFTSEG-05, SOFTSEG-06, SOFTSEG-07, SOFTSEG-08, SOFTSEG-09, SOFTSEG-10
+### Phase 18: Infrastructure Foundation
+
+**Goal**: The platform runs as 3 separate Railway services (API, Worker, Redis); prospecting campaigns are enqueued as ARQ jobs so the API returns a run_id immediately and the Worker processes jobs without blocking the API
+**Depends on**: Phase 17
+**Requirements**: INFRA-01, INFRA-02, INFRA-03
 
 **Success Criteria** (what must be TRUE):
-  1. Un corredor configura sus credenciales SOFTSEGUROS desde la UI; el backend valida (auth real contra `POST /api-token-auth/`) y las guarda encriptadas con Fernet per-user — credenciales jamás aparecen en logs ni en responses
-  2. El onboarding sync (one-shot) carga 100% de las cuotas pendientes (`pagopoliza.comisionada=false`) enriquecidas con datos de cliente, en menos de 2 minutos para una cartera de 1000 deudores, con barra de progreso visible
-  3. `GET /api/debtors?status=proximos_a_vencer` retorna solo filas con `fecha_pago` entre hoy y hoy+30, `comisionada=false`, `is_active=1`, scoped al `user_id` del JWT — multi-tenant verificado
-  4. `GET /api/debtors?status=ya_vencidos` retorna solo filas con `fecha_pago < hoy`, `comisionada=false`, `is_active=1`
-  5. El cron diario (configurable, default 3am) corre automáticamente vía APScheduler y actualiza la BD; cuotas que SOFTSEGUROS ahora marca como `comisionada=true` se marcan localmente como `status='pagado', is_active=0`
-  6. El botón "Actualizar ahora" en UI dispara un sync manual; el segundo clic dentro de 5 min retorna 429 con mensaje claro
-  7. `GET /api/debtors/{id}/verify-fresh` retorna `{should_call: false, reason: "already_paid"}` cuando la pagopoliza fue cobrada en SOFTSEGUROS desde el último sync, Y actualiza la fila local en la misma transacción
-  8. El sync respeta `asyncio.Semaphore(5)` — nunca >5 requests concurrentes a SOFTSEGUROS; 429/5xx disparan backoff exponencial vía tenacity sin crashear el sync
-  9. Si SOFTSEGUROS está caído durante el pre-call check, el endpoint retorna `should_call=true` con warning (fail-open) para no bloquear cobranzas legítimas
-  10. Phase 17 (voice agent) puede consumir `GET /api/debtors?status=ya_vencidos` como fuente de cola de llamadas, y `GET /api/debtors/{id}/verify-fresh` antes de cada llamada
+  1. Developer can deploy API service, Worker service, and Redis service independently on Railway from a single repo — each service starts without errors in Railway logs
+  2. Submitting a prospecting campaign via `POST /api/campaigns` returns a `run_id` immediately (< 200ms) without waiting for pipeline execution
+  3. The Worker service picks up an enqueued ARQ job from Redis and executes the prospecting pipeline without any code running in the API process — verified by checking that no pipeline logic executes in the API process during a run
+  4. If the Worker process is restarted mid-run, incomplete jobs are re-queued and resume — the API service remains fully responsive throughout
 
-**Arquitectura:**
-- Modelo de datos: un "deudor" = una `pagopoliza` pendiente (no un cliente). Un cliente con N cuotas = N filas en tabla `debtors`. La API SOFTSEGUROS no expone endpoint "deudores"; se construye cruzando `/api/pagopoliza/` (deuda) con `/api/cliente/` (contacto) vía `/api/poliza/`
-- Tablas SQLite: `softseguros_credentials` (per-user, Fernet-encrypted), `debtors` (pagopoliza + cliente enriquecido), `sync_logs` (audit con `mode` ∈ onboarding|cron_daily|manual|pre_call_check)
-- Adapter HTTP: header `Authorization: Token <x>` (Django REST, NO Bearer); paginación fija 10/página (limitación de SOFTSEGUROS); retry tenacity con respeto de `Retry-After`
-- 3 modos de sync (NO polling continuo): onboarding one-shot, cron diario APScheduler, manual rate-limited 1/5min
-- 4to modo "pre-call check": 1 request puntual antes de cada llamada del voice agent; fail-open si SOFTSEGUROS caído
-- Concurrencia: `asyncio.Semaphore(5)`; cache de cliente/poliza en memoria durante el sync para evitar fetches duplicados
-- Endpoints REST: `/api/debtors` (list filtered), `/api/debtors/{id}`, `/api/debtors/{id}/verify-fresh`, `/api/debtors/sync-status`, `/api/debtors/sync-now`, `/api/debtors/configure-softseguros`
-- Frontend: SoftSegurosSetupPage (onboarding) + DebtorsPage (2 tabs + manual sync button + sync status badge)
-
-**Plans**: 5 plans
+**Plans**: 3 plans
 
 Plans:
-- [x] 18-01-PLAN.md — Wave 1: Nyquist xfail scaffold (20 stubs for SOFTSEG-01..10)
-- [x] 18-02-PLAN.md — Wave 2: HTTP adapter (Token auth + retry) + Fernet credentials
-- [x] 18-03-PLAN.md — Wave 2: Sync engine (onboarding + cron/manual delta) + classifier + APScheduler daily cron
-- [x] 18-04-PLAN.md — Wave 3: REST routes (configure, list, sync-now, verify-fresh)
-- [x] 18-05-PLAN.md — Wave 4: Frontend SOFTSEGUROS tab + integration test + green xfails
+- [x] 18-01-PLAN.md — Wave 0: xfail test stubs for INFRA-01/02/03 in backend/tests/test_infra.py
+- [x] 18-02-PLAN.md — Wave 1: ARQ worker.py + arq_pool.py + POST /api/prospect enqueue + UUID run_id in database.py (INFRA-02, INFRA-03)
+- [ ] 18-03-PLAN.md — Wave 2: Redis pub/sub WS bridge + railway.toml/railway-worker.toml + 3-service deploy checkpoint (INFRA-01, INFRA-02)
+
+### Phase 19: Tenant Isolation
+
+**Goal**: Every MongoDB document carries tenant_id and all queries are filtered so tenants cannot see each other's data; Worker events reach only the WebSocket connection belonging to the originating tenant via Redis pub/sub
+**Depends on**: Phase 18
+**Requirements**: TENANT-01, TENANT-02, TENANT-03, TENANT-04
+
+**Success Criteria** (what must be TRUE):
+  1. Every document written to campaigns, leads, and company_voice collections contains a `tenant_id` field equal to the authenticated user's user_id — confirmed by inspecting MongoDB documents after a run
+  2. A query executed as tenant A returns zero results that belong to tenant B — verified by seeding two tenants with overlapping data and confirming each only sees their own
+  3. Worker events published to `ws:{tenant_id}:{run_id}` are delivered only to the WebSocket connection authenticated as that tenant — a connection authenticated as tenant B receives no events from tenant A's run
+  4. Disconnecting and reconnecting the frontend WebSocket resubscribes to the correct tenant's Redis channel and resumes receiving events for any active run
+
+**Plans**: TBD
+
+### Phase 20: Scraping Improvements
+
+**Goal**: The scraper bypasses anti-bot protections using Chrome131 TLS impersonation; scraped HTML is compressed to Markdown before LLM analysis (~80% token reduction); aggregator domains are filtered before scraping; blog/directory URLs are normalized to company homepages
+**Depends on**: Phase 18
+**Requirements**: SCRAPE-01, SCRAPE-02, SCRAPE-03, SCRAPE-04
+
+**Success Criteria** (what must be TRUE):
+  1. Fetching a Cloudflare-protected Colombian B2B website with curl_cffi AsyncSession(impersonate="chrome131") returns the actual page HTML — the same request with httpx returns a bot-detection page
+  2. A scraped HTML page passed through Crawl4AI produces a Markdown string with at least 70% fewer characters than the original HTML — the Markdown still contains all key company information (name, services, contact)
+  3. Serper results for a query that would return ciencuadras.com or computrabajo.com are filtered out before any scraping attempt — zero requests are made to DIRECTORY_DOMAINS entries
+  4. Calling `extract_homepage("https://blog.acme.com/article/123")` returns `"https://acme.com"` — blog post and directory listing URLs are normalized to root domains
+
+**Plans**: 4 plans
+
+Plans:
+- [x] 20-01-PLAN.md — Wave 0: Create backend/Dockerfile.worker (Playwright base image); update railway-worker.toml; add crawl4ai>=0.4.21 + tldextract==5.3.1 + curl_cffi==0.15.0 to requirements.txt
+- [x] 20-02-PLAN.md — Wave 1: Add html_to_compressed_markdown(), extract_homepage(), _NON_HOME_SUBDOMAINS; expand LOW_QUALITY_DISCOVERY_DOMAINS (~35 new domains)
+- [x] 20-03-PLAN.md — Wave 1: Replace httpx.AsyncClient with curl_cffi AsyncSession in scrape_url(); wire html_to_compressed_markdown() and extract_homepage()
+- [x] 20-04-PLAN.md — Wave 2: Fix discovery query bug — strengthen _DIRECTOR_PROMPT + add industria guard in _discover_companies()
+
+### Phase 21: Pipeline Parametrization
+
+**Goal**: The pipeline is parametrized by insurance vertical so the correct signal_sources, scoring weights, and prompt fragments load automatically at runtime; all signal_sources return a uniform SignalLead contract; users select a vertical when configuring a campaign
+**Depends on**: Phase 18
+**Requirements**: VERTICAL-01, VERTICAL-02, VERTICAL-03, SIGNAL-01, SIGNAL-02
+
+**Success Criteria** (what must be TRUE):
+  1. A user can select an insurance vertical (desempleo, arrendamiento, empresarial) in the campaign configuration form before launching a run — the selection is persisted with the campaign document
+  2. A run configured with vertical "desempleo" loads different signal_sources than a run configured with "arrendamiento" — confirmed by comparing the signal_source list in server logs for both runs
+  3. Every signal_source (including the Serper source) returns objects that satisfy the SignalLead TypedDict: company_name, url, industry, city, source fields are all present and non-null
+  4. Adding a new signal_source requires only implementing the SignalLead TypedDict contract and registering it in VerticalConfig — no changes to pipeline orchestration code
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 22: Cost Observability
+
+**Goal**: Every LLM and Serper API call logs a CostEvent with tenant_id and run_id; users can query the total cost of any run via API endpoint
+**Depends on**: Phase 19
+**Requirements**: COST-01, COST-02, COST-03
+
+**Success Criteria** (what must be TRUE):
+  1. After a complete prospecting run, `GET /api/runs/{run_id}/cost` returns the total cost in USD for that run — including a breakdown by model (GPT-4o calls) and Serper credits used
+  2. Every GPT-4o call during a run writes a CostEvent document to MongoDB with tenant_id, run_id, model, input_tokens, output_tokens, and cost_usd — confirmed by querying the cost_events collection after a run
+  3. Every Serper query during a run writes a CostEvent with tenant_id, run_id, and credits_used — confirmed by querying the cost_events collection
+  4. Two tenants running concurrent campaigns accumulate CostEvents separately — querying by tenant_id returns only that tenant's costs
+
+**Plans**: TBD
+
+### Phase 23: Intelligent prospecting chat with NL input and company knowledge base
+
+**Goal:** Replace the manual 10-field campaign form with a single-turn natural-language chat that extracts prospecting parameters via LLM, persists a per-tenant prospecting_knowledge collection (product description + ICP + signal history), injects that context into every NL extraction, and closes the feedback loop by appending approved/rejected lead signals automatically when the user makes checkpoint decisions.
+**Requirements**: NL-01, NL-02, KB-01, KB-02, KB-03, SIGNAL-FB-01, UI-01, UI-02, UI-03, UI-04
+**Depends on:** Phase 22
+**Plans:** 1/5 plans executed
+
+Plans:
+- [ ] 23-01-PLAN.md - Wave 1: Nyquist xfail test scaffold (8 stubs covering NL/KB/SIGNAL-FB)
+- [ ] 23-02-PLAN.md - Wave 2: extract_campaign_from_nl + prospecting_knowledge CRUD + /api/chat/prospect + /api/knowledge endpoints
+- [ ] 23-03-PLAN.md - Wave 3: Fire-and-forget signal feedback hook on POST /api/leads/{id}/decision
+- [x] 23-04-PLAN.md - Wave 3: NLProspectInput + ExtractedParamsCard + KnowledgeBasePanel + LearningBadge in AgentPanel.tsx
+- [ ] 23-05-PLAN.md - Wave 4: Backend+frontend health gates + human-verify end-to-end checkpoint
 
 ---
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -443,10 +498,14 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. Client RAG + Intelligent Onboarding | 1/1 | Complete | 2026-03-20 |
 | 10. Client Conversation + Lead Feedback | 1/1 | Complete | 2026-03-20 |
 | 11. Continuous Learning Loop | 1/1 | Complete | 2026-03-20 |
-| 12. Landa Foundation | 4/4 | Complete   | 2026-03-22 |
-| 13. Landa Agent Pipeline | 6/6 | Complete   | 2026-03-22 |
-| 14. Landa API & Checkpoint UI | 7/7 | Complete   | 2026-03-23 |
+| 12. Landa Foundation | 4/4 | Complete | 2026-03-22 |
+| 13. Landa Agent Pipeline | 6/6 | Complete | 2026-03-22 |
+| 14. Landa API & Checkpoint UI | 7/7 | Complete | 2026-03-23 |
 | 15. Pipeline Enrichment + Real Channel Activation | 0/4 | Planned | - |
-| 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete    | 2026-03-26 |
+| 16. WhatsApp como Canal Completo de Landa | 6/6 | Complete | 2026-03-26 |
 | 17. Voice Cobranza Agent | 8/8 | Complete | 2026-03-27 |
-| 18. SOFTSEGUROS Deudores Sync | 3/5 | Complete    | 2026-05-12 |
+| 18. Infrastructure Foundation | 2/3 | In Progress|  |
+| 19. Tenant Isolation | 0/TBD | Not started | - |
+| 20. Scraping Improvements | 4/4 | Complete    | 2026-05-28 |
+| 21. Pipeline Parametrization | 0/TBD | Not started | - |
+| 22. Cost Observability | 0/TBD | Not started | - |
