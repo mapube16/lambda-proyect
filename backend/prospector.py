@@ -14,9 +14,14 @@ import re
 import asyncio
 import logging
 import httpx
+from curl_cffi.requests import AsyncSession, RequestsError
 from pathlib import Path
 from openai import AsyncOpenAI
 from bs4 import BeautifulSoup
+import tldextract
+# Pre-warm the Public Suffix List cache at import time to avoid cold-start network latency.
+# This makes one HTTP request on first Railway pod start, not on each scrape_url() call.
+tldextract.extract("")
 try:
     from ddgs import DDGS          # new package name
 except ImportError:
@@ -110,6 +115,38 @@ LOW_QUALITY_DISCOVERY_DOMAINS = {
     "pinterest.com", "ar.pinterest.com",      # social/ideas board
     "correosexpress.es",                       # Spanish courier, not Colombian
     "ccl.com.co",                              # Cámara Colombiana de la Logística (gremio, no empresa)
+    # Colombian business directories (added Phase 20)
+    "einforma.co", "directorio-empresas.einforma.co",
+    "empresas.portafolio.co", "empresas.larepublica.co",
+    "cylex.co", "guiaempresarial.co", "123empresas.com",
+    "tuugo.com", "tuugo.com.co",
+    "enests.co",
+    "brownbook.net",
+    "cybo.com",
+    "infobel.com",
+    "tupalo.com",
+    "hotfrog.com",
+    "foursquare.com",
+    # Job boards (added Phase 20)
+    "bumeran.com",
+    "getonboard.com", "getonboard.co",
+    "magneto.co",
+    "hipo.co",
+    "trabajando.com.co",
+    "multitrabajos.com",
+    "empleo.net.co",
+    # News / media portals (added Phase 20)
+    "businesscol.com",
+    "colombia.com",
+    "somos.com.co",
+    # Real estate / classifieds (added Phase 20)
+    "olx.com.co",
+    "vivareal.com.co",
+    "properati.com.co",
+    # Review / ranking directories (added Phase 20)
+    "glassdoor.com",
+    "g2.com",
+    "capterra.com",
 }
 
 LOW_QUALITY_DOMAIN_SUFFIXES = (
@@ -164,6 +201,107 @@ def _is_low_quality_candidate(url: str, title: str = "") -> bool:
     )):
         return True
     return False
+
+
+# Subdomains that indicate a non-homepage URL (blog, careers, app, etc.)
+_NON_HOME_SUBDOMAINS = frozenset({
+    "blog", "blogs", "news", "press", "noticias",
+    "careers", "jobs", "empleo", "vacantes", "hire",
+    "app", "apps", "portal", "admin", "dashboard", "api",
+    "shop", "store", "tienda",
+    "support", "help", "ayuda", "soporte",
+    "mail", "webmail", "correo",
+    "m", "mobile",
+    "dev", "staging", "test", "demo", "qa",
+    "cdn", "static", "assets", "media",
+    "docs", "wiki", "kb", "documentation",
+    "forum", "community", "comunidad",
+})
+
+
+def html_to_compressed_markdown(html: str) -> str:
+    """
+    Convert scraped HTML to compressed Markdown using Crawl4AI DefaultMarkdownGenerator
+    + PruningContentFilter. Achieves ~80% token reduction vs raw HTML.
+
+    Does NOT launch a browser — processes the HTML string directly.
+    curl_cffi fetches the HTML; Crawl4AI converts it. They are independent.
+    """
+    try:
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+        from crawl4ai.content_filter_strategy import PruningContentFilter
+        generator = DefaultMarkdownGenerator()
+        result = generator.generate_markdown(
+            html,
+            base_url="",
+            html2text_options={"ignore_links": True, "ignore_images": True},
+            content_filter=PruningContentFilter(threshold=0.48, threshold_type="fixed"),
+        )
+        markdown = result.fit_markdown or result.raw_markdown or ""
+        if not markdown.strip():
+            raise ValueError("empty markdown output")
+        return markdown
+    except Exception as e:
+        # Fallback: strip tags with BeautifulSoup and return plain text
+        # This ensures scrape_url() never hard-fails due to crawl4ai import issues.
+        logger.warning("[html_to_compressed_markdown] crawl4ai failed (%s), using bs4 fallback", e)
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header",
+                         "aside", "form", "noscript", "svg", "img", "iframe"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ", strip=True)
+        return re.sub(r"\s{2,}", " ", text)
+
+
+def extract_homepage(url: str) -> str:
+    """
+    Normalize a URL to the probable company homepage.
+    Strips known non-homepage subdomains (blog., careers., etc.) and deep paths.
+    Uses tldextract for correct handling of .com.co, .co.uk, and PSL private suffixes.
+    Falls back to original URL if unable to parse.
+
+    Examples:
+      https://blog.acme.com/article/2024/news   -> https://acme.com
+      https://careers.empresa.com.co/vacante/1  -> https://empresa.com.co
+      https://www.acme.com/about/team           -> https://www.acme.com/about/team
+      https://acme.com/noticias/articulo-123    -> https://acme.com
+    """
+    if not url:
+        return url
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+
+    ext = tldextract.extract(url)
+    if not ext.domain or not ext.suffix:
+        return url
+
+    registered = f"{ext.domain}.{ext.suffix}"  # e.g. "empresa.com.co"
+    subdomain = (ext.subdomain or "").lower()
+
+    # Determine the effective subdomain (strip leading "www.")
+    effective_sub = subdomain
+    if effective_sub in ("www", ""):
+        effective_sub = ""
+    elif effective_sub.startswith("www."):
+        effective_sub = effective_sub[4:]
+
+    if effective_sub in _NON_HOME_SUBDOMAINS:
+        return f"https://{registered}"
+
+    # Check for deep blog/article paths using the existing LOW_QUALITY_PATH_MARKERS tuple
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    path = (parsed.path or "/").lower()
+    for marker in LOW_QUALITY_PATH_MARKERS:
+        if marker in path:
+            # Strip to registered domain, dropping the non-home path
+            netloc_clean = parsed.netloc.lower()
+            if netloc_clean.startswith("www."):
+                netloc_clean = netloc_clean[4:]
+            return f"https://{netloc_clean or registered}"
+
+    # No normalization needed
+    return url
 
 
 # ── Discovery: Google Maps Places API ────────────────────────────────────────
@@ -280,6 +418,8 @@ async def discover_via_serper(
                 logger.info("[Serper] query=%r → %d organic hits", query, len(organic))
                 for item in organic:
                     url = item.get("link", "")
+                    url = extract_homepage(url)
+                    item["url"] = url
                     title = item.get("title", "")
                     if not url or not title:
                         continue
@@ -706,6 +846,11 @@ async def discover_companies(
     gmaps_key: str = "",
     excluded_domains: set[str] | None = None,
     use_secop: bool = False,
+    use_rues: bool = False,
+    use_fincaraiz: bool = False,
+    rues_dias_recientes: int = 180,
+    fincaraiz_tipo: str = "apartamentos",
+    fincaraiz_only_particular: bool = False,
     source_priority: str = "serper",  # "serper" | "bright_data" | "hybrid"
 ) -> list[dict]:
     """
@@ -720,7 +865,9 @@ async def discover_companies(
     1. Google Maps (local businesses with contact info)
     2. Bing web search (companies with web presence)
     3. SECOP II (Colombian government contractors) — optional
-    4. DuckDuckGo (fallback)
+    4. RUES (recently registered companies) — optional
+    5. Fincaraíz (rental property listings) — optional
+    6. DuckDuckGo (fallback)
     Deduplicates by domain and merges up to max_results.
     """
     from urllib.parse import urlparse
@@ -877,6 +1024,33 @@ async def discover_companies(
         add_secop(secop_resolved[:secop_needed])
         logger.info("[Discovery] SECOP: %d raw → %d resueltas → %d total", len(secop_raw), len(secop_resolved), len(merged))
 
+    # RUES source: recently registered companies (Cámara de Comercio)
+    if use_rues and len(merged) < max_results:
+        from rues import discover_companies_rues, resolve_rues_urls
+        rues_needed = max_results - len(merged)
+        rues_raw = await discover_companies_rues(
+            industria, ciudad,
+            max_results=rues_needed * 2,
+            dias_recientes=rues_dias_recientes,
+        )
+        rues_resolved = await resolve_rues_urls(rues_raw, max_concurrent=3)
+        add_secop(rues_resolved[:rues_needed])  # reuse add_secop (same NIT-dedup logic)
+        logger.info("[Discovery] RUES: %d raw → %d resueltas → %d total", len(rues_raw), len(rues_resolved), len(merged))
+
+    # Fincaraíz source: rental property listings (inmobiliarias + particulares)
+    if use_fincaraiz and len(merged) < max_results:
+        from fincaraiz_signal import discover_via_fincaraiz
+        fincaraiz_needed = max_results - len(merged)
+        fincaraiz_results = await discover_via_fincaraiz(
+            ciudad=ciudad,
+            tipo_inmueble=fincaraiz_tipo,
+            only_particular=fincaraiz_only_particular,
+            max_results=fincaraiz_needed,
+            fetch_details=True,
+        )
+        add(fincaraiz_results)
+        logger.info("[Discovery] Fincaraíz: %d listings → %d total", len(fincaraiz_results), len(merged))
+
     return merged
 
 
@@ -884,31 +1058,6 @@ async def discover_companies(
 
 async def scrape_url(url: str, timeout: int = 12) -> str:
     from urllib.parse import urlparse, urlunparse
-
-    ua_profiles = [
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/123.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
-        },
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) "
-                "Gecko/20100101 Firefox/124.0"
-            ),
-            "Accept-Language": "es-419,es;q=0.9,en;q=0.8",
-        },
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
-            ),
-            "Accept-Language": "es-ES,es;q=0.9,en;q=0.7",
-        },
-    ]
 
     def build_candidates(raw_url: str) -> list[str]:
         value = (raw_url or "").strip()
@@ -952,29 +1101,30 @@ async def scrape_url(url: str, timeout: int = 12) -> str:
     # Status codes that mean the whole domain is blocked — skip remaining candidates too
     _HARD_BLOCK_CODES = {403, 429, 451}
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+        async with AsyncSession(
+            impersonate="chrome131",
+            allow_redirects=True,
+            timeout=timeout,
+        ) as client:
             hard_blocked = False
             for candidate in candidates:
                 if hard_blocked:
                     break
-                for headers in ua_profiles:
-                    try:
-                        resp = await client.get(candidate, headers=headers)
-                    except Exception as e:
-                        last_error = f"{candidate}: {e}"
-                        continue
+                try:
+                    resp = await client.get(candidate)
+                except RequestsError as e:
+                    last_error = f"{candidate}: {e}"
+                    continue
 
-                    if resp.status_code >= 400:
-                        last_error = f"{candidate}: HTTP {resp.status_code}"
-                        if resp.status_code in _HARD_BLOCK_CODES:
-                            hard_blocked = True
-                        if resp.status_code in _NO_RETRY_CODES:
-                            break  # don't try other UA profiles for this candidate
-                        continue
-
-                    html = resp.text or ""
-                    if html.strip():
+                if resp.status_code >= 400:
+                    last_error = f"{candidate}: HTTP {resp.status_code}"
+                    if resp.status_code in _HARD_BLOCK_CODES:
+                        hard_blocked = True
+                    if resp.status_code in _NO_RETRY_CODES:
                         break
+                    continue
+
+                html = resp.text or ""
                 if html.strip():
                     break
     except Exception as e:
@@ -1022,12 +1172,8 @@ async def scrape_url(url: str, timeout: int = 12) -> str:
         contact_section = "[CONTACTOS]\n" + "\n".join(parts) + "\n\n"
     # ──────────────────────────────────────────────────────────────────────────
 
-    for tag in soup(["script", "style", "nav", "footer", "header",
-                     "aside", "form", "noscript", "svg", "img"]):
-        tag.decompose()
-    text = soup.get_text(separator=" ", strip=True)
-    text = re.sub(r"\s{2,}", " ", text)
-    return (contact_section + text)[:8000]
+    content = html_to_compressed_markdown(html)
+    return (contact_section + content)[:8000]
 
 
 # ── Prompt building ───────────────────────────────────────────────────────────

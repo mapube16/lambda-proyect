@@ -9,11 +9,25 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import OperationFailure
 
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("MONGODB_DB", "hive_office")
 
 _client: Optional[AsyncIOMotorClient] = None
+
+logger = logging.getLogger(__name__)
+
+
+async def _safe_index(collection, keys, **kwargs):
+    """Create index, ignoring conflicts with existing indexes (e.g. prod has different options)."""
+    try:
+        await collection.create_index(keys, **kwargs)
+    except OperationFailure as exc:
+        if exc.code == 86:  # IndexKeySpecsConflict
+            logger.warning("Index conflict on %s (skipped): %s", collection.name, exc.details.get("errmsg", ""))
+        else:
+            raise
 
 
 def get_db():
@@ -25,39 +39,37 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     import certifi
     _client = client or AsyncIOMotorClient(MONGODB_URI, tlsCAFile=certifi.where())
     db = _client[DB_NAME]
-    await db.users.create_index("email", unique=True)
-    await db.campaigns.create_index([("user_id", 1), ("is_active", 1)])
-    await db.runs.create_index([("user_id", 1), ("started_at", -1)])
-    await db.leads.create_index([("run_id", 1), ("user_id", 1)])
-    await db.leads.create_index([("user_id", 1), ("created_at", -1)])
-    await db.client_knowledge.create_index([("user_id", 1), ("filename", 1)])
-    await db.client_profiles.create_index("user_id", unique=True)
-    await db.ideal_leads.create_index([("user_id", 1), ("lead_id", 1)], unique=True)
-    await db.rejected_leads.create_index([("user_id", 1), ("lead_id", 1)], unique=True)
-    await db.whatsapp_agents.create_index("phone_number", unique=True)
-    await db.whatsapp_agents.create_index("cliente_id")
+    await _safe_index(db.users, "email", unique=True)
+    await _safe_index(db.campaigns, [("user_id", 1), ("is_active", 1)])
+    await _safe_index(db.runs, [("user_id", 1), ("started_at", -1)])
+    await _safe_index(db.runs, "run_id", unique=True, sparse=True)
+    await _safe_index(db.leads, [("run_id", 1), ("user_id", 1)])
+    await _safe_index(db.leads, [("user_id", 1), ("created_at", -1)])
+    await _safe_index(db.client_knowledge, [("user_id", 1), ("filename", 1)])
+    await _safe_index(db.client_profiles, "user_id", unique=True)
+    await _safe_index(db.ideal_leads, [("user_id", 1), ("lead_id", 1)], unique=True)
+    await _safe_index(db.rejected_leads, [("user_id", 1), ("lead_id", 1)], unique=True)
+    await _safe_index(db.whatsapp_agents, "phone_number", unique=True)
+    await _safe_index(db.whatsapp_agents, "cliente_id")
     # ── Landa Foundation (Phase 12) indexes ──────────────────────────────────
-    await db.leads.create_index("estado")
-    await db.leads.create_index([("user_id", 1), ("estado", 1)])
-    await db.sector_profiles.create_index([("sector", 1), ("pais_region", 1)])
-    await db.scheduled_actions.create_index("fecha_programada")
-    await db.scheduled_actions.create_index([("estado", 1), ("fecha_programada", 1)])
-    await db.scheduled_actions.create_index("lead_id")
+    await _safe_index(db.leads, "estado")
+    await _safe_index(db.leads, [("user_id", 1), ("estado", 1)])
+    await _safe_index(db.sector_profiles, [("sector", 1), ("pais_region", 1)])
+    await _safe_index(db.scheduled_actions, "fecha_programada")
+    await _safe_index(db.scheduled_actions, [("estado", 1), ("fecha_programada", 1)])
+    await _safe_index(db.scheduled_actions, "lead_id")
     # ── Phase 16: wa_sessions TTL index ──────────────────────────────────────
-    await db.wa_sessions.create_index("phone", unique=True)
-    await db.wa_sessions.create_index(
-        [("updated_at", 1)],
-        expireAfterSeconds=86400,  # 24 hours TTL
-    )
+    await _safe_index(db.wa_sessions, "phone", unique=True)
+    await _safe_index(db.wa_sessions, [("updated_at", 1)], expireAfterSeconds=86400)
     # ── Registration requests index (staff access control) ──────────────────
-    await db.registration_requests.create_index("email", unique=True)
-    await db.registration_requests.create_index([("created_at", -1)])
+    await _safe_index(db.registration_requests, "email", unique=True)
+    await _safe_index(db.registration_requests, [("created_at", -1)])
     # ── Agents persistence ───────────────────────────────────────────────────
-    await db.agents.create_index("agent_id", unique=True)
+    await _safe_index(db.agents, "agent_id", unique=True)
     # ── Phase 17: Cobranza debtors indexes ───────────────────────────────────
-    await db.debtors.create_index([("user_id", 1), ("estado", 1)])
-    await db.debtors.create_index([("user_id", 1), ("created_at", -1)])
-    await db.debtors.create_index("vapi_call_id", sparse=True)
+    await _safe_index(db.debtors, [("user_id", 1), ("estado", 1)])
+    await _safe_index(db.debtors, [("user_id", 1), ("created_at", -1)])
+    await _safe_index(db.debtors, "vapi_call_id", sparse=True)
     # The legacy unique (user_id, telefono) index applied to ALL debtors but
     # SOFTSEGUROS represents each póliza of a client as its own debtor doc — a
     # single client/teléfono can legitimately appear N times. The unique index
@@ -76,13 +88,14 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
         )
     except Exception:  # pragma: no cover
         pass
-    await db.debtors.create_index(
+    await _safe_index(
+        db.debtors,
         [("user_id", 1), ("telefono", 1)],
         unique=True,
         partialFilterExpression={"source": "manual"},
     )
     # ── Phase 18: SOFTSEGUROS credentials per user ───────────────────────────
-    await db.softseguros_credentials.create_index("user_id", unique=True)
+    await _safe_index(db.softseguros_credentials, "user_id", unique=True)
     # ── Phase 18: SOFTSEGUROS sync engine indexes ────────────────────────────
     # Idempotency: a póliza id maps to exactly one debtor per user.
     # partialFilterExpression (not sparse) so the uniqueness only applies to
@@ -93,26 +106,24 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
         await db.debtors.drop_index("user_id_1_softseguros_poliza_id_1")
     except Exception:
         pass  # index doesn't exist yet, or has a different name — fine
-    await db.debtors.create_index(
+    await _safe_index(
+        db.debtors,
         [("user_id", 1), ("softseguros_poliza_id", 1)],
         unique=True,
         partialFilterExpression={"source": "softseguros"},
     )
-    await db.softseguros_sync_state.create_index("user_id", unique=True)
-    await db.softseguros_sync_logs.create_index([("user_id", 1), ("completed_at", -1)])
+    await _safe_index(db.softseguros_sync_state, "user_id", unique=True)
+    await _safe_index(db.softseguros_sync_logs, [("user_id", 1), ("completed_at", -1)])
     # ── Email OAuth + Events ──────────────────────────────────────────────────
-    await db.email_events.create_index([("user_id", 1), ("timestamp", -1)])
-    await db.email_events.create_index("message_id")
-    await db.email_events.create_index("lead_id")
+    await _safe_index(db.email_events, [("user_id", 1), ("timestamp", -1)])
+    await _safe_index(db.email_events, "message_id")
+    await _safe_index(db.email_events, "lead_id")
     # ── Phase 17: Voice Orchestrator (Assembly AI) ───────────────────────────
-    await db.cobranza_calls_in_progress.create_index("call_sid", unique=True)
-    await db.cobranza_calls_in_progress.create_index([("user_id", 1), ("started_at", -1)])
-    await db.cobranza_calls_in_progress.create_index(
-        [("started_at", 1)],
-        expireAfterSeconds=3600,  # 1 hour TTL (cleanup old mappings)
-    )
-    await db.cobranza_calls.create_index([("user_id", 1), ("created_at", -1)])
-    await db.cobranza_calls.create_index("call_id", unique=True)
+    await _safe_index(db.cobranza_calls_in_progress, "call_sid", unique=True)
+    await _safe_index(db.cobranza_calls_in_progress, [("user_id", 1), ("started_at", -1)])
+    await _safe_index(db.cobranza_calls_in_progress, [("started_at", 1)], expireAfterSeconds=3600)
+    await _safe_index(db.cobranza_calls, [("user_id", 1), ("created_at", -1)])
+    await _safe_index(db.cobranza_calls, "call_id", unique=True)
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
@@ -491,19 +502,22 @@ async def get_client_profile(user_id: str) -> Optional[dict]:
 
 # ── Runs ──────────────────────────────────────────────────────────────────────
 
-async def create_run(user_id: str, campaign_id: str, max_results: int) -> str:
+async def create_run(user_id: str, campaign_id: str, max_results: int, run_id: str = None) -> str:
+    import uuid
     db = get_db()
-    result = await db.runs.insert_one({
+    run_id = run_id or str(uuid.uuid4())
+    await db.runs.insert_one({
+        "run_id": run_id,
         "user_id": user_id,
         "campaign_id": campaign_id,
-        "status": "running",
+        "status": "queued",
         "max_results": max_results,
         "total_found": 0,
         "total_approved": 0,
         "started_at": datetime.now(timezone.utc),
         "completed_at": None,
     })
-    return str(result.inserted_id)
+    return run_id
 
 
 async def update_run_status(
@@ -524,7 +538,7 @@ async def update_run_status(
     if status in ("complete", "error"):
         update["completed_at"] = datetime.now(timezone.utc)
     await db.runs.update_one(
-        {"_id": ObjectId(run_id)},
+        {"run_id": run_id},
         {"$set": update},
     )
 
@@ -846,6 +860,68 @@ async def get_prospecting_excluded_domains(user_id: str) -> dict:
             "total_excluded": len(excluded_domains),
         },
     }
+
+
+# ── Prospecting Knowledge Base ────────────────────────────────────────────────
+
+async def upsert_prospecting_knowledge(user_id: str, fields: dict) -> None:
+    """Upsert prospecting_knowledge document for tenant. Mirrors upsert_client_profile pattern."""
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    set_payload = {**fields, "updated_at": now, "user_id": user_id}
+    await db.prospecting_knowledge.update_one(
+        {"user_id": user_id},
+        {"$set": set_payload, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+
+
+async def get_prospecting_knowledge(user_id: str) -> dict:
+    """Return prospecting_knowledge doc or empty dict if none."""
+    db = get_db()
+    doc = await db.prospecting_knowledge.find_one({"user_id": user_id})
+    if doc and "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    return doc or {}
+
+
+async def append_lead_signal(user_id: str, signal: str, signal_type: str) -> None:
+    """Append signal string to approved_lead_signals or rejected_lead_signals via $addToSet (dedup)."""
+    if signal_type not in ("approved", "rejected"):
+        raise ValueError(f"signal_type must be 'approved' or 'rejected', got {signal_type!r}")
+    if not signal or not signal.strip():
+        return  # guard: do not append empty signals (RESEARCH pitfall 4)
+    field = "approved_lead_signals" if signal_type == "approved" else "rejected_lead_signals"
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.prospecting_knowledge.update_one(
+        {"user_id": user_id},
+        {
+            "$addToSet": {field: signal.strip()},
+            "$set": {"updated_at": now, "user_id": user_id},
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+
+
+async def get_or_create_prospecting_knowledge(user_id: str) -> dict:
+    """Get prospecting_knowledge; if missing, seed from client_profiles.business_summary."""
+    doc = await get_prospecting_knowledge(user_id)
+    if doc:
+        return doc
+    # Seed from client_profiles if present
+    db = get_db()
+    profile = await db.client_profiles.find_one({"user_id": user_id}) or {}
+    seed = {
+        "product_description": profile.get("business_summary", "") or "",
+        "icp_summary": "",
+        "approved_lead_signals": [],
+        "rejected_lead_signals": [],
+        "blacklisted_domains": [],
+    }
+    await upsert_prospecting_knowledge(user_id, seed)
+    return await get_prospecting_knowledge(user_id)
 
 
 async def get_all_client_summaries(user_ids: list[str]) -> dict[str, dict]:
@@ -1415,4 +1491,66 @@ async def get_smtp_status(user_id: str) -> dict:
     except Exception as e:
         logging.error(f"[database] get_smtp_status failed: {e}")
         return {"configured": False, "email": None}
+
+
+# ── Prospecting Knowledge Base ────────────────────────────────────────────────
+
+async def upsert_prospecting_knowledge(user_id: str, fields: dict) -> None:
+    """Upsert prospecting_knowledge document for tenant. Mirrors upsert_client_profile pattern."""
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    set_payload = {**fields, "updated_at": now, "user_id": user_id}
+    await db.prospecting_knowledge.update_one(
+        {"user_id": user_id},
+        {"$set": set_payload, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+
+
+async def get_prospecting_knowledge(user_id: str) -> dict:
+    """Return prospecting_knowledge doc or empty dict if none."""
+    db = get_db()
+    doc = await db.prospecting_knowledge.find_one({"user_id": user_id})
+    if doc and "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    return doc or {}
+
+
+async def append_lead_signal(user_id: str, signal: str, signal_type: str) -> None:
+    """Append signal string to approved_lead_signals or rejected_lead_signals via $addToSet (dedup)."""
+    if signal_type not in ("approved", "rejected"):
+        raise ValueError(f"signal_type must be 'approved' or 'rejected', got {signal_type!r}")
+    if not signal or not signal.strip():
+        return  # guard: do not append empty signals
+    field = "approved_lead_signals" if signal_type == "approved" else "rejected_lead_signals"
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.prospecting_knowledge.update_one(
+        {"user_id": user_id},
+        {
+            "$addToSet": {field: signal.strip()},
+            "$set": {"updated_at": now, "user_id": user_id},
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+
+
+async def get_or_create_prospecting_knowledge(user_id: str) -> dict:
+    """Get prospecting_knowledge; if missing, seed from client_profiles.business_summary."""
+    doc = await get_prospecting_knowledge(user_id)
+    if doc:
+        return doc
+    # Seed from client_profiles if present
+    db = get_db()
+    profile = await db.client_profiles.find_one({"user_id": user_id}) or {}
+    seed = {
+        "product_description": profile.get("business_summary", "") or "",
+        "icp_summary": "",
+        "approved_lead_signals": [],
+        "rejected_lead_signals": [],
+        "blacklisted_domains": [],
+    }
+    await upsert_prospecting_knowledge(user_id, seed)
+    return await get_prospecting_knowledge(user_id)
 

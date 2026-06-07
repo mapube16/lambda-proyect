@@ -26,4 +26,7 @@ WORKDIR /app/backend
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+# Start FastAPI + ARQ worker in the same container
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN sed -i 's/\r//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
+CMD ["/docker-entrypoint.sh"]

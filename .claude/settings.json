@@ -34,7 +34,14 @@
       "Read(//c/c/Users/maxim/Desktop/hive-pixel-office/frontend/src/components/**)",
       "Bash(sed -i 's/assert pre.json\\(\\) == {\"configured\": False, \"configured_at\": None}/_b = pre.json\\(\\); assert _b[\"configured\"] is False and _b[\"configured_at\"] is None/' backend/tests/test_softseguros.py)",
       "Bash(sed -i 's/assert resp.json\\(\\) == {\"configured\": False, \"configured_at\": None}/_b = resp.json\\(\\); assert _b[\"configured\"] is False and _b[\"configured_at\"] is None/' backend/tests/test_softseguros.py)",
-      "Bash(grep -n \"SyncStatusBadge\\\\|showReimport\\\\|tabs.length\\\\|{/\\\\\\\\* Header\" frontend/src/components/DebtorsSoftSegurosTab.tsx)"
+      "Bash(grep -n \"SyncStatusBadge\\\\|showReimport\\\\|tabs.length\\\\|{/\\\\\\\\* Header\" frontend/src/components/DebtorsSoftSegurosTab.tsx)",
+      "Bash(Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue)",
+      "Bash(Measure-Object)",
+      "Bash(Select-Object -ExpandProperty Count)",
+      "Bash(where python *)",
+      "Bash(pip list *)",
+      "Bash(./test_env/Scripts/pip install *)",
+      "Bash(./test_env/Scripts/python -c ' *)"
     ]
   }
 }

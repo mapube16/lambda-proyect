@@ -2,11 +2,12 @@
 builder = "dockerfile"
 
 [deploy]
+startCommand = "/docker-entrypoint.sh"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"
 
-# Required env vars — set in Railway dashboard:
-# WA_TOKEN      — Meta Graph API bearer token (WhatsApp Business outreach channel)
-# WA_PHONE_ID   — Meta WhatsApp Business phone ID
-# OPENAI_API_KEY, MONGO_URL, SECRET_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
+# Required env vars (set in Railway dashboard for the API service):
+#   REDIS_URL = ${{Redis.REDIS_URL}}   (or REDIS_PRIVATE_URL for internal networking)
+#   MONGODB_URI, SECRET_KEY, OPENAI_API_KEY, WA_TOKEN, WA_PHONE_ID,
+#   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, FRONTEND_URL

@@ -10,6 +10,7 @@ Behavior spec:
 - empresa_nombre appears in fallback saludo
 """
 import asyncio
+import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 def run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
+
+
+@pytest.fixture(autouse=True)
+def restore_openai_key():
+    """Restore OPENAI_API_KEY after each test (some tests remove it)."""
+    original = os.environ.get("OPENAI_API_KEY")
+    yield
+    if original is not None:
+        os.environ["OPENAI_API_KEY"] = original
+    else:
+        os.environ.pop("OPENAI_API_KEY", None)
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
