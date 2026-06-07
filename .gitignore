@@ -15,3 +15,8 @@ frontend/.env.local
 .logs/
 Instagram-automation-AI-generated-content/
 google_service_account.json
+
+# Virtualenvs (dot-venv)
+.venv/
+backend/.venv/
+**/.venv/
