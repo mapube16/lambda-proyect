@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../lib/apiFetch';
+import { DebtorsSoftSegurosTab } from './DebtorsSoftSegurosTab';
 
 // ─── Inject keyframes once ─────────────────────────────────────────────────────
 if (typeof document !== 'undefined' && !document.getElementById('cobr-styles')) {
@@ -46,6 +47,32 @@ const lbl = (color = C.muted, size = 10): React.CSSProperties => ({
   textTransform: 'uppercase', letterSpacing: '0.12em', color,
 });
 
+// ─── SOFTSEGUROS section (collapsible) ─────────────────────────────────────────
+function SoftSegurosSection() {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+          background: C.s0, border: `1px solid rgba(120,220,232,0.18)`,
+          padding: '10px 14px', cursor: 'pointer', color: C.cyan,
+          fontFamily: C.SG, fontWeight: 600, fontSize: 12, letterSpacing: '0.08em',
+        }}
+      >
+        <span style={{ fontSize: 10, transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▶</span>
+        DEUDORES SOFTSEGUROS
+      </button>
+      {expanded && (
+        <div style={{ marginTop: 8 }}>
+          <DebtorsSoftSegurosTab />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface CallRecord {
   call_id: string;
@@ -64,7 +91,7 @@ interface Debtor {
   monto: number;
   vencimiento: string;
   estado: 'pendiente' | 'llamando' | 'contactado' | 'promesa_de_pago' | 'sin_contacto' |
-          'pagado' | 'fallido' | 'escalado' | 'agotado' | 'pausado';
+          'pagado' | 'fallido' | 'escalado' | 'agotado' | 'pausado' | 'reagendado' | 'disputa';
   intentos: number;
   max_intentos: number;
   historial_llamadas: CallRecord[];
@@ -89,6 +116,8 @@ function getEstadoConfig(estado: Debtor['estado']): { color: string; bg: string;
     case 'escalado':         return { color: C.orange,  bg: C.orangeBg,  label: 'ESCALADO' };
     case 'agotado':          return { color: C.muted,   bg: 'transparent', label: 'AGOTADO' };
     case 'pausado':          return { color: C.purple,  bg: C.purpleBg,  label: 'PAUSADO' };
+    case 'reagendado':       return { color: C.cyan,    bg: C.cyanBg,    label: 'REAGENDADO' };
+    case 'disputa':          return { color: C.pink,    bg: C.pinkBg,    label: 'DISPUTA' };
     default:                 return { color: C.muted,   bg: 'transparent', label: String(estado).toUpperCase() };
   }
 }
@@ -956,6 +985,8 @@ const FILTERS: { value: EstadoFilter; label: string }[] = [
   { value: 'promesa_de_pago',   label: 'PROMESA' },
   { value: 'pagado',            label: 'PAGADO' },
   { value: 'sin_contacto',      label: 'SIN CONTACTO' },
+  { value: 'reagendado',        label: 'REAGENDADO' },
+  { value: 'disputa',           label: 'DISPUTA' },
   { value: 'escalado',          label: 'ESCALADO' },
   { value: 'agotado',           label: 'AGOTADO' },
   { value: 'pausado',           label: 'PAUSADO' },
@@ -1239,6 +1270,9 @@ export function CobranzaTab() {
   const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [loading, setLoading] = useState(true);
   const [estadoFilter, setEstadoFilter] = useState<EstadoFilter>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const PAGE_SIZE = 50;
   const [selectedDebtor, setSelectedDebtor] = useState<Debtor | null>(null);
   const [toasts, setToasts] = useState<CobrToast[]>([]);
   const [uploadingCsv, setUploadingCsv] = useState<false | 'create' | 'update'>(false);
@@ -1266,16 +1300,50 @@ export function CobranzaTab() {
   const fetchDebtors = useCallback(async () => {
     setLoading(true);
     try {
-      const params = estadoFilter ? `?estado=${estadoFilter}` : '';
-      const r = await apiFetch(`/api/cobranza/debtors${params}`);
-      if (!r.ok) { setDebtors([]); return; }
+      const qs = new URLSearchParams();
+      if (estadoFilter) qs.set('estado', estadoFilter);
+      qs.set('page', String(page));
+      qs.set('page_size', String(PAGE_SIZE));
+      const r = await apiFetch(`/api/cobranza/debtors?${qs.toString()}`);
+      if (!r.ok) { setDebtors([]); setTotal(0); return; }
       const data = await r.json();
-      setDebtors(Array.isArray(data) ? data : []);
-    } catch { setDebtors([]); }
+      // Endpoint is now paginated: { items, total, page, page_size }.
+      // Tolerate the old array shape just in case.
+      if (Array.isArray(data)) {
+        setDebtors(data);
+        setTotal(data.length);
+      } else {
+        setDebtors(Array.isArray(data.items) ? data.items : []);
+        setTotal(Number(data.total ?? 0));
+      }
+    } catch { setDebtors([]); setTotal(0); }
     finally { setLoading(false); }
-  }, [estadoFilter]);
+  }, [estadoFilter, page]);
 
   useEffect(() => { fetchDebtors(); }, [fetchDebtors]);
+
+  // Reset to page 1 whenever the estado filter changes.
+  useEffect(() => { setPage(1); }, [estadoFilter]);
+
+  // ── Today's activity KPIs + funnel (whole-cartera, not the current page) ─────
+  const [todayKpis, setTodayKpis] = useState<{
+    llamando_ahora: number;
+    contactados_hoy: number;
+    promesas_hoy: { count: number; monto: number };
+    pagado_hoy: { count: number; monto: number };
+    sin_contacto: number;
+  } | null>(null);
+  const fetchTodaySummary = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/cobranza/today-summary');
+      if (r.ok) setTodayKpis(await r.json());
+    } catch { /* keep prev */ }
+  }, []);
+  useEffect(() => {
+    fetchTodaySummary();
+    const id = window.setInterval(fetchTodaySummary, 15000); // refresh every 15s
+    return () => window.clearInterval(id);
+  }, [fetchTodaySummary]);
 
   // ── Real-time WS updates ───────────────────────────────────────────────────
   const fetchDebtorById = useCallback(async (debtor_id: string) => {
@@ -1426,12 +1494,13 @@ export function CobranzaTab() {
   };
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  const totalMonto  = debtors.reduce((s, d) => s + d.monto, 0);
+  // Fallback "llamando" count from the current page (used until today-summary loads).
   const llamandoNow = debtors.filter(d => d.estado === 'llamando').length;
-  const promesas    = debtors.filter(d => d.estado === 'promesa_de_pago').length;
 
   // ── Filtered list ──────────────────────────────────────────────────────────
-  const visible = estadoFilter ? debtors.filter(d => d.estado === estadoFilter) : debtors;
+  // Filtering + pagination are server-side now; `debtors` is already the page.
+  const visible = debtors;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   // ── Show onboarding if strategy not yet configured ────────────────────────
   if (configured === null) return (
@@ -1440,7 +1509,12 @@ export function CobranzaTab() {
     </div>
   );
   if (!configured) return (
-    <CobranzaOnboarding onDone={() => { setConfigured(true); fetchDebtors(); }} />
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'auto' }}>
+      <div style={{ padding: '26px 28px 0' }}>
+        <SoftSegurosSection />
+      </div>
+      <CobranzaOnboarding onDone={() => { setConfigured(true); fetchDebtors(); }} />
+    </div>
   );
 
   return (
@@ -1448,6 +1522,9 @@ export function CobranzaTab() {
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
+
+        {/* SOFTSEGUROS deudores (synced from the broker's SOFTSEGUROS account) */}
+        <SoftSegurosSection />
 
         {/* Page heading */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22 }}>
@@ -1520,21 +1597,28 @@ export function CobranzaTab() {
           </div>
         </div>
 
-        {/* Stats row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 22 }}>
+        {/* Actividad de HOY — el panel operativo del bot */}
+        <div style={{ ...lbl(C.muted, 9), marginBottom: 8 }}>ACTIVIDAD DE HOY</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 22 }}>
           {[
-            { label: 'CARTERA TOTAL', value: formatCOP(totalMonto), color: C.cyan },
-            { label: 'EN LLAMADA AHORA', value: String(llamandoNow), color: C.yellow },
-            { label: 'PROMESAS ACTIVAS', value: String(promesas), color: C.green },
-          ].map(({ label, value, color }) => (
+            { label: 'LLAMANDO AHORA', value: String(todayKpis?.llamando_ahora ?? llamandoNow), sub: todayKpis?.llamando_ahora ? 'en vivo' : '', color: C.yellow, pulse: (todayKpis?.llamando_ahora ?? 0) > 0 },
+            { label: 'CONTACTADOS HOY', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.cyan, pulse: false },
+            { label: 'PROMESAS HOY', value: String(todayKpis?.promesas_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.promesas_hoy.monto) : '', color: C.green, pulse: false },
+            { label: 'PAGADO HOY', value: String(todayKpis?.pagado_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.pagado_hoy.monto) : '', color: C.green, pulse: false },
+            { label: 'SIN CONTACTO', value: String(todayKpis?.sin_contacto ?? '—'), sub: 'requiere atención', color: C.orange, pulse: false },
+          ].map(({ label, value, sub, color, pulse }) => (
             <div key={label} style={{
-              background: C.s1, padding: '14px 18px',
+              background: C.s1, padding: '12px 14px',
               borderBottom: `2px solid ${color}40`,
             }}>
-              <div style={lbl(C.muted, 9)}>{label}</div>
-              <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 22, color, marginTop: 6 }}>
+              <div style={{ ...lbl(C.muted, 8.5), display: 'flex', alignItems: 'center', gap: 5 }}>
+                {pulse && <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, animation: 'cobr-pulse 1.2s ease-in-out infinite' }} />}
+                {label}
+              </div>
+              <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 24, color, marginTop: 5, lineHeight: 1.05 }}>
                 {value}
               </div>
+              {sub && <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted, marginTop: 2 }}>{sub}</div>}
             </div>
           ))}
         </div>
@@ -1613,6 +1697,28 @@ export function CobranzaTab() {
                   onPausar={() => handlePausar(d)}
                 />
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {total > PAGE_SIZE && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, fontFamily: C.IN, fontSize: 12, color: C.muted, gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} de {total.toLocaleString('es-CO')}
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                style={{ padding: '6px 12px', border: `1px solid rgba(255,255,255,0.1)`, background: 'transparent', color: page === 1 ? C.faint : C.muted, cursor: page === 1 ? 'not-allowed' : 'pointer', fontFamily: C.SG, fontWeight: 600, fontSize: 11.5 }}
+              >← Anterior</button>
+              <span style={{ padding: '6px 10px', fontFamily: C.SG, fontSize: 12, color: C.text }}>{page} / {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                style={{ padding: '6px 12px', border: `1px solid rgba(255,255,255,0.1)`, background: 'transparent', color: page >= totalPages ? C.faint : C.muted, cursor: page >= totalPages ? 'not-allowed' : 'pointer', fontFamily: C.SG, fontWeight: 600, fontSize: 11.5 }}
+              >Siguiente →</button>
             </div>
           </div>
         )}

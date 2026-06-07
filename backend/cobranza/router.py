@@ -164,13 +164,85 @@ async def create_debtor_endpoint(
 @router.get("/debtors")
 async def list_debtors(
     estado: Optional[str] = Query(None),
+    group: Optional[str] = Query(None, description="atencion | pendientes | gestion | resueltos"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
 ):
-    """List debtors for the authenticated user, optionally filtered by estado."""
+    """Paginated debtors for the authenticated user, filterable by estado or group."""
     user_id = str(current_user["user_id"])
     db = get_db()
-    debtors = await get_debtors(db, user_id, estado)
-    return debtors
+    return await get_debtors(db, user_id, estado=estado, group=group, page=page, page_size=page_size)
+
+
+# ── Today's activity summary (the 5 KPIs at the top of the cobranza panel) ──────
+# IMPORTANT: declared BEFORE /debtors/{debtor_id} would never match these, but we
+# use distinct paths (/today-summary, /funnel) so there's no ambiguity anyway.
+@router.get("/today-summary")
+async def today_summary(current_user: dict = Depends(get_current_user)):
+    """Counts (and montos where relevant) of TODAY's bot activity, per the dashboard KPIs."""
+    from datetime import datetime, timezone, timedelta
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    base = {"user_id": user_id}
+
+    # Llamando ahora (live, not date-bound)
+    llamando = await db.debtors.count_documents({**base, "estado": "llamando"})
+
+    # Contactados hoy: last contact today AND currently a "contacted-ish" state
+    contactados_hoy = await db.debtors.count_documents({
+        **base,
+        "ultimo_contacto_fecha": {"$gte": today_start},
+        "estado": {"$in": ["contactado", "promesa_de_pago", "reagendado"]},
+    })
+
+    # Promesas hoy: moved to promesa_de_pago today (use updated_at). Sum monto_prometido.
+    promesa_pipeline = [
+        {"$match": {**base, "estado": "promesa_de_pago", "updated_at": {"$gte": today_start}}},
+        {"$group": {"_id": None, "n": {"$sum": 1}, "monto": {"$sum": {"$ifNull": ["$monto_prometido", 0]}}}},
+    ]
+    pr = await db.debtors.aggregate(promesa_pipeline).to_list(length=1)
+    promesas_hoy = {"count": pr[0]["n"], "monto": float(pr[0]["monto"] or 0)} if pr else {"count": 0, "monto": 0.0}
+
+    # Pagado hoy: moved to pagado today. Sum monto.
+    pagado_pipeline = [
+        {"$match": {**base, "estado": "pagado", "updated_at": {"$gte": today_start}}},
+        {"$group": {"_id": None, "n": {"$sum": 1}, "monto": {"$sum": {"$ifNull": ["$monto", 0]}}}},
+    ]
+    pg = await db.debtors.aggregate(pagado_pipeline).to_list(length=1)
+    pagado_hoy = {"count": pg[0]["n"], "monto": float(pg[0]["monto"] or 0)} if pg else {"count": 0, "monto": 0.0}
+
+    # Sin contacto (accumulated — needs attention, not just today)
+    sin_contacto = await db.debtors.count_documents({**base, "estado": "sin_contacto"})
+
+    return {
+        "llamando_ahora": llamando,
+        "contactados_hoy": contactados_hoy,
+        "promesas_hoy": promesas_hoy,
+        "pagado_hoy": pagado_hoy,
+        "sin_contacto": sin_contacto,
+        "as_of": now,
+    }
+
+
+# ── Funnel: counts per estado across the WHOLE cartera ──────────────────────────
+@router.get("/funnel")
+async def funnel(current_user: dict = Depends(get_current_user)):
+    """Count of debtors per estado (the pipeline bar). Whole cartera."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    pipeline = [
+        {"$match": {"user_id": user_id}},
+        {"$group": {"_id": "$estado", "n": {"$sum": 1}}},
+    ]
+    counts: dict[str, int] = {}
+    async for row in db.debtors.aggregate(pipeline):
+        counts[row["_id"] or "pendiente"] = int(row["n"])
+    total = sum(counts.values())
+    return {"counts": counts, "total": total}
 
 
 # ── Get Single Debtor ─────────────────────────────────────────────────────────

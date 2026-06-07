@@ -14,7 +14,7 @@ from auth import (
     get_current_user, SECRET_KEY, ALGORITHM,
 )
 from database import (
-    get_user_by_email, create_user, add_phone_to_user,
+    get_user_by_email, get_user_by_id, create_user, add_phone_to_user,
     create_registration_request, get_all_registration_requests,
     update_registration_request_status,
 )
@@ -24,6 +24,25 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ── Auth cookie helper ──────────────────────────────────────────────────────────
+# secure=True means the browser only sends the cookie over HTTPS. On HTTP localhost
+# (dev) that silently drops the cookie → every request is unauthenticated → 401 loop.
+# Gate it on COOKIE_SECURE (default false for dev; set true in production/HTTPS).
+_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in ("1", "true", "yes")
+
+
+def _set_auth_cookie(response, token: str) -> None:
+    response.set_cookie(
+        key="hive_token",
+        value=token,
+        httponly=True,
+        secure=_COOKIE_SECURE,
+        samesite="lax",
+        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60,
+        path="/",
+    )
 
 
 class AddPhoneRequest(BaseModel):
@@ -69,10 +88,7 @@ async def login(user: UserCreate, request: Request):
         "access_token": token,
     }
     response = JSONResponse(content=response_data, status_code=200)
-    response.set_cookie(
-        key="hive_token", value=token, httponly=True, secure=True, samesite="lax",
-        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60, path="/",
-    )
+    _set_auth_cookie(response, token)
     return response
 
 
@@ -90,6 +106,24 @@ async def dev_token():
         "email": "dpg.seguros@gmail.com",
         "authenticated": True,
         "access_token": token,
+    }
+
+
+@router.get("/auth/me")
+async def auth_me(current_user: dict = Depends(get_current_user)):
+    """Validate the httpOnly cookie and return the current user's identity.
+    The frontend calls this on load to rehydrate the session after a reload
+    (the JWT lives only in the cookie, so there's nothing in JS to read directly).
+    Returns 401 if the cookie is missing/expired."""
+    user_id = str(current_user["user_id"])
+    db_user = await get_user_by_id(user_id)
+    if not db_user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return {
+        "user_id": user_id,
+        "role": db_user.get("role", current_user.get("role", "client")),
+        "email": db_user.get("email"),
+        "authenticated": True,
     }
 
 
@@ -132,10 +166,7 @@ async def google_login(data: dict):
             "authenticated": True,
         }
         response = JSONResponse(content=response_data, status_code=200)
-        response.set_cookie(
-            key="hive_token", value=token, httponly=True, secure=True, samesite="lax",
-            max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60, path="/",
-        )
+        _set_auth_cookie(response, token)
         return response
     except Exception as e:
         logger.error("[google_login] Authentication error: %s", e)

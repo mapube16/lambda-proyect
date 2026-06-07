@@ -33,6 +33,7 @@ async def create_debtor(db, user_id: str, data: dict) -> dict:
     now = _utcnow()
     doc = {
         "user_id": user_id,
+        "source": "manual",
         "nombre": data.get("nombre", ""),
         "telefono": data["telefono"],
         "monto": float(data.get("monto", 0)),
@@ -68,6 +69,7 @@ async def bulk_create_debtors(db, user_id: str, debtors: list[dict]) -> dict:
     for data in debtors:
         docs.append({
             "user_id": user_id,
+            "source": "manual",
             "nombre": data.get("nombre", ""),
             "telefono": data["telefono"],
             "monto": float(data.get("monto", 0)),
@@ -126,6 +128,7 @@ async def bulk_upsert_debtors(db, user_id: str, debtors: list[dict]) -> dict:
         }
         on_insert = {
             "user_id": user_id,
+            "source": "manual",
             "telefono": data["telefono"],
             "estado": "pendiente",
             "vapi_call_id": None,
@@ -149,18 +152,55 @@ async def bulk_upsert_debtors(db, user_id: str, debtors: list[dict]) -> dict:
     return {"updated": updated, "created": created}
 
 
-async def get_debtors(db, user_id: str, estado: Optional[str] = None) -> list[dict]:
+# Cobranza UI groups the 10+ estados into 4 actionable tabs.
+ESTADO_GROUPS: dict[str, list[str]] = {
+    "atencion":  ["escalado", "agotado", "disputa", "sin_contacto"],
+    "pendientes": ["pendiente", "llamando"],
+    "gestion":   ["contactado", "promesa_de_pago", "reagendado"],
+    "resueltos": ["pagado", "pausado"],
+}
+
+
+async def get_debtors(
+    db,
+    user_id: str,
+    estado: Optional[str] = None,
+    group: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
     """
-    Return all debtors for user_id, optionally filtered by estado.
-    Sorted by created_at descending.
+    Paginated cobranza debtors for the bot's operations panel — covers the WHOLE
+    cartera (manual/CSV + SOFTSEGUROS), since those are exactly who the bot calls.
+
+    Filtering:
+      - estado: exact match on a single estado
+      - group:  one of ESTADO_GROUPS (atencion|pendientes|gestion|resueltos)
+    Pagination keeps the payload small (the un-paginated version pulled the whole
+    cartera, ~16 MB for a large SOFTSEGUROS import, and blocked the browser).
+
+    Returns {"items": [...], "page", "page_size", "total"}.
     """
     query: dict = {"user_id": user_id}
     if estado is not None:
         query["estado"] = estado
+    elif group is not None and group in ESTADO_GROUPS:
+        query["estado"] = {"$in": ESTADO_GROUPS[group]}
 
-    cursor = db.debtors.find(query).sort("created_at", -1)
-    docs = await cursor.to_list(length=None)
-    return [_serialize(d) for d in docs]
+    total = await db.debtors.count_documents(query)
+    cursor = (
+        db.debtors.find(query)
+        .sort("updated_at", -1)
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    docs = await cursor.to_list(length=page_size)
+    return {
+        "items": [_serialize(d) for d in docs],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
 
 
 async def get_debtor_by_id(db, user_id: str, debtor_id: str) -> Optional[dict]:
@@ -211,3 +251,186 @@ async def delete_debtor(db, user_id: str, debtor_id: str) -> bool:
         return False
     result = await db.debtors.delete_one({"_id": oid, "user_id": user_id})
     return result.deleted_count > 0
+
+
+# ── Phase 18: SOFTSEGUROS-aware helpers ───────────────────────────────────────
+# Idempotency key: (user_id, softseguros_poliza_id). Phase 17 invariants
+# (estado/intentos/historial_llamadas/vapi_call_id/escalado/max_intentos) are only
+# ever set on first insert via $setOnInsert — never overwritten by a re-sync.
+
+# Fields that SOFTSEGUROS owns and we always overwrite on each sync.
+_SOFTSEGUROS_SET_FIELDS = (
+    "nombre", "telefono",
+    "monto", "vencimiento",
+    "numero_poliza", "softseguros_cliente_id",
+    "cliente_documento", "cliente_email", "cliente_celular",
+    "aseguradora_nit", "ramo_nombre", "ramo_global_nombre", "vendedores_nombre",
+    "estado_poliza_nombre", "estado_cartera",
+    "prima", "total", "total_pagado", "recaudado",
+    "fecha_inicio", "fecha_fin", "fecha_limite_pago",
+    "periodicidad", "comicionada",
+    "status_softseguros", "is_active",
+)
+
+
+async def upsert_debtor_by_softseguros_poliza_id(
+    db, user_id: str, softseguros_poliza_id: int, doc: dict,
+) -> dict:
+    """
+    Upsert a debtor keyed by (user_id, softseguros_poliza_id).
+
+    On insert: seeds Phase 17 cobranza invariants (estado='pendiente', intentos=0, ...)
+    and source='softseguros'. On update: only SOFTSEGUROS-owned fields are touched.
+
+    Returns {"created": bool, "updated": bool}.
+    """
+    now = _utcnow()
+    set_payload = {k: doc[k] for k in _SOFTSEGUROS_SET_FIELDS if k in doc}
+    set_payload["last_synced"] = now
+    set_payload["updated_at"] = now
+
+    on_insert = {
+        "user_id": user_id,
+        "source": "softseguros",
+        "softseguros_poliza_id": softseguros_poliza_id,
+        "estado": "pendiente",
+        "intentos": 0,
+        "max_intentos": int(doc.get("max_intentos", 5)),
+        "historial_llamadas": [],
+        "escalado": False,
+        "vapi_call_id": None,
+        "ultimo_contacto_fecha": None,
+        "created_at": now,
+    }
+    # Avoid Mongo conflict: a key cannot be in both $set and $setOnInsert.
+    for k in list(set_payload):
+        if k in on_insert:
+            on_insert.pop(k, None)
+
+    result = await db.debtors.update_one(
+        {"user_id": user_id, "softseguros_poliza_id": softseguros_poliza_id},
+        {"$set": set_payload, "$setOnInsert": on_insert},
+        upsert=True,
+    )
+    created = result.upserted_id is not None
+    return {"created": created, "updated": not created}
+
+
+def build_softseguros_upsert_op(user_id: str, softseguros_poliza_id: int, doc: dict) -> dict:
+    """
+    Build the (filter, update) pair for the same upsert as
+    upsert_debtor_by_softseguros_poliza_id, WITHOUT executing it. Returned as a
+    plain dict so the caller can batch many of them and turn them into a single
+    bulk_write (one Atlas round-trip per chunk instead of one per póliza).
+
+    Returns {"filter": {...}, "update": {...}}.
+    """
+    now = _utcnow()
+    set_payload = {k: doc[k] for k in _SOFTSEGUROS_SET_FIELDS if k in doc}
+    set_payload["last_synced"] = now
+    set_payload["updated_at"] = now
+
+    on_insert = {
+        "user_id": user_id,
+        "source": "softseguros",
+        "softseguros_poliza_id": softseguros_poliza_id,
+        "estado": "pendiente",
+        "intentos": 0,
+        "max_intentos": int(doc.get("max_intentos", 5)),
+        "historial_llamadas": [],
+        "escalado": False,
+        "vapi_call_id": None,
+        "ultimo_contacto_fecha": None,
+        "created_at": now,
+    }
+    for k in list(set_payload):
+        if k in on_insert:
+            on_insert.pop(k, None)
+
+    return {
+        "filter": {"user_id": user_id, "softseguros_poliza_id": softseguros_poliza_id},
+        "update": {"$set": set_payload, "$setOnInsert": on_insert},
+    }
+
+
+async def bulk_write_debtor_ops(db, ops: list) -> dict:
+    """
+    Execute a list of {"filter","update"} upsert specs.
+
+    Fast path: one Mongo bulk_write per call (the whole point of this — turns
+    ~5k Atlas round-trips into a few hundred). Falls back to per-op update_one
+    only if the driver/mock can't do bulk_write (e.g. mongomock-motor with a
+    newer pymongo that injects a 'sort' kwarg the mock doesn't accept). The
+    fallback path is correctness-preserving; production always uses the fast path.
+
+    Returns {"created": <upserted>, "updated": <modified>}.
+    """
+    if not ops:
+        return {"created": 0, "updated": 0}
+
+    from pymongo import UpdateOne
+
+    update_ones = [
+        UpdateOne(o["filter"], o["update"], upsert=True) for o in ops
+    ]
+    try:
+        res = await db.debtors.bulk_write(update_ones, ordered=False)
+        return {"created": res.upserted_count, "updated": res.modified_count}
+    except BulkWriteError as bwe:
+        details = bwe.details or {}
+        return {
+            "created": details.get("nUpserted", 0),
+            "updated": details.get("nModified", 0),
+        }
+    except TypeError:
+        # bulk_write unsupported by this driver/mock — degrade to update_one.
+        created = 0
+        updated = 0
+        for o in ops:
+            r = await db.debtors.update_one(o["filter"], o["update"], upsert=True)
+            if r.upserted_id is not None:
+                created += 1
+            else:
+                updated += 1
+        return {"created": created, "updated": updated}
+
+
+async def mark_debtor_paid_by_softseguros_poliza_id(
+    db, user_id: str, softseguros_poliza_id: int,
+) -> bool:
+    """Soft-mark a SOFTSEGUROS debtor as paid (never hard-delete). Returns True if matched."""
+    result = await db.debtors.update_one(
+        {"user_id": user_id, "softseguros_poliza_id": softseguros_poliza_id},
+        {"$set": {
+            "status_softseguros": "pagado",
+            "is_active": False,
+            "comicionada": True,
+            "updated_at": _utcnow(),
+        }},
+    )
+    return result.matched_count > 0
+
+
+async def mark_debtor_deleted_by_softseguros_poliza_id(
+    db, user_id: str, softseguros_poliza_id: int,
+) -> bool:
+    """Soft-mark a SOFTSEGUROS debtor as deleted upstream (never hard-delete). Returns True if matched."""
+    result = await db.debtors.update_one(
+        {"user_id": user_id, "softseguros_poliza_id": softseguros_poliza_id},
+        {"$set": {
+            "status_softseguros": "eliminado",
+            "is_active": False,
+            "updated_at": _utcnow(),
+        }},
+    )
+    return result.matched_count > 0
+
+
+async def list_active_softseguros_poliza_ids(db, user_id: str) -> set:
+    """Return the set of softseguros_poliza_id for this user's active SOFTSEGUROS debtors."""
+    cursor = db.debtors.find(
+        {"user_id": user_id, "source": "softseguros", "is_active": True},
+        {"softseguros_poliza_id": 1},
+    )
+    docs = await cursor.to_list(length=None)
+    return {d["softseguros_poliza_id"] for d in docs if d.get("softseguros_poliza_id") is not None}

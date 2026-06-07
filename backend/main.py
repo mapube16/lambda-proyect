@@ -76,11 +76,23 @@ async def lifespan(app: FastAPI):
     from cobranza.campaign_scheduler import register_cobranza_jobs
     register_cobranza_jobs(_sched)
 
+    # Phase 18: SOFTSEGUROS daily sync scheduler (must run after init_db).
+    try:
+        from softseguros.scheduler import setup_scheduler as setup_softseguros_scheduler
+        await setup_softseguros_scheduler(app)
+    except Exception:  # noqa: BLE001 — scheduler must never block app startup
+        logging.exception("Failed to start SOFTSEGUROS scheduler")
+
     logging.info("Lambda Office started!")
     yield
     if state.arq_pool is not None:
         await state.arq_pool.aclose()
     shutdown_scheduler()
+    try:
+        from softseguros.scheduler import shutdown_scheduler as shutdown_softseguros_scheduler
+        shutdown_softseguros_scheduler(app)
+    except Exception:  # noqa: BLE001
+        pass
     logging.info("Shutting down.")
 
 
@@ -140,6 +152,10 @@ from cobranza.voice_router import router as voice_router
 app.include_router(cobranza_router)
 app.include_router(_vapi_router)
 app.include_router(voice_router)
+
+# ── Phase 18: SOFTSEGUROS debtors REST API ───────────────────────────────────
+from routes.debtors import router as debtors_router
+app.include_router(debtors_router)
 
 # ── Static frontend (must be last) ───────────────────────────────────────────
 _frontend_dist = pathlib.Path(__file__).parent.parent / "frontend" / "dist"

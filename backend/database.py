@@ -70,7 +70,50 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.debtors, [("user_id", 1), ("estado", 1)])
     await _safe_index(db.debtors, [("user_id", 1), ("created_at", -1)])
     await _safe_index(db.debtors, "vapi_call_id", sparse=True)
-    await _safe_index(db.debtors, [("user_id", 1), ("telefono", 1)], unique=True, partialFilterExpression={"source": "manual"})
+    # The legacy unique (user_id, telefono) index applied to ALL debtors but
+    # SOFTSEGUROS represents each póliza of a client as its own debtor doc — a
+    # single client/teléfono can legitimately appear N times. The unique index
+    # now applies ONLY to manual cobranza debtors (source=="manual"); SOFTSEGUROS
+    # ones are de-duplicated by the (user_id, softseguros_poliza_id) index below.
+    # NOTE: this requires Phase 17 cobranza inserts to set source="manual" explicitly.
+    try:
+        await db.debtors.drop_index("user_id_1_telefono_1")
+    except Exception:
+        pass  # not yet created, or already partial
+    # Backfill: existing manual debtors don't have `source` set. Tag them so the
+    # new partial index matches and they keep their uniqueness guarantee.
+    try:
+        await db.debtors.update_many(
+            {"source": {"$exists": False}}, {"$set": {"source": "manual"}}
+        )
+    except Exception:  # pragma: no cover
+        pass
+    await _safe_index(
+        db.debtors,
+        [("user_id", 1), ("telefono", 1)],
+        unique=True,
+        partialFilterExpression={"source": "manual"},
+    )
+    # ── Phase 18: SOFTSEGUROS credentials per user ───────────────────────────
+    await _safe_index(db.softseguros_credentials, "user_id", unique=True)
+    # ── Phase 18: SOFTSEGUROS sync engine indexes ────────────────────────────
+    # Idempotency: a póliza id maps to exactly one debtor per user.
+    # partialFilterExpression (not sparse) so the uniqueness only applies to
+    # docs with source=="softseguros" — Phase 17 manual debtors (which may carry
+    # softseguros_poliza_id=null) are excluded entirely. A prior boot may have
+    # created this index with sparse=True; drop the stale one before recreating.
+    try:
+        await db.debtors.drop_index("user_id_1_softseguros_poliza_id_1")
+    except Exception:
+        pass  # index doesn't exist yet, or has a different name — fine
+    await _safe_index(
+        db.debtors,
+        [("user_id", 1), ("softseguros_poliza_id", 1)],
+        unique=True,
+        partialFilterExpression={"source": "softseguros"},
+    )
+    await _safe_index(db.softseguros_sync_state, "user_id", unique=True)
+    await _safe_index(db.softseguros_sync_logs, [("user_id", 1), ("completed_at", -1)])
     # ── Email OAuth + Events ──────────────────────────────────────────────────
     await _safe_index(db.email_events, [("user_id", 1), ("timestamp", -1)])
     await _safe_index(db.email_events, "message_id")
