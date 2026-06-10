@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, createContext, useContext } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import './landa.css';
 import * as api from './api';
 import { CobranzaTab } from './components/CobranzaTab';
+
+// Context for shared email status (used by multiple views)
+const EmailStatusContext = createContext<{ connected: boolean } | null>(null);
+const useEmailStatus = () => useContext(EmailStatusContext);
 
 // ============ ICON COMPONENT ============
 function Icon({ name, size = 18, stroke = 1.5 }: any) {
@@ -565,13 +569,9 @@ function ViewAprobados({ campaignId, onNavigate }: any) {
   const [sending, setSending] = useState(false);
   const queryClient = useQueryClient();
 
-  // Email status (single fetch, no deps)
-  const { data: emailStatus } = useQuery({
-    queryKey: ['emailStatus'],
-    queryFn: () => api.getEmailStatus(),
-    staleTime: 60000, // 1 min
-  });
-  const emailConnected = emailStatus?.connected ?? false;
+  // Email status from context (loaded once at App level)
+  const emailStatusCtx = useEmailStatus();
+  const emailConnected = emailStatusCtx?.connected ?? false;
 
   // Leads (cached by campaignId, auto-refetch only if campaignId changes)
   const { data: leadsData, isLoading: loading, error: leadsError } = useQuery({
@@ -1609,6 +1609,16 @@ export function App() {
     return () => { alive = false; };
   }, [user]);
 
+  // Prefetch campaign data when campaignId changes (anticipate Inicio/Aprobados views)
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!campaignId || !api.getToken()) return;
+    // Prefetch KPIs, Leads, and Runs for the selected campaign
+    queryClient.prefetchQuery({ queryKey: ['kpis', campaignId], queryFn: () => api.getKPIs(campaignId) });
+    queryClient.prefetchQuery({ queryKey: ['leads', campaignId], queryFn: () => api.getLeads(campaignId) });
+    queryClient.prefetchQuery({ queryKey: ['runs', campaignId], queryFn: () => api.getCampaignRuns(campaignId) });
+  }, [campaignId, queryClient]);
+
   // Tras volver del OAuth de email (?oauth_success=...), abre Ajustes para mostrar el resultado.
   useEffect(() => {
     if (new URLSearchParams(window.location.search).has('oauth_success')) {
@@ -1662,24 +1672,33 @@ export function App() {
   if (!user) return <Login onLogin={(u) => { setUser(u); setView('inicio'); }} />;
   if (showOnboarding) return <ViewOnboarding onComplete={() => finishOnboarding(true)} onSkip={() => finishOnboarding(false)} />;
 
+  // Load email status once at app level (shared by Aprobados, Campanas, etc.)
+  const { data: emailData } = useQuery({
+    queryKey: ['emailStatus'],
+    queryFn: () => api.getEmailStatus(),
+    staleTime: 120000, // 2 min
+  });
+
   return (
-    <div className="lc" style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)', fontFamily: "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" }}>
-      <Sidebar view={view} setView={setView} user={user} onLogout={handleLogout} />
-      <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <Topbar onLaunch={() => { setView('campanas'); setShowWizard(true); }} />
-        {activeRun && <RunStatusBanner run={activeRun} onClose={() => setActiveRun(null)} onViewLeads={(cid: string) => { setCampaignId(cid); setActiveRun(null); setView('aprobados'); }} />}
-        <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
-          {view === 'inicio' && <ViewInicio campaignId={campaignId} onNavigate={setView} />}
-          {view === 'aprobados' && <ViewAprobados campaignId={campaignId} onNavigate={setView} />}
-          {view === 'resultados' && <ViewResultados campaignId={campaignId} />}
-          {view === 'campanas' && <ViewCampanas showWizard={showWizard} setShowWizard={setShowWizard} onLaunched={(r: any) => setActiveRun(r)} onSelectCampaign={(id: string) => { setCampaignId(id); setView('aprobados'); }} />}
-          {view === 'chat' && <ViewChat />}
-          {view === 'aprendizaje' && <ViewAprendizaje />}
-          {view === 'ajustes' && <ViewAjustes />}
-          {view === 'cobranza' && <ViewCobranza />}
-        </div>
-      </main>
-    </div>
+    <EmailStatusContext.Provider value={{ connected: emailData?.connected ?? false }}>
+      <div className="lc" style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)', fontFamily: "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" }}>
+        <Sidebar view={view} setView={setView} user={user} onLogout={handleLogout} />
+        <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <Topbar onLaunch={() => { setView('campanas'); setShowWizard(true); }} />
+          {activeRun && <RunStatusBanner run={activeRun} onClose={() => setActiveRun(null)} onViewLeads={(cid: string) => { setCampaignId(cid); setActiveRun(null); setView('aprobados'); }} />}
+          <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
+            {view === 'inicio' && <ViewInicio campaignId={campaignId} onNavigate={setView} />}
+            {view === 'aprobados' && <ViewAprobados campaignId={campaignId} onNavigate={setView} />}
+            {view === 'resultados' && <ViewResultados campaignId={campaignId} />}
+            {view === 'campanas' && <ViewCampanas showWizard={showWizard} setShowWizard={setShowWizard} onLaunched={(r: any) => setActiveRun(r)} onSelectCampaign={(id: string) => { setCampaignId(id); setView('aprobados'); }} />}
+            {view === 'chat' && <ViewChat />}
+            {view === 'aprendizaje' && <ViewAprendizaje />}
+            {view === 'ajustes' && <ViewAjustes />}
+            {view === 'cobranza' && <ViewCobranza />}
+          </div>
+        </main>
+      </div>
+    </EmailStatusContext.Provider>
   );
 }
 
