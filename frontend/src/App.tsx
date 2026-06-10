@@ -1592,12 +1592,18 @@ export function App() {
     return null;
   });
   const [view, setView] = useState('inicio');
-  const [campaignId, setCampaignId] = useState<string | null>(null);
+  const [campaignId, setCampaignId] = useState<string | null>(() => localStorage.getItem('landa_campaignId'));
   const [showWizard, setShowWizard] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [activeRun, setActiveRun] = useState<any>(null);
 
-  const handleLogout = () => { api.logout(); setUser(null); setView('inicio'); setShowOnboarding(false); };
+  const handleLogout = () => { api.logout(); setUser(null); setView('inicio'); setShowOnboarding(false); localStorage.removeItem('landa_campaignId'); };
+
+  // Persiste campaignId en localStorage para que sobreviva a reloads
+  useEffect(() => {
+    if (campaignId) localStorage.setItem('landa_campaignId', campaignId);
+    else localStorage.removeItem('landa_campaignId');
+  }, [campaignId]);
 
   // Si cualquier llamada recibe 401 (token expirado), volver al login.
   useEffect(() => {
