@@ -3,14 +3,14 @@ import type { UseSoftSegurosDebtorsResult } from '../hooks/useSoftSegurosDebtors
 
 // Shared visual tokens (mirrors CobranzaTab / ClientDashboard).
 const C = {
-  bg: '#0d0d18', s0: '#12121d', s1: '#1b1a26', s2: '#22212e', s3: '#2c2b3a',
-  text: '#e3e0f1', muted: '#8a8a9a',
-  cyan: '#78dce8', cyanBg: 'rgba(120,220,232,0.08)', cyanBdr: 'rgba(120,220,232,0.25)',
-  green: '#a9dc76', greenBg: 'rgba(169,220,118,0.08)',
-  pink: '#ff6188', pinkBg: 'rgba(255,97,136,0.1)',
-  orange: '#fc9867',
-  SG: "'Space Grotesk', system-ui, sans-serif",
-  IN: "'Inter', system-ui, sans-serif",
+  bg: '#F6F6FB', s0: '#FFFFFF', s1: '#FFFFFF', s2: '#FAFAFC', s3: '#F2F2F8',
+  text: '#34343F', muted: '#6B6B7A',
+  cyan: '#0EA5E9', cyanBg: 'rgba(14,165,233,0.08)', cyanBdr: 'rgba(14,165,233,0.22)',
+  green: '#15A56A', greenBg: '#E6F6EE',
+  pink: '#E03E4C', pinkBg: '#FCE9EA',
+  orange: '#D97A06',
+  SG: "'Plus Jakarta Sans', system-ui, sans-serif",
+  IN: "'Plus Jakarta Sans', system-ui, sans-serif",
 };
 
 const lbl: React.CSSProperties = {
@@ -119,7 +119,7 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
   // Inline <style> for keyboard-focus rings (component-scoped via class names).
   const focusStyles = (
     <style>{`
-      .ss-input:focus { box-shadow: 0 0 0 2px rgba(120,220,232,0.45); border-color: rgba(120,220,232,0.6); }
+      .ss-input:focus { box-shadow: 0 0 0 2px rgba(14,165,233,0.45); border-color: rgba(14,165,233,0.6); }
       .ss-btn-primary:focus { outline: 2px solid ${C.cyan}; outline-offset: 2px; }
       .ss-checkbox:focus-visible { outline: 2px solid ${C.cyan}; outline-offset: 2px; }
       @keyframes ss-bar-stripes { from { background-position: 0 0; } to { background-position: 40px 0; } }
@@ -199,7 +199,7 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
             className="ss-btn-primary"
             onClick={async () => { await cancelSync(); }}
             style={{
-              marginTop: 14, padding: '8px 14px', border: `1px solid rgba(255,97,136,0.3)`,
+              marginTop: 14, padding: '8px 14px', border: `1px solid rgba(224,62,76,0.3)`,
               background: 'transparent', color: C.pink, fontFamily: C.SG, fontWeight: 600, fontSize: 12,
               letterSpacing: '0.05em', cursor: 'pointer',
             }}
@@ -209,7 +209,7 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
         </div>
       ) : finishedFailed ? (
         <div role="alert" aria-live="assertive" style={{ marginTop: 16 }}>
-          <div style={{ padding: '14px 16px', background: C.pinkBg, border: `1px solid rgba(255,97,136,0.3)`, marginBottom: 14 }}>
+          <div style={{ padding: '14px 16px', background: C.pinkBg, border: `1px solid rgba(224,62,76,0.3)`, marginBottom: 14 }}>
             <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 14, color: C.pink, marginBottom: 6 }}>
               La importación se detuvo por un error
             </div>

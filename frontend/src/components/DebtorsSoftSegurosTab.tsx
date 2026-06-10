@@ -13,15 +13,15 @@ import { SoftSegurosSetup } from './SoftSegurosSetup';
 
 // Shared visual tokens (mirrors CobranzaTab / ClientDashboard).
 const C = {
-  bg: '#0d0d18', s0: '#12121d', s1: '#1b1a26', s2: '#22212e', s3: '#2c2b3a',
-  text: '#e3e0f1', muted: '#8a8a9a', faint: 'rgba(227,224,241,0.3)',
-  cyan: '#78dce8', cyanBg: 'rgba(120,220,232,0.08)', cyanBdr: 'rgba(120,220,232,0.22)',
-  green: '#a9dc76', greenBg: 'rgba(169,220,118,0.08)',
-  pink: '#ff6188', pinkBg: 'rgba(255,97,136,0.1)',
-  orange: '#fc9867', orangeBg: 'rgba(252,152,103,0.08)',
-  yellow: '#ffd866', yellowBg: 'rgba(255,216,102,0.08)',
-  SG: "'Space Grotesk', system-ui, sans-serif",
-  IN: "'Inter', system-ui, sans-serif",
+  bg: '#F6F6FB', s0: '#FFFFFF', s1: '#FFFFFF', s2: '#FAFAFC', s3: '#F2F2F8',
+  text: '#34343F', muted: '#6B6B7A', faint: '#9696A6',
+  cyan: '#0EA5E9', cyanBg: 'rgba(14,165,233,0.08)', cyanBdr: 'rgba(14,165,233,0.22)',
+  green: '#15A56A', greenBg: '#E6F6EE',
+  pink: '#E03E4C', pinkBg: '#FCE9EA',
+  orange: '#D97A06', orangeBg: '#FCF1E0',
+  yellow: '#D97A06', yellowBg: '#FCF1E0',
+  SG: "'Plus Jakarta Sans', system-ui, sans-serif",
+  IN: "'Plus Jakarta Sans', system-ui, sans-serif",
 };
 
 const lbl = (color = C.muted, size = 10): React.CSSProperties => ({
@@ -157,7 +157,7 @@ function SyncRunningBanner({ status }: { status: SoftSegurosSyncStatus }) {
 function SyncFailedBanner({ status, onRetry }: { status: SoftSegurosSyncStatus; onRetry: () => void }) {
   return (
     <div role="alert" style={{
-      padding: '12px 16px', background: C.pinkBg, border: `1px solid rgba(255,97,136,0.3)`,
+      padding: '12px 16px', background: C.pinkBg, border: `1px solid rgba(224,62,76,0.3)`,
       marginBottom: 14,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -195,9 +195,9 @@ interface KPIProps {
 
 function KPICard({ active, label, count, monto, icon, variant = 'neutral', onClick }: KPIProps) {
   const palette = {
-    danger:  { color: C.pink,   bg: 'rgba(255,97,136,0.12)',  bdr: 'rgba(255,97,136,0.35)' },
-    warning: { color: C.orange, bg: 'rgba(252,152,103,0.12)', bdr: 'rgba(252,152,103,0.35)' },
-    info:    { color: C.yellow, bg: 'rgba(255,216,102,0.12)', bdr: 'rgba(255,216,102,0.30)' },
+    danger:  { color: C.pink,   bg: 'rgba(224,62,76,0.12)',  bdr: 'rgba(224,62,76,0.35)' },
+    warning: { color: C.orange, bg: 'rgba(217,122,6,0.12)', bdr: 'rgba(217,122,6,0.35)' },
+    info:    { color: C.yellow, bg: 'rgba(217,122,6,0.12)', bdr: 'rgba(217,122,6,0.30)' },
     neutral: { color: C.cyan,   bg: C.cyanBg,                  bdr: C.cyanBdr },
   }[variant];
   return (
@@ -794,9 +794,9 @@ export function DebtorsSoftSegurosTab() {
           aria-modal="true"
           aria-labelledby="ss-disconnect-title"
           onClick={() => !discSubmitting && setShowDisconnect(false)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(20,20,40,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
         >
-          <div onClick={e => e.stopPropagation()} style={{ background: C.s1, border: `1px solid rgba(255,97,136,0.35)`, padding: '24px 26px', maxWidth: 520, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: C.s1, border: `1px solid rgba(224,62,76,0.35)`, padding: '24px 26px', maxWidth: 520, width: '100%', boxShadow: '0 20px 60px rgba(20,20,40,0.6)' }}>
             <div style={lbl(C.pink, 9)}>ACCIÓN IRREVERSIBLE</div>
             <h3 id="ss-disconnect-title" style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 18, color: C.text, margin: '6px 0 10px' }}>
               Desconectar SOFTSEGUROS
@@ -820,7 +820,7 @@ export function DebtorsSoftSegurosTab() {
               autoFocus
               placeholder="BORRAR"
               aria-label="Confirmación de borrado"
-              style={{ width: '100%', boxSizing: 'border-box', background: C.s2, border: `1px solid rgba(255,97,136,0.3)`, color: C.text, fontFamily: C.IN, fontSize: 14, padding: '10px 12px', outline: 'none', letterSpacing: '0.04em' }}
+              style={{ width: '100%', boxSizing: 'border-box', background: C.s2, border: `1px solid rgba(224,62,76,0.3)`, color: C.text, fontFamily: C.IN, fontSize: 14, padding: '10px 12px', outline: 'none', letterSpacing: '0.04em' }}
             />
             {discError && (
               <div role="alert" style={{ fontFamily: C.IN, fontSize: 11.5, color: C.orange, marginTop: 8 }}>{discError}</div>
@@ -902,7 +902,7 @@ function btn(variant: 'primary' | 'ghost' | 'ghost-danger', disabled: boolean): 
   }
   if (variant === 'ghost-danger') {
     return {
-      height: 30, padding: '0 12px', border: `1px solid rgba(255,97,136,0.25)`,
+      height: 30, padding: '0 12px', border: `1px solid rgba(224,62,76,0.25)`,
       background: 'transparent', color: disabled ? C.muted : C.pink,
       cursor: disabled ? 'not-allowed' : 'pointer',
       fontFamily: C.SG, fontWeight: 600, fontSize: 11.5, letterSpacing: '0.05em',

@@ -56,7 +56,7 @@ function SoftSegurosSection() {
         onClick={() => setExpanded(e => !e)}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-          background: C.s0, border: `1px solid rgba(120,220,232,0.18)`,
+          background: C.s0, border: `1px solid rgba(14,165,233,0.18)`,
           padding: '10px 14px', cursor: 'pointer', color: C.cyan,
           fontFamily: C.SG, fontWeight: 600, fontSize: 12, letterSpacing: '0.08em',
         }}

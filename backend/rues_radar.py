@@ -60,13 +60,17 @@ def _score_lead(exp: dict, fecha_matricula: str | None) -> tuple[int, bool, str]
 
 
 async def build_recien_creadas_leads(
-    industria: str,
+    industria: str | None = None,
     ciudad: str | None = None,
     max_results: int = 20,
     dias_recientes: int = 180,
 ) -> list[dict]:
     """
     Orquestador del vertical recién-creadas.
+
+    industria/ciudad son OPCIONALES: toda empresa recién matriculada es prospecto
+    (necesita seguros desde el día uno), sin importar sector ni ciudad. Sin filtro,
+    trae todas las recién creadas ordenadas por fecha.
 
     1. Descubre empresas recién matriculadas (RUES, por CIIU/ciudad/fecha).
     2. Enriquece cada NIT → contacto (tel/email/rep legal/dirección).

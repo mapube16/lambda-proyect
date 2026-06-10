@@ -60,14 +60,11 @@ async def run_prospecting_job(
         _kind = str(campaign.get("pipeline") or source_priority or "").lower()
         if _kind == "rues" or str(campaign.get("source_priority") or "").lower() == "rues":
             from rues_radar import build_recien_creadas_leads
-            industria = (campaign.get("industria_objetivo")
-                         or (campaign.get("sectors") or [""])[0]
-                         or campaign.get("name", ""))
-            ciudad = (campaign.get("ciudad_objetivo")
-                      or (campaign.get("cities") or [""])[0] or "")
+            # TODA empresa recién matriculada es prospecto (necesita seguros desde el
+            # día uno), sin importar sector ni ciudad → sin filtro (industria/ciudad = None).
             dias = int(campaign.get("rues_dias_recientes", 180) or 180)
-            logger.info("[worker] RUES vertical aislado — industria=%r ciudad=%r", industria, ciudad)
-            leads = await build_recien_creadas_leads(industria, ciudad, max_results=max_results, dias_recientes=dias)
+            logger.info("[worker] RUES vertical aislado — todas las recién creadas (sin filtro de sector/ciudad)")
+            leads = await build_recien_creadas_leads(industria=None, ciudad=None, max_results=max_results, dias_recientes=dias)
             for ld in leads:
                 try:
                     await database.save_lead(run_id, user_id, ld, campaign_id)

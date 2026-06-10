@@ -331,8 +331,9 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched 
     })();
   }, [reloadKey]);
 
-  // SECOP trae empresas de TODOS los sectores y ciudades → no exige esos filtros.
-  const ignoresSectorCity = form.pipeline === 'secop';
+  // SECOP (todos los que se presentan a procesos) y RUES (todas las recién creadas)
+  // traen empresas de TODOS los sectores y ciudades → no exigen esos filtros.
+  const ignoresSectorCity = form.pipeline === 'secop' || form.pipeline === 'rues';
   const canAdvance = () => {
     if (step === 0) return form.pipeline.length > 0;
     if (step === 1) return form.name.trim().length > 0;
@@ -494,7 +495,9 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched 
               {step === 2 && (
                 ignoresSectorCity ? (
                   <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--primary-softer)', border: '1px solid var(--primary-soft)', fontSize: 13.5, color: 'var(--text)' }}>
-                    SECOP trae <strong>todas las empresas que se presentan a procesos públicos</strong>, sin importar su sector. Este filtro no aplica — puedes continuar.
+                    {form.pipeline === 'rues'
+                      ? <>Empresas recién creadas: trae <strong>todas las recién matriculadas</strong>, sin importar su sector (toda empresa nueva necesita seguros). Este filtro no aplica — puedes continuar.</>
+                      : <>SECOP trae <strong>todas las empresas que se presentan a procesos públicos</strong>, sin importar su sector. Este filtro no aplica — puedes continuar.</>}
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -508,7 +511,9 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched 
               {step === 3 && (
                 ignoresSectorCity ? (
                   <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--primary-softer)', border: '1px solid var(--primary-soft)', fontSize: 13.5, color: 'var(--text)' }}>
-                    Aplica a <strong>todas las ciudades</strong> — cualquier empresa presentándose a un proceso necesita su póliza de cumplimiento.
+                    {form.pipeline === 'rues'
+                      ? <>Aplica a <strong>todas las ciudades</strong> — trae todas las empresas recién matriculadas del país.</>
+                      : <>Aplica a <strong>todas las ciudades</strong> — cualquier empresa presentándose a un proceso necesita su póliza de cumplimiento.</>}
                   </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
