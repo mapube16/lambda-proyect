@@ -19,7 +19,7 @@ for _log in ("hive_adapter", "hive_llm", "hive_tools", "hive_graph", "framework.
 import pathlib
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db, seed_users
@@ -101,6 +101,21 @@ app = FastAPI(title="Lambda Office", version="1.0.0", lifespan=lifespan)
 _MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "2000000"))
 _EXEMPT_BODY_LIMIT_PATHS = ("/api/staff/clients/",)
 
+# Fast OPTIONS response (CORS preflight) — respond instantly without heavy middleware
+@app.middleware("http")
+async def fast_options_handler(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return Response(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": request.headers.get("Origin", "*"),
+                "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Max-Age": "86400",
+            }
+        )
+    return await call_next(request)
 
 @app.middleware("http")
 async def limit_request_body(request: Request, call_next):
