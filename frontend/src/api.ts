@@ -11,6 +11,9 @@ export const API_BASE = import.meta.env.DEV
   : "https://my.landatech.org";
 let ACCESS_TOKEN = "";
 
+// Request deduplication: if the same request is in-flight, return the existing promise
+const inflightRequests = new Map<string, Promise<any>>();
+
 export interface AuthUser { user_id?: string; email: string; role: string; }
 
 function persistAuth(data: any) {
@@ -80,34 +83,53 @@ export function loadToken() {
   return false;
 }
 
-// Helper: make authenticated requests
+// Helper: make authenticated requests with deduplication for GET requests
 async function apiCall(endpoint: string, options: RequestInit = {}) {
-  const url = `${API_BASE}${endpoint}`;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (typeof options.headers === 'object' && options.headers !== null) {
-    Object.assign(headers, options.headers);
+  const method = (options.method || "GET").toUpperCase();
+  const cacheKey = `${method}:${endpoint}`;
+
+  // Only dedupe GET requests (safe for read operations)
+  if (method === "GET" && inflightRequests.has(cacheKey)) {
+    return inflightRequests.get(cacheKey)!;
   }
-  if (ACCESS_TOKEN) {
-    headers["Authorization"] = `Bearer ${ACCESS_TOKEN}`;
-  }
-  const res = await fetch(url, { ...options, headers });
-  if (res.status === 401) {
-    // Sesión expirada/ inválida → limpiar todo y avisar a la app para volver al login.
-    ACCESS_TOKEN = "";
-    localStorage.removeItem("token");
-    localStorage.removeItem("landa_user");
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new Event("landa:unauthorized"));
+
+  const requestPromise = (async () => {
+    const url = `${API_BASE}${endpoint}`;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (typeof options.headers === 'object' && options.headers !== null) {
+      Object.assign(headers, options.headers);
     }
-    throw new Error("Unauthorized — token inválido o expirado");
+    if (ACCESS_TOKEN) {
+      headers["Authorization"] = `Bearer ${ACCESS_TOKEN}`;
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      // Sesión expirada/ inválida → limpiar todo y avisar a la app para volver al login.
+      ACCESS_TOKEN = "";
+      localStorage.removeItem("token");
+      localStorage.removeItem("landa_user");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("landa:unauthorized"));
+      }
+      throw new Error("Unauthorized — token inválido o expirado");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    return data;
+  })();
+
+  if (method === "GET") {
+    inflightRequests.set(cacheKey, requestPromise);
+    requestPromise.finally(() => {
+      inflightRequests.delete(cacheKey);
+    });
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.detail || `HTTP ${res.status}`);
-  }
-  return data;
+
+  return requestPromise;
 }
 
 // ============ CAMPAIGNS ============

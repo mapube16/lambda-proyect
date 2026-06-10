@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import './landa.css';
 import * as api from './api';
 import { CobranzaTab } from './components/CobranzaTab';
@@ -90,31 +91,35 @@ const EMPTY_KPIS = [
 // ============ VIEWS ============
 
 function ViewInicio({ campaignId, onNavigate }: any) {
-  const [kpis, setKpis] = useState(EMPTY_KPIS);
-  const [raw, setRaw] = useState<any>(null);
-  const [recent, setRecent] = useState<any[]>([]);
-  const [running, setRunning] = useState(false);
+  const enabled = !!api.getToken() && !!campaignId;
 
-  useEffect(() => {
-    if (!api.getToken() || !campaignId) return;
-    let alive = true;
-    (async () => {
-      try {
-        const data = await api.getKPIs(campaignId);
-        if (alive) { if (data.kpis) setKpis(data.kpis); setRaw(data.raw || null); }
-      } catch (err) { console.log('Failed to load KPIs:', err); }
-      try {
-        const d = await api.getLeads(campaignId, 8, 0);
-        if (alive) setRecent((d.leads || []));
-      } catch {}
-      try {
-        const r = await api.getCampaignRuns(campaignId);
-        const list = (r.runs || r || []) as any[];
-        if (alive) setRunning(list.some((x: any) => x.status === 'queued' || x.status === 'running'));
-      } catch {}
-    })();
-    return () => { alive = false; };
-  }, [campaignId]);
+  // KPIs
+  const { data: kpisData } = useQuery({
+    queryKey: ['kpis', campaignId],
+    queryFn: () => api.getKPIs(campaignId!),
+    enabled,
+    staleTime: 30000,
+  });
+  const kpis = kpisData?.kpis || EMPTY_KPIS;
+  const raw = kpisData?.raw || null;
+
+  // Recent leads (limit 8)
+  const { data: recentData } = useQuery({
+    queryKey: ['leadsPreview', campaignId],
+    queryFn: () => api.getLeads(campaignId!, 8, 0),
+    enabled,
+    staleTime: 30000,
+  });
+  const recent = recentData?.leads || [];
+
+  // Campaign runs
+  const { data: runsData } = useQuery({
+    queryKey: ['runs', campaignId],
+    queryFn: () => api.getCampaignRuns(campaignId!),
+    enabled,
+    staleTime: 15000,
+  });
+  const running = (runsData?.runs || runsData || []).some((x: any) => x.status === 'queued' || x.status === 'running');
 
   // Conteos reales (acumulados) derivados de KPIs. No es un ticker en vivo falso.
   const totalLeads = raw?.leads_qualified ?? 0;
@@ -281,19 +286,16 @@ const WIZARD_STEPS = [
 ];
 
 function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched }: any) {
-  const [campaigns, setCampaigns] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
+  const queryClient = useQueryClient();
 
-  // Wizard state (showWizard is owned by App so the Topbar can trigger it)
+  // Wizard state
   const [step, setStep] = useState(0);
   const [launching, setLaunching] = useState(false);
   const [form, setForm] = useState({ pipeline: '', name: '', sector: '', cities: [] as string[], targetProfile: '', estimatedLeads: '' });
 
   const openWizard = () => setShowWizard(true);
 
-  // Reset the form whenever the wizard opens
+  // Reset form when wizard opens
   useEffect(() => {
     if (showWizard) {
       setStep(0);
@@ -301,35 +303,23 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched 
     }
   }, [showWizard]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setError(null);
-        setLoading(true);
-        if (!api.getToken()) {
-          setError('No autenticado. Por favor, recarga la página.');
-          setLoading(false);
-          return;
-        }
-        const data = await api.getCampaigns();
-        const formatted = (data.campaigns || []).map((c: any) => ({
-          id: c.id,
-          name: c.name,
-          status: c.is_active ? 'active' : 'draft',
-          leads: 0,
-          approved: 0,
-          cities: (c.cities || []).join(', ') || '—',
-          progress: 0,
-        }));
-        setCampaigns(formatted);
-      } catch (err: any) {
-        console.error('Failed to load campaigns:', err);
-        setError('Error: ' + (err.message || 'No se pudieron cargar las campañas'));
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [reloadKey]);
+  // Load campaigns (cached by token)
+  const { data: campaignsData, isLoading: loading, error: campaignsError } = useQuery({
+    queryKey: ['campaigns'],
+    queryFn: () => api.getCampaigns(),
+    enabled: !!api.getToken(),
+    staleTime: 30000,
+  });
+  const campaigns = (campaignsData?.campaigns || []).map((c: any) => ({
+    id: c.id,
+    name: c.name,
+    status: c.is_active ? 'active' : 'draft',
+    leads: 0,
+    approved: 0,
+    cities: (c.cities || []).join(', ') || '—',
+    progress: 0,
+  }));
+  const error = campaignsError ? 'Error: ' + (campaignsError instanceof Error ? campaignsError.message : 'No se pudieron cargar las campañas') : null;
 
   // SECOP (todos los que se presentan a procesos) y RUES (todas las recién creadas)
   // traen empresas de TODOS los sectores y ciudades → no exigen esos filtros.
@@ -377,7 +367,7 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched 
         alert('La campaña se creó, pero no se pudo lanzar: ' + (e.message || ''));
       }
       setShowWizard(false);
-      setReloadKey(k => k + 1);
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
     } catch (err: any) {
       alert('Error al crear la campaña: ' + err.message);
     } finally {
@@ -392,7 +382,7 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <h1 style={{ fontSize: 26, margin: 0, marginBottom: 6 }}>Campañas</h1>
-          <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>{campaigns.length} campañas · {campaigns.filter(c => c.status === 'active').length} activa(s)</p>
+          <p style={{ margin: 0, fontSize: 14.5, color: 'var(--text-muted)' }}>{campaigns.length} campañas · {campaigns.filter((c: any) => c.status === 'active').length} activa(s)</p>
         </div>
         <button className="btn btn-primary" onClick={openWizard} style={{ fontFamily: 'inherit' }}><Icon name="plus" size={16} /> Nueva campaña</button>
       </div>
@@ -403,7 +393,7 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched 
       {!error && !loading && campaigns.length === 0 && <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>No hay campañas todavía. Haz click en "Nueva campaña" para crear una.</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, flex: 1 }}>
-        {campaigns.map((c) => (
+        {campaigns.map((c: any) => (
           <div key={c.id} className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', cursor: 'pointer' }} onClick={() => onSelectCampaign && onSelectCampaign(c.id)}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
               <div style={{ flex: 1 }}>
@@ -570,22 +560,30 @@ function ViewCampanas({ onSelectCampaign, showWizard, setShowWizard, onLaunched 
 }
 
 function ViewAprobados({ campaignId, onNavigate }: any) {
-  const [leads, setLeads] = useState<any[]>([]);
   const [selectedLead, setSelectedLead] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-  const onChanged = () => setReloadKey(k => k + 1);
-
-  const [emailConnected, setEmailConnected] = useState<boolean | null>(null);
   const [compose, setCompose] = useState({ subject: '', body: '' });
   const [sending, setSending] = useState(false);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    api.getEmailStatus().then(s => setEmailConnected(!!s.connected)).catch(() => setEmailConnected(false));
-  }, []);
+  // Email status (single fetch, no deps)
+  const { data: emailStatus } = useQuery({
+    queryKey: ['emailStatus'],
+    queryFn: () => api.getEmailStatus(),
+    staleTime: 60000, // 1 min
+  });
+  const emailConnected = emailStatus?.connected ?? false;
 
-  // Prefill el borrador editable al abrir un lead.
+  // Leads (cached by campaignId, auto-refetch only if campaignId changes)
+  const { data: leadsData, isLoading: loading, error: leadsError } = useQuery({
+    queryKey: ['leads', campaignId],
+    queryFn: () => api.getLeads(campaignId!),
+    enabled: !!api.getToken() && !!campaignId,
+    staleTime: 30000, // 30 sec
+  });
+  const leads = leadsData?.leads || [];
+  const error = leadsError ? 'Error: ' + (leadsError instanceof Error ? leadsError.message : 'No se pudieron cargar los leads') : null;
+
+  // Prefill el borrador editable al abrir un lead
   useEffect(() => {
     if (!selectedLead) return;
     setCompose({
@@ -593,27 +591,6 @@ function ViewAprobados({ campaignId, onNavigate }: any) {
       body: `Hola ${selectedLead.decisor || ''},\n\nTe escribo de parte de nuestro equipo. Creemos que podemos ayudar a ${selectedLead.name} con una propuesta a la medida.\n\n¿Tendrías 15 minutos esta semana para conversarlo?\n\nSaludos,`,
     });
   }, [selectedLead]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        setError(null);
-        setLoading(true);
-        if (!api.getToken() || !campaignId) {
-          setError('Selecciona una campaña primero');
-          setLoading(false);
-          return;
-        }
-        const data = await api.getLeads(campaignId);
-        setLeads(data.leads || []);
-      } catch (err: any) {
-        console.error('Failed to load leads:', err);
-        setError('Error: ' + (err.message || 'No se pudieron cargar los leads'));
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [campaignId, reloadKey]);
 
   const qualified = leads.filter((l: any) => l.qualified);
   const descartados = leads.filter((l: any) => !l.qualified);
@@ -748,7 +725,7 @@ function ViewAprobados({ campaignId, onNavigate }: any) {
                   await api.approveLead(campaignId, selectedLead.id, 'Aprobado desde UI');
                   alert('Lead aprobado');
                   setSelectedLead(null);
-                  onChanged && onChanged();
+                  queryClient.invalidateQueries({ queryKey: ['leads', campaignId] });
                 } catch (err: any) {
                   alert('Error al aprobar: ' + err.message);
                 }
@@ -761,7 +738,7 @@ function ViewAprobados({ campaignId, onNavigate }: any) {
                   await api.sendLead(campaignId, selectedLead.id, 'email', compose.body, compose.subject);
                   alert('Correo enviado a ' + (selectedLead.email || 'el decisor'));
                   setSelectedLead(null);
-                  onChanged && onChanged();
+                  queryClient.invalidateQueries({ queryKey: ['leads', campaignId] });
                 } catch (err: any) {
                   alert('Error al enviar: ' + (err.message || ''));
                 } finally {
