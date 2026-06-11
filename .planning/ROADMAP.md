@@ -499,7 +499,7 @@ Plans:
 Plans:
 - [x] 25-01-PLAN.md — Wave 1: MongoDB collections CRUD + Redis cache layer (tenant_config.py, config_cache.py, database.py indexes, xfail scaffold, deps)
 - [x] 25-02-PLAN.md — Wave 2: CobranzaOrchestrator + 4 sub-agents (direct dispatch, user_id isolation)
-- [ ] 25-03-PLAN.md — Wave 3: Telnyx + Gemini Live voice pipeline (hot-reload prompt, TeXML webhook)
+- [x] 25-03-PLAN.md — Wave 3: Telnyx + Gemini Live voice pipeline (hot-reload prompt, TeXML webhook)
 - [x] 25-04-PLAN.md — Wave 3: RAG service (Pinecone namespace per user_id, ingest + search)
 - [ ] 25-05-PLAN.md — Wave 4: Tenant admin API + ARQ log_debtor_communication + wiring
 
