@@ -1,8 +1,12 @@
 """
 voice_pipecat.py — Pipecat-based voice agent for cobranza.
 
-OpenAI Realtime API pipeline (speech-to-speech, no separate STT/TTS):
-  Twilio WebSocket -> OpenAI Realtime (STT+LLM+TTS all-in-one) -> Twilio
+Telnyx + Gemini Live pipeline (speech-to-speech, no separate STT/TTS):
+  Telnyx WebSocket -> Gemini Live (STT+LLM+TTS all-in-one) -> Telnyx
+
+Audio: 8kHz PCMU (telephony standard — NOT 24kHz which is WebRTC standard).
+Prompt: hot-reloaded from tenant_configs via Redis cache (5-min TTL).
+Tools: end_call, update_debtor, send_whatsapp, verify_identity, escalate.
 
 Target: <500ms TTFB.
 """
@@ -22,13 +26,14 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.serializers.twilio import TwilioFrameSerializer
-from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
-from pipecat.services.openai.realtime import events as rt_events
+from pipecat.serializers.telnyx import TelnyxFrameSerializer
+from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
 )
+from cobranza.config_cache import get_tenant_config
+from cobranza.cobranza_orchestrator import CobranzaOrchestrator
 
 logger = logging.getLogger("cobranza.pipecat")
 
@@ -84,46 +89,51 @@ class TranscriptCollector(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> CallResult:
+async def run_bot(
+    websocket,
+    call_sid: str,
+    debtor: dict,
+    estrategia: dict,
+    user_id: str = "",
+    stream_id: str = "",
+    call_control_id: str = "",
+) -> CallResult:
     """
-    Spawn a Pipecat pipeline using OpenAI Realtime API.
-    Returns CallResult with transcript and duration for post-call processing.
-    """
-    import json as _json
+    Spawn a Pipecat pipeline using Telnyx transport + Gemini Live LLM.
 
+    Args:
+        websocket: Already-accepted FastAPI WebSocket.
+        call_sid: Telnyx call_control_id (kept as call_sid for backward compat).
+        debtor: Debtor document dict.
+        estrategia: Cobranza strategy dict.
+        user_id: Tenant user_id for config hot-reload and orchestrator isolation.
+        stream_id: Telnyx stream_id from WebSocket handshake.
+        call_control_id: Telnyx call_control_id for hang-up via TelnyxFrameSerializer.
+
+    Returns:
+        CallResult with transcript and duration for post-call processing.
+    """
     call_result = CallResult(call_sid=call_sid, started_at=time.time())
 
     debtor_name = debtor.get("nombre", "senor o senora")
     monto = debtor.get("monto", 0)
     vencimiento = debtor.get("vencimiento", "desconocida")
 
-    logger.info("[VOICE] run_bot called: call_sid=%s, debtor=%s", call_sid, debtor_name)
+    logger.info("[VOICE] run_bot called: call_sid=%s, debtor=%s, user_id=%s", call_sid, debtor_name, user_id)
 
-    # ── Wait for Twilio start message to get stream_sid ──────────────────
-    logger.info("[VOICE] Waiting for Twilio handshake...")
-    stream_sid = ""
-    msg_count = 0
-    while True:
+    # ── Hot-reload: tenant config from Redis cache (5-min TTL) ──────────
+    tenant_config: dict = {}
+    if user_id:
         try:
-            raw = await websocket.receive_text()
-        except Exception as e:
-            logger.error("[VOICE] ERROR: receive_text failed: %s: %s", type(e).__name__, e)
-            return call_result
-        msg_count += 1
-        msg = _json.loads(raw)
-        event = msg.get("event")
-        logger.info("[VOICE] Twilio msg #%d: event=%s", msg_count, event)
-        if event == "start":
-            start_data = msg.get("start", {})
-            stream_sid = start_data.get("streamSid") or msg.get("streamSid", "")
-            logger.info("[VOICE] Got streamSid=%s", stream_sid)
-            break
-        elif event == "connected":
-            continue
+            tenant_config = await get_tenant_config(user_id)
+        except Exception as _cfg_err:
+            logger.warning("[VOICE] Could not load tenant_config for %s: %s", user_id, _cfg_err)
 
-    if not stream_sid:
-        logger.error("[VOICE] ERROR: No streamSid, aborting")
-        return call_result
+    # Guard: voice module disabled → close socket before pipeline starts
+    if not tenant_config.get("modules", {}).get("voice", True):
+        logger.info("[VOICE] modules.voice=false for user %s — closing socket (1008)", user_id)
+        await websocket.close(1008, "Voice module disabled")
+        return CallResult()
 
     # ── Camila system prompt ─────────────────────────────────────────────
     tono = estrategia.get("tono", "amable")
@@ -201,25 +211,39 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         f"- Sonar como robot o leer un guion. Eres una persona real teniendo una conversacion."
     )
 
-    # ── Transport: Twilio WebSocket ──────────────────────────────────────
+    # ── Hot-reload override: use tenant voice_system_prompt if configured ─
+    # string.replace() only — NO template engine (locked decision Phase 25)
+    tenant_prompt = tenant_config.get("voice_system_prompt", "")
+    if tenant_prompt:
+        # Cap to 2000 chars (T-25-06 threat mitigation — written with Pydantic max_length at 25-05)
+        brand_name = tenant_config.get("brand_name", "nuestra empresa")
+        system_prompt = tenant_prompt[:2000]
+        system_prompt = system_prompt.replace("{brand_name}", brand_name)
+        system_prompt = system_prompt.replace("{debtor_name}", debtor.get("nombre", ""))
+        logger.info("[VOICE] Using tenant voice_system_prompt for user %s", user_id)
+
+    # ── Transport: Telnyx WebSocket (8kHz PCMU — telephony standard) ────
+    # CRITICAL: audio_in/out_sample_rate=8000 (NOT 24000 which is WebRTC).
+    # TelnyxFrameSerializer with api_key handles hang-up automatically via EndFrame.
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            audio_in_sample_rate=24000,
-            audio_out_sample_rate=24000,
+            audio_in_sample_rate=8000,
+            audio_out_sample_rate=8000,
             vad_enabled=False,
-            serializer=TwilioFrameSerializer(
-                stream_sid=stream_sid,
-                call_sid=call_sid,
-                account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
-                auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
+            serializer=TelnyxFrameSerializer(
+                stream_id=stream_id or call_sid,
+                outbound_encoding="PCMU",
+                inbound_encoding="PCMU",
+                call_control_id=call_control_id or call_sid,
+                api_key=os.getenv("TELNYX_API_KEY", ""),
             ),
         ),
     )
 
-    # ── Tool: end_call (LLM can hang up the call) ─────────────────────
+    # ── Tool schemas for Gemini function calling ─────────────────────────
     end_call_tool = {
         "type": "function",
         "name": "end_call",
@@ -240,32 +264,79 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         },
     }
 
-    # ── OpenAI Realtime (STT + LLM + TTS all-in-one) ────────────────────
-    llm = OpenAIRealtimeLLMService(
-        api_key=os.getenv("OPENAI_API_KEY"),
-        settings=OpenAIRealtimeLLMService.Settings(
-            model="gpt-4o-realtime-preview-2024-12-17",
-            system_instruction=system_prompt,
-            temperature=0.6,
-            session_properties=rt_events.SessionProperties(
-                audio=rt_events.AudioConfiguration(
-                    output=rt_events.AudioOutput(voice="shimmer"),
-                    input=rt_events.AudioInput(
-                        transcription=rt_events.InputAudioTranscription(
-                            model="whisper-1",
-                            language="es",
-                        ),
-                        noise_reduction=rt_events.InputAudioNoiseReduction(type="near_field"),
-                        turn_detection=rt_events.TurnDetection(
-                            type="server_vad",
-                            threshold=0.6,
-                            prefix_padding_ms=400,
-                            silence_duration_ms=800,
-                        ),
-                    ),
-                ),
-                tools=[end_call_tool],
-            ),
+    update_debtor_tool = {
+        "type": "function",
+        "name": "update_debtor",
+        "description": "Actualiza el estado o campos del deudor en la base de datos.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "debtor_id": {"type": "string", "description": "ID del deudor"},
+                "estado": {
+                    "type": "string",
+                    "description": "Nuevo estado: promesa_de_pago, contactado, sin_contacto, escalado",
+                },
+            },
+            "required": ["debtor_id", "estado"],
+        },
+    }
+
+    send_whatsapp_tool = {
+        "type": "function",
+        "name": "send_whatsapp",
+        "description": "Envia un mensaje de WhatsApp al deudor con informacion de pago o seguimiento.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "phone": {"type": "string", "description": "Numero de telefono con codigo de pais"},
+                "message": {"type": "string", "description": "Contenido del mensaje de WhatsApp"},
+            },
+            "required": ["phone", "message"],
+        },
+    }
+
+    verify_identity_tool = {
+        "type": "function",
+        "name": "verify_identity",
+        "description": "Verifica si la persona que contesto el telefono es el deudor esperado.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "utterance": {
+                    "type": "string",
+                    "description": "Lo que dijo la persona al contestar",
+                },
+                "debtor_name": {
+                    "type": "string",
+                    "description": "Nombre del deudor esperado",
+                },
+            },
+            "required": ["utterance"],
+        },
+    }
+
+    escalate_tool = {
+        "type": "function",
+        "name": "escalate",
+        "description": "Escala el caso a un asesor humano cuando el deudor tiene una situacion especial.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "debtor_id": {"type": "string", "description": "ID del deudor"},
+                "reason": {"type": "string", "description": "Motivo de la escalacion"},
+            },
+            "required": ["debtor_id", "reason"],
+        },
+    }
+
+    # ── Gemini Live (STT + LLM + TTS all-in-one, 8kHz telephony) ────────
+    llm = GeminiLiveLLMService(
+        api_key=os.getenv("GOOGLE_API_KEY"),
+        system_instruction=system_prompt,
+        tools=[end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool, escalate_tool],
+        params=GeminiLiveLLMService.InputParams(
+            voice_id="Charon",
+            language_code="es-419",
         ),
     )
 
@@ -317,29 +388,84 @@ async def run_bot(websocket, call_sid: str, debtor: dict, estrategia: dict) -> C
         ),
     )
 
-    # ── Function call handler: end_call ────────────────────────────────
+    # ── Function call handlers ─────────────────────────────────────────
+
+    # Instantiate orchestrator once for this call (all handlers share it)
+    orchestrator = CobranzaOrchestrator(user_id=user_id, tenant_config=tenant_config) if user_id else None
+
     async def _handle_end_call(params):
+        """end_call: TelnyxFrameSerializer + api_key handles hang-up via EndFrame."""
         reason = params.arguments.get("reason", "conversacion finalizada")
         logger.info("[VOICE] end_call invoked: reason=%s", reason)
         await params.result_callback({"status": "ending", "reason": reason})
-        # Wait for the farewell TTS to finish playing before hanging up
+        # Allow farewell TTS to play before disconnect
         import asyncio
         await asyncio.sleep(4.0)
-        # Hang up Twilio call
-        try:
-            from twilio.rest import Client
-            twilio_client = Client(
-                os.getenv("TWILIO_ACCOUNT_SID"),
-                os.getenv("TWILIO_AUTH_TOKEN"),
-            )
-            twilio_client.calls(call_sid).update(status="completed")
-            logger.info("[VOICE] Twilio call %s hung up", call_sid)
-        except Exception as e:
-            logger.error("[VOICE] Failed to hang up Twilio call: %s", e)
+        # TelnyxFrameSerializer with api_key automatically signals hang-up on EndFrame
         await task.queue_frames([EndFrame()])
+
+    async def _handle_update_debtor(params):
+        """update_debtor: patch debtor estado/fields via CobranzaOrchestrator."""
+        debtor_id = params.arguments.get("debtor_id", "")
+        estado = params.arguments.get("estado", "")
+        logger.info("[VOICE] update_debtor: debtor_id=%s estado=%s", debtor_id, estado)
+        result = {"ok": False, "error": "orchestrator unavailable"}
+        if orchestrator and debtor_id:
+            try:
+                result = await orchestrator.update_debtor(debtor_id, {"estado": estado})
+            except Exception as exc:
+                logger.error("[VOICE] update_debtor error: %s", exc)
+                result = {"ok": False, "error": str(exc)[:100]}
+        await params.result_callback(result)
+
+    async def _handle_send_whatsapp(params):
+        """send_whatsapp: enqueue WhatsApp message via CobranzaOrchestrator."""
+        phone = params.arguments.get("phone", "")
+        message = params.arguments.get("message", "")
+        logger.info("[VOICE] send_whatsapp: phone=%s", phone)
+        result = {"ok": False, "error": "orchestrator unavailable"}
+        if orchestrator and phone:
+            try:
+                result = await orchestrator.send_whatsapp(phone, message)
+            except Exception as exc:
+                logger.error("[VOICE] send_whatsapp error: %s", exc)
+                result = {"ok": False, "error": str(exc)[:100]}
+        await params.result_callback(result)
+
+    async def _handle_verify_identity(params):
+        """verify_identity: regex + LLM fallback identity check."""
+        utterance = params.arguments.get("utterance", "")
+        debtor_name_arg = params.arguments.get("debtor_name", debtor_name)
+        logger.info("[VOICE] verify_identity: utterance=%s", utterance[:50])
+        result = {"confirmed": False, "confidence": "low"}
+        if orchestrator and utterance:
+            try:
+                result = await orchestrator.verify_identity(utterance, debtor_name_arg)
+            except Exception as exc:
+                logger.error("[VOICE] verify_identity error: %s", exc)
+                result = {"confirmed": False, "error": str(exc)[:100]}
+        await params.result_callback(result)
+
+    async def _handle_escalate(params):
+        """escalate: mark debtor escalado and notify dashboard."""
+        debtor_id = params.arguments.get("debtor_id", "")
+        reason = params.arguments.get("reason", "escalado por agente")
+        logger.info("[VOICE] escalate: debtor_id=%s reason=%s", debtor_id, reason)
+        result = {"ok": False, "error": "orchestrator unavailable"}
+        if orchestrator and debtor_id:
+            try:
+                result = await orchestrator.escalate(debtor_id, reason)
+            except Exception as exc:
+                logger.error("[VOICE] escalate error: %s", exc)
+                result = {"ok": False, "error": str(exc)[:100]}
+        await params.result_callback(result)
 
     # cancel_on_interruption=False → user talking during goodbye won't cancel the hangup
     llm.register_function("end_call", _handle_end_call, cancel_on_interruption=False)
+    llm.register_function("update_debtor", _handle_update_debtor)
+    llm.register_function("send_whatsapp", _handle_send_whatsapp)
+    llm.register_function("verify_identity", _handle_verify_identity)
+    llm.register_function("escalate", _handle_escalate)
 
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")
