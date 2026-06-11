@@ -29,6 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 21: Pipeline Parametrization** - VerticalConfig dataclass per insurance vertical; SignalLead TypedDict contract for all signal_sources; user selects vertical at campaign configuration
 - [ ] **Phase 22: Cost Observability** - CostEvent logged per LLM and Serper call with tenant_id + run_id; user can query total cost per run via API
 - [ ] **Phase 24: Signal Sources Colombianas** - RUES (recent registrations) + Bright Data (LinkedIn hiring signals) + Hunter.io (decision makers) + Google Maps; Signal deduplication (fuzzy) + intent-based ranking; Quota enforcement per broker ✨ **(STANDBY: Blocks on Phase 19)**
+- [ ] **Phase 25: Agentic Multi-Tenant Architecture** - MongoDB-persisted agent configs (system prompts, model, tools); hot-reload without redeploy; CobranzaOrchestrator multi-tenant with sub-agents (debtor_updater, whatsapp_notifier, identity_verifier, escalation_handler); Bandwidth/Telnyx replaces Twilio; Pipecat + Gemini Live replaces OpenAI Realtime + Assembly AI; RAG per tenant (Pinecone Starter + OpenAI embeddings + semantic chunking); Redis Upstash cache with immediate toggle invalidation
 
 ## Phase Details
 
@@ -478,6 +479,29 @@ Plans:
 - [ ] 23-03-PLAN.md - Wave 3: Fire-and-forget signal feedback hook on POST /api/leads/{id}/decision
 - [x] 23-04-PLAN.md - Wave 3: NLProspectInput + ExtractedParamsCard + KnowledgeBasePanel + LearningBadge in AgentPanel.tsx
 - [ ] 23-05-PLAN.md - Wave 4: Backend+frontend health gates + human-verify end-to-end checkpoint
+
+### Phase 25: Agentic Multi-Tenant Architecture
+
+**Goal**: MongoDB-persisted agent configuration (system prompts, model, tools, rules) enables hot-reload without redeploy; CobranzaOrchestrator provides multi-tenant voice orchestration with 4 sub-agents; Bandwidth or Telnyx replaces Twilio (40-60% cost reduction); Pipecat + Gemini Live replaces OpenAI Realtime + Assembly AI for true streaming voice; RAG per tenant using Pinecone Starter + OpenAI text-embedding-3-small with semantic chunking; Redis Upstash cache with immediate invalidation for on/off toggles
+**Depends on**: Phase 19
+**Requirements**: AGENT-CFG-01, AGENT-CFG-02, AGENT-CFG-03, VOICE-01, VOICE-02, RAG-01, RAG-02, CACHE-01
+**Success Criteria** (what must be TRUE):
+  1. Changing `voice_system_prompt` in MongoDB for a tenant reflects in the next voice call without any redeploy
+  2. Setting `modules.voice = false` for a tenant stops new voice calls within 1 request (immediate Redis cache invalidation)
+  3. 10 concurrent tenants each with their own agent_instances can run voice calls simultaneously, with no cross-tenant data leakage
+  4. A voice call uses Bandwidth or Telnyx (not Twilio) — confirmed by outbound call SID format or provider billing dashboard
+  5. Pipecat + Gemini Live pipeline achieves <500ms TTFB on first agent utterance
+  6. RAG document uploaded for tenant A is not retrievable by tenant B (Pinecone namespace isolation)
+  7. Sub-agents (debtor_updater, whatsapp_notifier, identity_verifier, escalation_handler) execute successfully when called from voice agent tools
+
+**Plans**: 5 plans
+
+Plans:
+- [ ] 25-01-PLAN.md — Wave 1: MongoDB collections CRUD + Redis cache layer (tenant_config.py, config_cache.py, database.py indexes, xfail scaffold, deps)
+- [ ] 25-02-PLAN.md — Wave 2: CobranzaOrchestrator + 4 sub-agents (direct dispatch, user_id isolation)
+- [ ] 25-03-PLAN.md — Wave 3: Telnyx + Gemini Live voice pipeline (hot-reload prompt, TeXML webhook)
+- [ ] 25-04-PLAN.md — Wave 3: RAG service (Pinecone namespace per user_id, ingest + search)
+- [ ] 25-05-PLAN.md — Wave 4: Tenant admin API + ARQ log_debtor_communication + wiring
 
 ---
 
