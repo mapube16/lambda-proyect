@@ -133,6 +133,11 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.cobranza_calls_in_progress, [("started_at", 1)], expireAfterSeconds=3600)
     await _safe_index(db.cobranza_calls, [("user_id", 1), ("created_at", -1)])
     await _safe_index(db.cobranza_calls, "call_id", unique=True)
+    # ── Phase 25: Agentic Multi-Tenant Architecture indexes ──────────────────
+    await _safe_index(db.tenant_configs, "user_id", unique=True)
+    await _safe_index(db.agent_instances, "user_id", unique=True)
+    await _safe_index(db.rag_documents, [("user_id", 1), ("filename", 1)])
+    await _safe_index(db.rag_documents, [("user_id", 1), ("created_at", -1)])
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
