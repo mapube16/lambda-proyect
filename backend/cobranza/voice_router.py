@@ -36,31 +36,30 @@ class VoiceCallInitRequest(BaseModel):
 
 
 @router.post("/webhook")
-async def telnyx_webhook(request: Request):
+async def twilio_webhook(request: Request):
     """
-    Telnyx calls this when an outbound call connects.
-    Returns TeXML <Connect><Stream> to establish bidirectional WebSocket.
+    Twilio calls this when an outbound call connects.
+    Returns TwiML <Connect><Stream> to establish bidirectional WebSocket.
     """
     form = dict(await request.form())
-    call_control_id = form.get("call_control_id", "unknown")
-    logger.info("[Webhook] TELNYX call %s answered", call_control_id)
+    call_sid = form.get("CallSid", "unknown")
+    logger.info("[Webhook] TWILIO call %s answered", call_sid)
 
     host = (
         os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
         .replace("https://", "")
         .replace("http://", "")
     )
-    ws_url = f"wss://{host}/api/cobranza/voice/ws/{call_control_id}"
+    ws_url = f"wss://{host}/api/cobranza/voice/ws/{call_sid}"
 
-    texml = (
+    twiml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
-        f'<Connect><Stream url="{ws_url}" bidirectionalMode="rtp" /></Connect>'
-        "<Pause length=\"40\"/>"
+        f'<Connect><Stream url="{ws_url}" /></Connect>'
         "</Response>"
     )
-    logger.info("[Webhook] TeXML -> Stream %s", ws_url)
-    return PlainTextResponse(texml, media_type="application/xml")
+    logger.info("[Webhook] TwiML -> Stream %s", ws_url)
+    return PlainTextResponse(twiml, media_type="application/xml")
 
 
 # ── Recording Callback ──────────────────────────────────────────────────────
@@ -114,31 +113,26 @@ async def get_recording(recording_sid: str, current_user: dict = Depends(get_cur
 # ── WebSocket (Pipecat handles everything) ───────────────────────────────────
 
 
-@router.websocket("/ws/{call_control_id}")
-async def voice_websocket(websocket: WebSocket, call_control_id: str):
+@router.websocket("/ws/{call_sid}")
+async def voice_websocket(websocket: WebSocket, call_sid: str):
     """
-    Telnyx bidirectional WebSocket for audio streaming.
+    Twilio bidirectional WebSocket for audio streaming.
 
     Pipecat takes over: STT → LLM → TTS all streaming in parallel.
-    Uses parse_telephony_websocket to extract stream_id + call_control_id.
     """
-    logger.info("[WS] TELNYX incoming connection for call %s", call_control_id)
+    logger.info("[WS] TWILIO incoming connection for call %s", call_sid)
 
     db = get_db()
     stream_id = ""
 
     try:
-        # ── WebSocket handshake: accept + parse Telnyx start frame ───────
+        # ── WebSocket handshake: accept + parse Twilio start frame ───────
         await websocket.accept()
 
         try:
             from pipecat.runner.utils import parse_telephony_websocket
             _transport_type, call_data = await parse_telephony_websocket(websocket)
-            stream_id = call_data.get("stream_id", call_control_id)
-            # Prefer call_control_id from handshake data if available
-            parsed_cid = call_data.get("call_control_id", call_control_id)
-            if parsed_cid and parsed_cid != "unknown":
-                call_control_id = parsed_cid
+            stream_id = call_data.get("stream_id") or call_data.get("stream_sid") or call_sid
         except ImportError:
             # parse_telephony_websocket not available — fall back to manual parse
             import json as _json
@@ -149,19 +143,19 @@ async def voice_websocket(websocket: WebSocket, call_control_id: str):
                 event = msg.get("event", "")
                 if event == "start":
                     start_data = msg.get("start", {})
-                    stream_id = start_data.get("stream_id") or start_data.get("stream_sid", call_control_id)
-                    call_control_id = start_data.get("call_control_id", call_control_id)
+                    stream_id = start_data.get("stream_id") or start_data.get("stream_sid") or call_sid
                     break
                 elif event == "connected":
                     continue
         except Exception as parse_err:
             logger.error("[WS] Handshake parse error: %s", parse_err)
+            stream_id = stream_id or call_sid
 
-        logger.info("[WS] Handshake: stream_id=%s call_control_id=%s", stream_id, call_control_id)
+        logger.info("[WS] Handshake: stream_id=%s call_sid=%s", stream_id, call_sid)
 
         # ── Load call context from in-progress mapping ───────────────────
         # Telnyx uses call_control_id as primary key (same as our call_sid field)
-        call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_control_id})
+        call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
 
         if call_mapping:
             user_id = call_mapping["user_id"]
@@ -170,28 +164,33 @@ async def voice_websocket(websocket: WebSocket, call_control_id: str):
             config_doc = await db.cobranza_config.find_one({"user_id": user_id})
             estrategia = (config_doc or {}).get("estrategia", {})
         else:
-            logger.warning("[WS] No call mapping for %s — rejecting", call_control_id)
+            logger.warning("[WS] No call mapping for %s — rejecting", call_sid)
             await websocket.close(1008, "No call mapping found")
             return
 
         if not debtor:
-            logger.error("[WS] No debtor for %s, closing", call_control_id)
+            logger.error("[WS] No debtor for %s, closing", call_sid)
             await websocket.close(1008, "Missing debtor")
             return
 
-        logger.info("[WS] Starting Pipecat for call %s (debtor=%s)", call_control_id, debtor.get("nombre"))
+        logger.info("[WS] Starting Pipecat for call %s (debtor=%s)", call_sid, debtor.get("nombre"))
 
+        # CRITICAL: pass the REAL Twilio stream_id (MZ...) parsed from the
+        # handshake — NOT call_sid. The TwilioFrameSerializer tags every
+        # outgoing media event with streamSid; if it's the call_sid instead
+        # of the MZ stream id, Twilio silently drops all bot audio.
+        logger.info("[WS] Passing stream_id=%s to run_bot (call_sid=%s)", stream_id, call_sid)
         call_result = await run_bot(
             websocket=websocket,
-            call_sid=call_control_id,
+            call_sid=call_sid,
             debtor=debtor,
             estrategia=estrategia,
             user_id=user_id,
             stream_id=stream_id,
-            call_control_id=call_control_id,
+            call_control_id=call_sid,
         )
 
-        logger.info("[WS] Pipecat finished for call %s (duration=%ss)", call_control_id, call_result.duration_seconds)
+        logger.info("[WS] Pipecat finished for call %s (duration=%ss)", call_sid, call_result.duration_seconds)
 
         # ── Post-call: update debtor status & log history ────────────
         if call_mapping:
@@ -202,10 +201,10 @@ async def voice_websocket(websocket: WebSocket, call_control_id: str):
     finally:
         # Cleanup
         try:
-            await db.cobranza_calls_in_progress.delete_one({"call_sid": call_control_id})
+            await db.cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
         except:
             pass
-        logger.info("[WS] Cleanup done for %s", call_control_id)
+        logger.info("[WS] Cleanup done for %s", call_sid)
 
 
 # ── Post-call processing ────────────────────────────────────────────────────
@@ -312,45 +311,45 @@ async def initiate_call_v2(
         raise HTTPException(400, "Ya fue contactado hoy (Ley 2300)")
 
     try:
-        import telnyx
+        from twilio.rest import Client
 
-        telnyx_api_key = os.getenv("TELNYX_API_KEY")
-        connection_id = os.getenv("TELNYX_CONNECTION_ID")
-        from_number = os.getenv("TELNYX_VOICE_PHONE_NUMBER")
+        twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from_number = os.getenv("TWILIO_VOICE_PHONE_NUMBER")
         webhook_url = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
 
-        if not all([telnyx_api_key, connection_id, from_number]):
-            raise HTTPException(500, "TELNYX not configured (TELNYX_API_KEY, TELNYX_CONNECTION_ID, TELNYX_VOICE_PHONE_NUMBER required)")
+        if not all([twilio_sid, twilio_token, from_number]):
+            raise HTTPException(500, "TWILIO not configured (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VOICE_PHONE_NUMBER required)")
 
         to_number = debtor.get("telefono")
-        telnyx_client = telnyx.Telnyx(api_key=telnyx_api_key)
+        twilio_client = Client(twilio_sid, twilio_token)
 
-        # Telnyx SDK v4: use client.calls.dial() — telnyx.Call.create() does not exist
         try:
-            async with asyncio.timeout(15):
-                call = await asyncio.to_thread(
-                    telnyx_client.calls.dial,
-                    connection_id=connection_id,
+            loop = asyncio.get_event_loop()
+            call = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: twilio_client.calls.create(
                     to=to_number,
                     from_=from_number,
-                    webhook_url=f"{webhook_url}/api/cobranza/voice/webhook",
-                    webhook_url_method="POST",
-                )
-        except TimeoutError:
-            raise HTTPException(504, "TELNYX call initiation timed out")
+                    url=f"{webhook_url}/api/cobranza/voice/webhook",
+                    method="POST",
+                )),
+                timeout=15
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "TWILIO call initiation timed out")
 
-        call_control_id = call.call_control_id
-        logger.info("[Init] TELNYX call %s -> %s", call_control_id, to_number)
+        call_sid = call.sid
+        logger.info("[Init] TWILIO call %s -> %s", call_sid, to_number)
 
         await db.cobranza_calls_in_progress.insert_one({
-            "call_sid": call_control_id, "user_id": user_id,
+            "call_sid": call_sid, "user_id": user_id,
             "debtor_id": str(debtor["_id"]), "debtor_name": debtor.get("nombre"),
             "debtor_phone": to_number, "started_at": datetime.now(timezone.utc),
         })
 
-        await update_debtor(db, user_id, debtor_id, {"estado": "llamando", "vapi_call_id": call_control_id})
+        await update_debtor(db, user_id, debtor_id, {"estado": "llamando", "vapi_call_id": call_sid})
 
-        return {"ok": True, "call_sid": call_control_id, "message": "Call initiated (Pipecat + Telnyx)"}
+        return {"ok": True, "call_sid": call_sid, "message": "Call initiated (Pipecat + Twilio)"}
 
     except HTTPException:
         raise

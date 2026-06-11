@@ -6,6 +6,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -32,7 +33,10 @@ from routers import auth, leads, prospect, staff, onboarding, knowledge, whatsap
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    try:
+        await asyncio.wait_for(init_db(), timeout=30)
+    except asyncio.TimeoutError:
+        logging.warning("init_db() timeout — MongoDB may be slow")
 
     if os.getenv("ENABLE_SEED_USERS", "false").lower() == "true":
         from auth import hash_password as _hash
@@ -43,12 +47,6 @@ async def lifespan(app: FastAPI):
             {"email": "demo.cobranza@empresa.com", "hashed_password": _hash("demo2026"),    "role": "client"},
         ])
 
-    from auth import hash_password as _hash
-    await seed_users([
-        {"email": "staff@lambda.com",          "hashed_password": _hash("lambda2026"),  "role": "staff"},
-        {"email": "dpg.seguros@gmail.com",     "hashed_password": _hash("seguros2026"), "role": "client"},
-        {"email": "demo.cobranza@empresa.com", "hashed_password": _hash("demo2026"),    "role": "client"},
-    ])
 
     from orchestrator import HiveOrchestrator
     from hive_adapter import HiveAdapter
@@ -167,6 +165,10 @@ from cobranza.voice_router import router as voice_router
 app.include_router(cobranza_router)
 app.include_router(_vapi_router)
 app.include_router(voice_router)
+
+# ── Phase 25: Multi-tenant admin API ──────────────────────────────────────────
+from routers.tenant_admin import router as tenant_admin_router
+app.include_router(tenant_admin_router)
 
 # ── Phase 18: SOFTSEGUROS debtors REST API ───────────────────────────────────
 from routes.debtors import router as debtors_router

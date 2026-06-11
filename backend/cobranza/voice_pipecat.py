@@ -1,8 +1,8 @@
 """
 voice_pipecat.py — Pipecat-based voice agent for cobranza.
 
-Telnyx + Gemini Live pipeline (speech-to-speech, no separate STT/TTS):
-  Telnyx WebSocket -> Gemini Live (STT+LLM+TTS all-in-one) -> Telnyx
+Twilio + Gemini Live pipeline (speech-to-speech, no separate STT/TTS):
+  Twilio WebSocket -> Gemini Live (STT+LLM+TTS all-in-one) -> Twilio
 
 Audio: 8kHz PCMU (telephony standard — NOT 24kHz which is WebRTC standard).
 Prompt: hot-reloaded from tenant_configs via Redis cache (5-min TTL).
@@ -26,7 +26,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.serializers.telnyx import TelnyxFrameSerializer
+from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
@@ -36,6 +36,8 @@ from cobranza.config_cache import get_tenant_config
 from cobranza.cobranza_orchestrator import CobranzaOrchestrator
 
 logger = logging.getLogger("cobranza.pipecat")
+
+
 
 
 @dataclass
@@ -222,121 +224,131 @@ async def run_bot(
         system_prompt = system_prompt.replace("{debtor_name}", debtor.get("nombre", ""))
         logger.info("[VOICE] Using tenant voice_system_prompt for user %s", user_id)
 
-    # ── Transport: Telnyx WebSocket (8kHz PCMU — telephony standard) ────
-    # CRITICAL: audio_in/out_sample_rate=8000 (NOT 24000 which is WebRTC).
-    # TelnyxFrameSerializer with api_key handles hang-up automatically via EndFrame.
+    # ── Transport: Twilio WebSocket ────────────────────────────────────
+    # Silero VAD here handles user-speech interruptions. Gemini's OWN native
+    # VAD is DISABLED (see llm params) because on a phone line it self-fires
+    # an interruption ~2s in and cancels the bot's audio. With Gemini's VAD
+    # off, Silero is the single source of truth for turn-taking.
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.audio.vad.vad_analyzer import VADParams
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            add_wav_header=False,
+            # Gemini emits 24kHz TTS audio. The output transport stays at 24kHz
+            # and the TwilioFrameSerializer downsamples to 8kHz µ-law on the
+            # wire (twilio_sample_rate=8000, sample_rate=24000). Mismatch here
+            # was why the caller heard nothing: 24kHz bytes were packed as if
+            # 8kHz → garbage/silence on the phone.
             audio_in_sample_rate=8000,
-            audio_out_sample_rate=8000,
-            vad_enabled=False,
-            serializer=TelnyxFrameSerializer(
-                stream_id=stream_id or call_sid,
-                outbound_encoding="PCMU",
-                inbound_encoding="PCMU",
-                call_control_id=call_control_id or call_sid,
-                api_key=os.getenv("TELNYX_API_KEY", ""),
+            audio_out_sample_rate=24000,
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.8)),
+            serializer=TwilioFrameSerializer(
+                stream_sid=stream_id or call_sid,
+                call_sid=call_sid,
+                account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
+                auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
+                params=TwilioFrameSerializer.InputParams(
+                    twilio_sample_rate=8000,
+                    sample_rate=24000,
+                ),
             ),
         ),
     )
 
-    # ── Tool schemas for Gemini function calling ─────────────────────────
-    end_call_tool = {
-        "type": "function",
-        "name": "end_call",
-        "description": (
+    # ── Tool schemas for Gemini function calling (Pipecat FunctionSchema) ──
+    from pipecat.adapters.schemas.function_schema import FunctionSchema
+    from pipecat.adapters.schemas.tools_schema import ToolsSchema
+
+    end_call_tool = FunctionSchema(
+        name="end_call",
+        description=(
             "Termina la llamada. Usa esta funcion SIEMPRE que la conversacion deba finalizar: "
             "cuando el deudor dice que no quiere hablar mas, cuando ya se llego a un acuerdo, "
             "cuando te despides, o cuando el deudor pide que no lo llamen mas."
         ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "reason": {
-                    "type": "string",
-                    "description": "Motivo breve de por que se termina la llamada",
-                },
-            },
-            "required": ["reason"],
+        properties={
+            "reason": {"type": "string", "description": "Motivo breve de por que se termina la llamada"},
         },
-    }
+        required=["reason"],
+    )
 
-    update_debtor_tool = {
-        "type": "function",
-        "name": "update_debtor",
-        "description": "Actualiza el estado o campos del deudor en la base de datos.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "debtor_id": {"type": "string", "description": "ID del deudor"},
-                "estado": {
-                    "type": "string",
-                    "description": "Nuevo estado: promesa_de_pago, contactado, sin_contacto, escalado",
-                },
-            },
-            "required": ["debtor_id", "estado"],
+    update_debtor_tool = FunctionSchema(
+        name="update_debtor",
+        description="Actualiza el estado o campos del deudor en la base de datos.",
+        properties={
+            "debtor_id": {"type": "string", "description": "ID del deudor"},
+            "estado": {"type": "string", "description": "Nuevo estado: promesa_de_pago, contactado, sin_contacto, escalado"},
         },
-    }
+        required=["debtor_id", "estado"],
+    )
 
-    send_whatsapp_tool = {
-        "type": "function",
-        "name": "send_whatsapp",
-        "description": "Envia un mensaje de WhatsApp al deudor con informacion de pago o seguimiento.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "phone": {"type": "string", "description": "Numero de telefono con codigo de pais"},
-                "message": {"type": "string", "description": "Contenido del mensaje de WhatsApp"},
-            },
-            "required": ["phone", "message"],
+    send_whatsapp_tool = FunctionSchema(
+        name="send_whatsapp",
+        description="Envia un mensaje de WhatsApp al deudor con informacion de pago o seguimiento.",
+        properties={
+            "phone": {"type": "string", "description": "Numero de telefono con codigo de pais"},
+            "message": {"type": "string", "description": "Contenido del mensaje de WhatsApp"},
         },
-    }
+        required=["phone", "message"],
+    )
 
-    verify_identity_tool = {
-        "type": "function",
-        "name": "verify_identity",
-        "description": "Verifica si la persona que contesto el telefono es el deudor esperado.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "utterance": {
-                    "type": "string",
-                    "description": "Lo que dijo la persona al contestar",
-                },
-                "debtor_name": {
-                    "type": "string",
-                    "description": "Nombre del deudor esperado",
-                },
-            },
-            "required": ["utterance"],
+    verify_identity_tool = FunctionSchema(
+        name="verify_identity",
+        description="Verifica si la persona que contesto el telefono es el deudor esperado.",
+        properties={
+            "utterance": {"type": "string", "description": "Lo que dijo la persona al contestar"},
+            "debtor_name": {"type": "string", "description": "Nombre del deudor esperado"},
         },
-    }
+        required=["utterance"],
+    )
 
-    escalate_tool = {
-        "type": "function",
-        "name": "escalate",
-        "description": "Escala el caso a un asesor humano cuando el deudor tiene una situacion especial.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "debtor_id": {"type": "string", "description": "ID del deudor"},
-                "reason": {"type": "string", "description": "Motivo de la escalacion"},
-            },
-            "required": ["debtor_id", "reason"],
+    escalate_tool = FunctionSchema(
+        name="escalate",
+        description="Escala el caso a un asesor humano cuando el deudor tiene una situacion especial.",
+        properties={
+            "debtor_id": {"type": "string", "description": "ID del deudor"},
+            "reason": {"type": "string", "description": "Motivo de la escalacion"},
         },
-    }
+        required=["debtor_id", "reason"],
+    )
+
+    tools_schema = ToolsSchema(standard_tools=[
+        end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool, escalate_tool,
+    ])
 
     # ── Gemini Live (STT + LLM + TTS all-in-one, 8kHz telephony) ────────
+    # Gemini's native VAD is tuned LOW-sensitivity: phone lines have constant
+    # noise/echo that, at default sensitivity, makes the bot self-interrupt
+    # ~0.2s into every utterance (audio cuts out). LOW start-sensitivity +
+    # longer silence_duration means only real, sustained speech interrupts.
+    from pipecat.services.google.gemini_live.llm import (
+        InputParams as GeminiInputParams,
+        GeminiVADParams,
+        GeminiModalities,
+    )
+    from pipecat.transcriptions.language import Language
+    from google.genai.types import StartSensitivity, EndSensitivity
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
+        voice_id="Charon",
         system_instruction=system_prompt,
-        tools=[end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool, escalate_tool],
-        params=GeminiLiveLLMService.InputParams(
-            voice_id="Charon",
-            language_code="es-419",
+        tools=tools_schema,
+        params=GeminiInputParams(
+            language=Language.ES_US,
+            temperature=0.7,
+            # CRITICAL: force AUDIO output. Without this, Gemini Live returns
+            # only text — the pipeline emits "bot speaking" events but ZERO
+            # audio frames, so the caller hears nothing.
+            modalities=GeminiModalities.AUDIO,
+            # DISABLE Gemini's native VAD. On a phone line the constant 16kHz
+            # input (with noise/echo) makes Gemini's auto-VAD fire an
+            # "interrupted" signal ~2s in, which CANCELS the bot's audio
+            # before any OutputAudioRawFrame is emitted. Silero VAD in the
+            # transport handles real user-speech interruptions instead.
+            vad=GeminiVADParams(disabled=True),
         ),
     )
 
@@ -379,10 +391,14 @@ async def run_bot(
         ]
     )
 
+    # DIAGNOSTIC: allow_interruptions=False so a (false) interruption signal
+    # can't cancel the bot's audio mid-utterance. If audio finally reaches the
+    # caller with this off, the root cause is confirmed to be spurious
+    # interruptions; we then re-enable with proper VAD tuning.
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
-            allow_interruptions=True,
+            allow_interruptions=False,
             enable_metrics=True,
             report_only_initial_ttfb=True,
         ),
@@ -394,14 +410,14 @@ async def run_bot(
     orchestrator = CobranzaOrchestrator(user_id=user_id, tenant_config=tenant_config) if user_id else None
 
     async def _handle_end_call(params):
-        """end_call: TelnyxFrameSerializer + api_key handles hang-up via EndFrame."""
+        """end_call: TwilioFrameSerializer handles hang-up via EndFrame."""
         reason = params.arguments.get("reason", "conversacion finalizada")
         logger.info("[VOICE] end_call invoked: reason=%s", reason)
         await params.result_callback({"status": "ending", "reason": reason})
         # Allow farewell TTS to play before disconnect
         import asyncio
         await asyncio.sleep(4.0)
-        # TelnyxFrameSerializer with api_key automatically signals hang-up on EndFrame
+        # TwilioFrameSerializer automatically signals hang-up on EndFrame
         await task.queue_frames([EndFrame()])
 
     async def _handle_update_debtor(params):

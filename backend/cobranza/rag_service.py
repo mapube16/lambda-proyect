@@ -54,8 +54,7 @@ async def _get_pinecone_index():
     if not api_key:
         return None
 
-    from pinecone.asyncio import AsyncPinecone
-    from pinecone import ServerlessSpec
+    from pinecone import AsyncPinecone, ServerlessSpec
 
     pc = AsyncPinecone(api_key=api_key)
 

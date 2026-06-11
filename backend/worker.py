@@ -127,6 +127,55 @@ async def run_prospecting_job(
         raise
 
 
+async def log_debtor_communication(
+    ctx: dict,
+    user_id: str,
+    debtor_id: str,
+    channel: str,          # "whatsapp" | "voice" | "sms"
+    direction: str,        # "outbound" | "inbound"
+    content: str,
+    result: str = "",
+) -> dict:
+    """ARQ job: registra una comunicación en historial_llamadas del deudor.
+
+    Llamado async desde sub-agents (whatsapp_notifier, etc.) para no bloquear
+    los tool calls del agente de voz. Filtra por user_id para garantizar
+    tenant isolation (T-25-15): un job nunca toca el deudor de otro tenant.
+    """
+    from datetime import datetime, timezone
+
+    from bson import ObjectId
+
+    try:
+        db = database.get_db()
+        record = {
+            "tipo": f"{channel}_{direction}",
+            "channel": channel,
+            "direction": direction,
+            "content": content[:500],
+            "result": result,
+            "ts": datetime.now(timezone.utc),
+        }
+        try:
+            oid = ObjectId(debtor_id)
+        except Exception:
+            logger.warning("[log_comm] Invalid debtor_id: %s", debtor_id)
+            return {"ok": False, "error": "invalid_debtor_id"}
+
+        await db.debtors.update_one(
+            {"_id": oid, "user_id": user_id},  # user_id filter: tenant isolation
+            {
+                "$push": {"historial_llamadas": record},
+                "$set": {"updated_at": datetime.now(timezone.utc)},
+            },
+        )
+        logger.info("[log_comm] Communication logged: user=%s debtor=%s channel=%s", user_id, debtor_id, channel)
+        return {"ok": True}
+    except Exception as exc:
+        logger.error("[log_comm] Failed: %s", exc)
+        return {"ok": False, "error": str(exc)[:100]}
+
+
 async def on_startup(ctx: dict) -> None:
     await database.init_db()
     logger.info("[worker] started — mongo initialized")
@@ -137,7 +186,7 @@ async def on_shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [run_prospecting_job]
+    functions = [run_prospecting_job, log_debtor_communication]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = redis_settings_from_url()
