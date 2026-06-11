@@ -152,16 +152,141 @@ async def test_toggle_module_persists():
     assert doc2["modules"]["voice"] is True
 
 
-# ── xfail stubs — AGENT-CFG-02 ───────────────────────────────────────────────
+# ── Wave 2: sub-agents + CobranzaOrchestrator ────────────────────────────────
 
-@pytest.mark.xfail(strict=False, reason="Phase 25 WIP — Wave 2 orchestrator dispatch")
+@pytest.mark.asyncio
+async def test_debtor_updater_cross_tenant_blocked():
+    """debtor_updater: updating a debtor with a different user_id returns ok=False."""
+    from cobranza.sub_agents.debtor_updater import update_debtor_status
+    db = database.get_db()
+    owner_user = "user_A"
+    attacker_user = "user_B"
+    result = await db.debtors.insert_one(
+        {"user_id": owner_user, "nombre": "Carlos", "estado": "pendiente", "monto": 100.0}
+    )
+    debtor_id = str(result.inserted_id)
+    # Attacker tries to update owner's debtor
+    resp = await update_debtor_status(db, attacker_user, debtor_id, {"estado": "pagado"})
+    assert resp["ok"] is False
+    assert "not_found" in resp.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_debtor_updater_valid_update():
+    """debtor_updater: updating own debtor returns ok=True with updated doc."""
+    from cobranza.sub_agents.debtor_updater import update_debtor_status
+    db = database.get_db()
+    user_id = "user_valid_update"
+    result = await db.debtors.insert_one(
+        {"user_id": user_id, "nombre": "Maria", "estado": "pendiente", "monto": 200.0}
+    )
+    debtor_id = str(result.inserted_id)
+    resp = await update_debtor_status(db, user_id, debtor_id, {"estado": "promesa_de_pago"})
+    assert resp["ok"] is True
+    assert resp["debtor"]["estado"] == "promesa_de_pago"
+    assert resp["debtor"]["user_id"] == user_id
+
+
+@pytest.mark.asyncio
+async def test_debtor_updater_invalid_id():
+    """debtor_updater: invalid ObjectId returns ok=False with invalid_id error."""
+    from cobranza.sub_agents.debtor_updater import update_debtor_status
+    db = database.get_db()
+    resp = await update_debtor_status(db, "some_user", "not-a-valid-objectid", {"estado": "pagado"})
+    assert resp["ok"] is False
+    assert "invalid_id" in resp.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_notifier_enqueues(monkeypatch):
+    """whatsapp_notifier: send_whatsapp enqueues ARQ job and returns ok=True immediately."""
+    from cobranza.sub_agents import whatsapp_notifier
+
+    enqueued_calls = []
+
+    class FakePool:
+        async def enqueue_job(self, task_name, **kwargs):
+            enqueued_calls.append((task_name, kwargs))
+
+    async def fake_get_arq_pool():
+        return FakePool()
+
+    monkeypatch.setattr(whatsapp_notifier, "get_arq_pool", fake_get_arq_pool)
+
+    resp = await whatsapp_notifier.send_whatsapp("user_1", "+573001234567", "Hola, su pago está pendiente")
+    assert resp["ok"] is True
+    assert resp.get("queued") is True
+    assert len(enqueued_calls) == 1
+    assert enqueued_calls[0][0] == "send_whatsapp_job"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_notifier_missing_phone():
+    """whatsapp_notifier: missing phone returns ok=False."""
+    from cobranza.sub_agents.whatsapp_notifier import send_whatsapp
+    resp = await send_whatsapp("user_1", "", "some message")
+    assert resp["ok"] is False
+    assert "error" in resp
+
+
+@pytest.mark.asyncio
+async def test_identity_verifier_confirm():
+    """identity_verifier: confirms identity when utterance matches confirm pattern."""
+    from cobranza.sub_agents.identity_verifier import verify_identity
+    resp = await verify_identity("sí, soy yo", "Carlos Perez")
+    assert resp["confirmed"] is True
+    assert resp["confidence"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_identity_verifier_deny():
+    """identity_verifier: denies identity when utterance matches deny pattern."""
+    from cobranza.sub_agents.identity_verifier import verify_identity
+    resp = await verify_identity("no, se equivocó", "Carlos Perez")
+    assert resp["confirmed"] is False
+    assert resp["confidence"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_escalation_handler_sets_estado(monkeypatch):
+    """escalation_handler: escalate sets estado=escalado in DB and returns ok=True."""
+    from cobranza.sub_agents import escalation_handler
+
+    # Patch WS push to avoid importing main
+    async def fake_ws_push(*args, **kwargs):
+        pass
+    monkeypatch.setattr(escalation_handler, "_push_ws_event", fake_ws_push)
+
+    db = database.get_db()
+    user_id = "user_esc"
+    result = await db.debtors.insert_one(
+        {"user_id": user_id, "nombre": "Pedro", "estado": "pendiente", "monto": 500.0, "intentos": 0}
+    )
+    debtor_id = str(result.inserted_id)
+    resp = await escalation_handler.escalate(db, user_id, debtor_id, "no_pago_reiterado")
+    assert resp["ok"] is True
+    assert resp["estado"] == "escalado"
+    # Verify DB was updated
+    doc = await db.debtors.find_one({"_id": result.inserted_id})
+    assert doc["estado"] == "escalado"
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_dispatch():
     """
-    Sub-agent orchestrator routes a cobranza task to the correct
-    specialized agent based on tenant config.
+    CobranzaOrchestrator.update_debtor dispatches to debtor_updater with user_id.
     """
-    raise NotImplementedError
+    from cobranza.cobranza_orchestrator import CobranzaOrchestrator
+    db = database.get_db()
+    user_id = "user_orch"
+    result = await db.debtors.insert_one(
+        {"user_id": user_id, "nombre": "Luis", "estado": "pendiente", "monto": 300.0}
+    )
+    debtor_id = str(result.inserted_id)
+    orch = CobranzaOrchestrator(user_id=user_id, tenant_config={}, db=db)
+    resp = await orch.update_debtor(debtor_id, {"estado": "promesa_de_pago"})
+    assert resp["ok"] is True
+    assert resp["debtor"]["estado"] == "promesa_de_pago"
 
 
 @pytest.mark.xfail(strict=False, reason="Phase 25 WIP — Wave 3 Telnyx serializer")
