@@ -50,15 +50,33 @@ async def test_tenant_config_hot_reload():
     assert doc["modules"]["voice"] is False
 
 
-@pytest.mark.xfail(strict=False, reason="Phase 25 WIP — Task 3 config_cache.py (Redis required)")
 @pytest.mark.asyncio
-async def test_cache_invalidation():
+async def test_cache_invalidation(monkeypatch):
     """
     After upsert_tenant_config(), Redis key tenant_config:{user_id} must be absent
     (CACHE-01: immediate invalidation on every successful write).
-    Made green in Task 3 once config_cache.py + fakeredis are wired.
+    Uses fakeredis as in-memory Redis substitute (no real Redis needed in CI).
     """
-    raise NotImplementedError
+    import fakeredis.aioredis as fakeredis
+    import cobranza.config_cache as cc
+
+    fake = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(cc, "_redis_client", fake)
+
+    from cobranza.tenant_config import upsert_tenant_config
+    from cobranza.config_cache import get_tenant_config, invalidate_tenant_config
+
+    user_id = "user_cache_inv_test"
+    # Pre-populate the cache with a stale value
+    import json
+    await fake.setex(f"tenant_config:{user_id}", 300, json.dumps({"stale": True}))
+
+    # Write config — must invalidate cache
+    await upsert_tenant_config(user_id, {"business_name": "Fresh"})
+
+    # Key must be absent after write
+    cached = await fake.get(f"tenant_config:{user_id}")
+    assert cached is None, f"Expected cache key to be deleted, got: {cached}"
 
 
 # ── Task 2 CRUD tests ─────────────────────────────────────────────────────────
@@ -190,14 +208,35 @@ async def test_search_knowledge_tenant_isolation():
     raise NotImplementedError
 
 
-# ── xfail stub — CACHE-01 / module toggle ─────────────────────────────────────
+# ── CACHE-01 / module toggle ─────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=False, reason="Phase 25 WIP — Task 2/3 toggle_module + invalidation")
 @pytest.mark.asyncio
-async def test_module_toggle_cache():
+async def test_module_toggle_cache(monkeypatch):
     """
     toggle_module(user_id, 'voice', False) upserts modules.voice=False
     AND calls invalidate_tenant_config(user_id) so the next
-    get_tenant_config returns voice=False from MongoDB.
+    get_tenant_config returns voice=False from MongoDB (hot-reload through cache).
+    Uses fakeredis — no real Redis needed in CI.
     """
-    raise NotImplementedError
+    import fakeredis.aioredis as fakeredis
+    import cobranza.config_cache as cc
+
+    fake = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(cc, "_redis_client", fake)
+
+    from cobranza.tenant_config import upsert_tenant_config, toggle_module
+    from cobranza.config_cache import get_tenant_config
+
+    user_id = "user_toggle_cache_test"
+    await upsert_tenant_config(user_id, {"business_name": "Toggle Cache Inc", "modules": {"voice": True}})
+
+    # First read populates cache
+    cfg1 = await get_tenant_config(user_id)
+    assert cfg1["modules"]["voice"] is True
+
+    # Toggle off — must invalidate cache
+    await toggle_module(user_id, "voice", False)
+
+    # Next read should reload from MongoDB and reflect new value
+    cfg2 = await get_tenant_config(user_id)
+    assert cfg2["modules"]["voice"] is False, f"Expected voice=False, got: {cfg2.get('modules')}"

@@ -32,6 +32,8 @@ curl_cffi==0.15.0
 # crawl4ai omitted: conflicts with pipecat-ai Pillow>=11 vs crawl4ai Pillow~=10.4
 # prospector.py has explicit bs4 fallback — pipeline runs without it
 tldextract==5.3.1
+# ── Test utilities ───────────────────────────────────────────────────────────
+fakeredis>=2.20.0
 # ── Phase 25: Agentic Multi-Tenant Architecture ──────────────────────────────
 pipecat-ai[google]>=0.0.108
 google-genai>=2.8.0
