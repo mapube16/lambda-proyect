@@ -1,4 +1,4 @@
-# Phase 25: Agentic Multi-Tenant Architecture - Research
+﻿# Phase 25: Agentic Multi-Tenant Architecture - Research
 
 **Researched:** 2026-06-10
 **Domain:** Voice AI (Pipecat + Gemini Live), Multi-Tenant MongoDB config, Pinecone RAG, Redis Upstash cache, Telnyx telephony
@@ -692,6 +692,17 @@ def chunk_text_for_rag(text: str) -> list[str]:
    - What we know: Starter tier available on AWS us-east-1
    - What's unclear: Whether Pinecone Starter supports region selection or only us-east-1
    - Recommendation: Start with us-east-1; measure query latency from Railway (likely US region); acceptable for RAG which is pre-call, not during-call
+
+---
+
+## Open Questions (RESOLVED)
+
+| # | Question | Status | Resolution |
+|---|----------|--------|------------|
+| Q1 |  in pipecat 0.0.108 | **RESOLVED** | Plan 25-03 includes a Wave 0 verification task:  is imported and tested before building the endpoint. If the import fails, fallback is calling  directly without the utility (no blocking dependency). |
+| Q2 | Gemini Live latency on Telnyx 8kHz audio | OPEN | Latency measurement deferred to post-Wave-1 testing. Fallback documented: keep OpenAI Realtime if TTFB >500ms. |
+| Q3 | Telnyx Python SDK outbound call signature | **RESOLVED-DEFERRED** | Plan 25-03 Wave 0 task verifies the SDK signature () before writing . If the SDK signature differs, the task documents the correct form in 25-03-SUMMARY.md before implementation. |
+| Q4 | Pinecone Starter region for LATAM latency | OPEN | Accepted: start with us-east-1; measure in production. |
 
 ---
 

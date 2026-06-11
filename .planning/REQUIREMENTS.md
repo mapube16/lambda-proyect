@@ -195,6 +195,14 @@
 | COST-01 | Phase 22 — Cost Observability | Pending |
 | COST-02 | Phase 22 — Cost Observability | Pending |
 | COST-03 | Phase 22 — Cost Observability | Pending |
+| AGENT-CFG-01 | Phase 25 — Agentic Multi-Tenant Architecture | Pending |
+| AGENT-CFG-02 | Phase 25 — Agentic Multi-Tenant Architecture | Pending |
+| AGENT-CFG-03 | Phase 25 — Agentic Multi-Tenant Architecture | Pending |
+| VOICE-01 | Phase 25 — Agentic Multi-Tenant Architecture | Pending |
+| VOICE-02 | Phase 25 — Agentic Multi-Tenant Architecture | Pending |
+| RAG-01 | Phase 25 — Agentic Multi-Tenant Architecture | Pending |
+| RAG-02 | Phase 25 — Agentic Multi-Tenant Architecture | Pending |
+| CACHE-01 | Phase 25 — Agentic Multi-Tenant Architecture | Pending |
 
 **Coverage:**
 - v0.6 requirements: 25 (AUTH/HIVE/PIPE/HITL/CONF/LEAD/VIZ) + 16 (LANDA/COBR)
@@ -202,5 +210,16 @@
 - Total mapped: all
 
 ---
+### Phase 25 — Agentic Multi-Tenant Architecture
+
+- [ ] **AGENT-CFG-01**: `tenant_configs` collection en MongoDB almacena por user_id: modules on/off, language, brand_name, voice_system_prompt; cambios reflejan en siguiente llamada sin redeploy
+- [ ] **AGENT-CFG-02**: `agent_instances` collection almacena por user_id: model, temperature, tools_enabled, prompt_history (últimas 5 versiones); hot-reload vía Redis cache con TTL 5min e invalidación inmediata para toggles
+- [ ] **AGENT-CFG-03**: `CobranzaOrchestrator` instancia sub-agents (debtor_updater, whatsapp_notifier, identity_verifier, escalation_handler) con configuración cargada desde MongoDB; aislamiento por user_id garantizado
+- [ ] **VOICE-01**: Bandwidth o Telnyx reemplaza Twilio en `voice_router.py` y `voice_pipecat.py`; TwiML webhook y WebSocket transport adaptan al nuevo proveedor con cambios mínimos
+- [ ] **VOICE-02**: Pipecat + Gemini Live (`GeminiLiveService`) reemplaza `OpenAIRealtimeLLMService` + Assembly AI; pipeline logra TTFB <500ms; function calling habilitado para tools de sub-agents
+- [ ] **RAG-01**: `rag_documents` collection en MongoDB indexa metadata de documentos por user_id; Pinecone Starter con namespace por user_id garantiza aislamiento; chunking semántico con `RecursiveCharacterTextSplitter` (chunk_size=1000, overlap=100)
+- [ ] **RAG-02**: Tool `search_client_knowledge(user_id, query, top_k)` disponible para todos los sub-agents; usa OpenAI `text-embedding-3-small` para embeddings; resultados filtrados por namespace de Pinecone
+- [ ] **CACHE-01**: Redis Upstash cachea `tenant_config:{user_id}` con TTL 5min; toggle `modules.voice` invalida cache inmediatamente; costo estimado <$20/mes en tier básico
+
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-05-26 — Milestone v1.0 traceability updated: INFRA→18, TENANT→19, SCRAPE→20, VERTICAL/SIGNAL→21, COST→22*
+*Last updated: 2026-06-10 — Phase 25 requirements added: AGENT-CFG/VOICE/RAG/CACHE→25*
