@@ -195,6 +195,18 @@ async def run_bot(
         f"- Groserías o enojo → NO te alteres. Baja el tono: 'Entiendo que es una situacion incomoda, "
         f"no es mi intencion molestarlo. Si prefiere lo llamamos en otro momento.'\n"
         f"\n\n"
+        f"CONSULTAR INFORMACION — tienes DOS fuentes, no las confundas:\n"
+        f"1. get_policy_info → datos EXACTOS de ESTE deudor (su poliza, su saldo, sus fechas). "
+        f"Usala cuando pregunte por LO SUYO: 'cuanto debo', 'cuando vence', 'que tengo contratado', "
+        f"'cual es mi poliza', 'cuanto he pagado'. NUNCA inventes un monto o fecha — siempre consulta.\n"
+        f"2. search_knowledge → informacion GENERAL de como funciona la empresa y los seguros "
+        f"(condiciones, coberturas en general, deducibles, procedimientos, preguntas frecuentes). "
+        f"Usala cuando pregunte COMO funcionan las cosas: 'que cubre el seguro', 'como es el deducible', "
+        f"'que pasa si no pago', 'como hago un reclamo'.\n"
+        f"REGLA DE ORO: si la pregunta es sobre SUS numeros → get_policy_info. "
+        f"Si es sobre COMO funciona algo → search_knowledge. Si search_knowledge no encuentra nada, "
+        f"dilo con honestidad y ofrece que un asesor lo contacte; NO inventes.\n"
+        f"\n\n"
         f"CUANDO COLGAR — usa la funcion end_call (OBLIGATORIO):\n"
         f"Tienes una funcion llamada 'end_call'. DEBES usarla para terminar la llamada.\n"
         f"Despues de decir tu despedida, SIEMPRE llama a end_call. Situaciones:\n"
@@ -315,8 +327,49 @@ async def run_bot(
         required=["debtor_id", "reason"],
     )
 
+    # Structured per-debtor data from Soft Seguros (synced into MongoDB).
+    # This is the SOURCE OF TRUTH for THIS debtor's policy, balance, and dates.
+    # NEVER use search_knowledge for these — RAG is fuzzy and could leak another
+    # debtor's data. Exact, debtor-specific facts always come from here.
+    get_policy_info_tool = FunctionSchema(
+        name="get_policy_info",
+        description=(
+            "Consulta los datos REALES y EXACTOS de la poliza de ESTE deudor "
+            "(numero de poliza, ramo, prima, saldo, fechas de vencimiento, estado "
+            "de cartera, lo pagado). Usala SIEMPRE que el deudor pregunte algo "
+            "sobre SU propia poliza o cuenta: 'cuanto debo', 'cuando vence', 'que "
+            "tengo contratado', 'cual es mi poliza'. Es la fuente de verdad — "
+            "NUNCA inventes estos datos."
+        ),
+        properties={},
+        required=[],
+    )
+
+    # Agentic RAG: lets the agent ground answers in the tenant's own knowledge
+    # base (general policies, FAQs, procedures) instead of hallucinating. The
+    # agent decides WHEN to call this — for GENERAL questions about how things
+    # work, NOT for this debtor's specific numbers (that's get_policy_info).
+    search_knowledge_tool = FunctionSchema(
+        name="search_knowledge",
+        description=(
+            "Consulta la base de conocimiento de la empresa (polizas, condiciones, "
+            "preguntas frecuentes, procedimientos) para responder con informacion REAL "
+            "y no inventada. Usala SIEMPRE que el deudor pregunte algo especifico sobre "
+            "su producto, cobertura, deducibles, condiciones de pago, o cualquier dato "
+            "que debas verificar en los documentos antes de responder."
+        ),
+        properties={
+            "query": {
+                "type": "string",
+                "description": "La pregunta o tema a buscar, en lenguaje natural (ej: 'deducible en perdida total', 'cuando se suspende la poliza por mora')",
+            },
+        },
+        required=["query"],
+    )
+
     tools_schema = ToolsSchema(standard_tools=[
-        end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool, escalate_tool,
+        end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool,
+        escalate_tool, get_policy_info_tool, search_knowledge_tool,
     ])
 
     # ── Gemini Live (STT + LLM + TTS all-in-one, 8kHz telephony) ────────
@@ -476,12 +529,91 @@ async def run_bot(
                 result = {"ok": False, "error": str(exc)[:100]}
         await params.result_callback(result)
 
+    async def _handle_get_policy_info(params):
+        """get_policy_info: exact per-debtor policy/balance data from MongoDB.
+
+        Reads the in-scope `debtor` doc (already loaded, synced from Soft Seguros).
+        No external call — instant. This is the SOURCE OF TRUTH for THIS debtor;
+        only fields belonging to `debtor` are returned (no cross-tenant leak).
+        Numbers are formatted in natural Spanish so the agent speaks them well.
+        """
+        logger.info("[VOICE] get_policy_info for debtor %s", debtor.get("_id"))
+
+        def _money(v):
+            try:
+                return f"${int(float(v)):,}".replace(",", ".") if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        def _date(v):
+            if not v:
+                return None
+            s = str(v)
+            return s[:10]  # YYYY-MM-DD
+
+        # Whitelist of debtor-facing fields. Soft Seguros debtors carry policy
+        # detail; manual debtors only have the basics — both handled gracefully.
+        info = {
+            "nombre": debtor.get("nombre"),
+            "numero_poliza": debtor.get("numero_poliza"),
+            "ramo": debtor.get("ramo_global_nombre") or debtor.get("ramo_nombre"),
+            "tipo_poliza": debtor.get("ramo_nombre"),
+            "saldo_pendiente": _money(debtor.get("monto") or debtor.get("total")),
+            "prima": _money(debtor.get("prima")),
+            "total_pagado": _money(debtor.get("total_pagado")),
+            "vencimiento": _date(debtor.get("vencimiento")),
+            "fecha_limite_pago": _date(debtor.get("fecha_limite_pago")),
+            "vigencia_fin": _date(debtor.get("fecha_fin")),
+            "estado_cartera": debtor.get("estado_cartera"),
+            "estado_poliza": debtor.get("estado_poliza_nombre"),
+            "periodicidad": debtor.get("periodicidad"),
+            "asesor": debtor.get("vendedores_nombre"),
+        }
+        # Drop empty fields so the agent isn't fed nulls
+        info = {k: v for k, v in info.items() if v not in (None, "", [])}
+        await params.result_callback({"found": bool(info), "poliza": info})
+
+    async def _handle_search_knowledge(params):
+        """search_knowledge (Agentic RAG): ground answers in the tenant's KB.
+
+        Queries the tenant's Pinecone namespace (=user_id) and returns the
+        top passages so Gemini can answer from real documents, not hallucinate.
+        Namespace isolation is enforced inside search_knowledge via user_id.
+        """
+        query = params.arguments.get("query", "")
+        logger.info("[VOICE] search_knowledge: query=%s", query[:80])
+        result = {"results": [], "found": False}
+        if user_id and query:
+            try:
+                from cobranza.rag_service import search_knowledge
+                matches = await search_knowledge(user_id, query, top_k=3)
+                if matches:
+                    # Compact payload for the LLM: just the text + title, ranked
+                    result = {
+                        "found": True,
+                        "results": [
+                            {"text": m.get("text", "")[:600], "title": m.get("title", "")}
+                            for m in matches
+                        ],
+                    }
+                else:
+                    result = {
+                        "found": False,
+                        "message": "No hay informacion sobre eso en la base de conocimiento.",
+                    }
+            except Exception as exc:
+                logger.error("[VOICE] search_knowledge error: %s", exc)
+                result = {"found": False, "error": str(exc)[:100]}
+        await params.result_callback(result)
+
     # cancel_on_interruption=False → user talking during goodbye won't cancel the hangup
     llm.register_function("end_call", _handle_end_call, cancel_on_interruption=False)
     llm.register_function("update_debtor", _handle_update_debtor)
     llm.register_function("send_whatsapp", _handle_send_whatsapp)
     llm.register_function("verify_identity", _handle_verify_identity)
     llm.register_function("escalate", _handle_escalate)
+    llm.register_function("get_policy_info", _handle_get_policy_info)
+    llm.register_function("search_knowledge", _handle_search_knowledge)
 
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")
