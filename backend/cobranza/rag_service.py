@@ -49,6 +49,11 @@ async def _get_pinecone_index():
     """
     Return an async Pinecone index handle, creating the index if it does not
     exist. Returns None if PINECONE_API_KEY is not configured.
+
+    pinecone 9.x async API: the control-plane client (AsyncPinecone) exposes
+    `has_index` / `create_index` / `describe_index`, but data-plane ops
+    (upsert/query) require a data-plane handle built from the index HOST via
+    `IndexAsyncio(host=...)`. We resolve the host with describe_index.
     """
     api_key = os.getenv("PINECONE_API_KEY")
     if not api_key:
@@ -58,10 +63,8 @@ async def _get_pinecone_index():
 
     pc = AsyncPinecone(api_key=api_key)
 
-    # Create index if not exists
-    existing = await pc.list_indexes()
-    existing_names = [idx.name for idx in existing]
-    if PINECONE_INDEX_NAME not in existing_names:
+    # Create index if not exists (control plane)
+    if not await pc.has_index(PINECONE_INDEX_NAME):
         logger.info("[RAG] Creating Pinecone index: %s", PINECONE_INDEX_NAME)
         await pc.create_index(
             name=PINECONE_INDEX_NAME,
@@ -70,7 +73,9 @@ async def _get_pinecone_index():
             spec=ServerlessSpec(cloud="aws", region="us-east-1"),
         )
 
-    return pc.Index(PINECONE_INDEX_NAME)
+    # Resolve the data-plane host and return an async index handle
+    desc = await pc.describe_index(PINECONE_INDEX_NAME)
+    return pc.IndexAsyncio(host=desc.host)
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────

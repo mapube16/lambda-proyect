@@ -54,11 +54,14 @@ Pydantic models enforce `max_length=2000` on `voice_system_prompt` and
 - **`upsert_agent_instance(user_id, fields)`** takes only 2 args (one
   agent_instances doc per tenant). `agent_type` is written inside `fields`,
   not passed as a separate positional arg as the plan sketch implied.
-- **rag_service.py import fix**: `from pinecone.asyncio import AsyncPinecone`
-  was wrong for pinecone 9.1.0. Corrected to
-  `from pinecone import AsyncPinecone, ServerlessSpec`. This unblocked
-  `/rag/upload`; it now reaches Pinecone and fails only on the placeholder
-  `PINECONE_API_KEY` (expected — needs a real key for live ingestion).
+- **rag_service.py pinecone 9.1.0 fixes** (two):
+  1. Import: `from pinecone.asyncio import AsyncPinecone` →
+     `from pinecone import AsyncPinecone, ServerlessSpec`.
+  2. Data-plane handle: `pc.Index(name)` doesn't exist on `AsyncPinecone`.
+     Replaced with `has_index` + `describe_index().host` +
+     `pc.IndexAsyncio(host=...)` — the control plane creates the index, the
+     data plane (upsert/query) needs a host-bound async handle.
+  With a real `PINECONE_API_KEY`, `/rag/upload` now ingests end-to-end.
 
 ## Verification
 
@@ -72,7 +75,12 @@ Pydantic models enforce `max_length=2000` on `voice_system_prompt` and
   - GET/PATCH `/config` round-trip persists `brand_name` + `voice_system_prompt` ✅
   - `/modules/voice/toggle` off/on ✅
   - PATCH `/agents/cobranza` writes model/temperature + prompt_history version ✅
-  - `/rag/upload` reaches Pinecone (401 on placeholder key — code path correct) ✅
+  - `/rag/upload` ingests end-to-end with a real key: doc chunked, embedded
+    (OpenAI text-embedding-3-small), upserted to Pinecone namespace=user_id,
+    metadata in MongoDB ✅
+  - `/rag/documents` lists the doc with `pinecone_namespace=user_id` ✅
+  - `search_knowledge('cuando se suspende la poliza por mora')` retrieves the
+    doc (semantic recall working, namespace-isolated) ✅
 
 ## Wave 3 voice checkpoint — RESOLVED during this session
 
