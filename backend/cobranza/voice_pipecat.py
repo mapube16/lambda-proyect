@@ -27,6 +27,7 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.serializers.twilio import TwilioFrameSerializer
+from pipecat.services.llm_service import FunctionCallResultProperties
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
@@ -175,6 +176,9 @@ async def run_bot(
         f"\n\n"
         f"FLUJO DE LA CONVERSACION:\n"
         f"1. Tu primer mensaje ya fue enviado (un saludo corto confirmando identidad). Espera la respuesta.\n"
+        f"   Si responde 'si', 'soy yo', 'con el habla', o directamente PREGUNTA por su deuda "
+        f"('cuanto debo', 'que paso con mi poliza') → la identidad queda confirmada. Responde de una "
+        f"usando get_policy_info, SIN llamar verify_identity.\n"
         f"2. Si confirma que es el/ella: presenta el motivo con tacto. NO sueltes el monto de una. "
         f"   Ejemplo: 'Mire, le cuento, lo llamo porque tiene un saldito pendiente con nosotros...'\n"
         f"3. Menciona el monto solo si el deudor pregunta o despues de que acepte escuchar.\n"
@@ -213,6 +217,9 @@ async def run_bot(
         f"- El deudor dice 'no me llame mas', 'no me vuelva a llamar', 'dejeme en paz', "
         f"o cualquier variante → di tu despedida y llama end_call.\n"
         f"- El deudor se despide o dice 'chao', 'adios', 'gracias' → despidete y llama end_call.\n"
+        f"- El deudor pide hablar con un humano/asesor/persona → llama escalate, confirma que un "
+        f"asesor lo contactara pronto, despidete, y llama end_call. NUNCA te quedes en silencio "
+        f"despues de prometer el contacto.\n"
         f"- Ya lograste el objetivo (promesa de pago o acuerdo) → confirma, despidete y llama end_call.\n"
         f"- El deudor esta grosero y no quiere hablar → despidete corto y llama end_call.\n"
         f"- Maximo 3-4 minutos de llamada. Si no avanzas, ofrece llamar otro dia, despidete y llama end_call.\n"
@@ -239,24 +246,24 @@ async def run_bot(
     # ── Transport: Twilio WebSocket ────────────────────────────────────
     # Silero VAD here handles user-speech interruptions. Gemini's OWN native
     # VAD is DISABLED (see llm params) because on a phone line it self-fires
-    # an interruption ~2s in and cancels the bot's audio. With Gemini's VAD
-    # off, Silero is the single source of truth for turn-taking.
-    from pipecat.audio.vad.silero import SileroVADAnalyzer
-    from pipecat.audio.vad.vad_analyzer import VADParams
+    # Turn-taking is owned entirely by Gemini's native VAD (see llm params).
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=False,
-            # Gemini emits 24kHz TTS audio. The output transport stays at 24kHz
-            # and the TwilioFrameSerializer downsamples to 8kHz µ-law on the
-            # wire (twilio_sample_rate=8000, sample_rate=24000). Mismatch here
-            # was why the caller heard nothing: 24kHz bytes were packed as if
-            # 8kHz → garbage/silence on the phone.
+            # Inbound 8kHz µ-law (Twilio wire), outbound 24kHz (Gemini TTS);
+            # the serializer bridges both. `sample_rate` override omitted so the
+            # pipeline input stays 8kHz. Pipecat resamples 8k->24k into Gemini.
+            #
+            # NO Silero VAD here. Turn-taking is owned exclusively by Gemini's
+            # native VAD (configured below). Running BOTH made them fight: Silero
+            # would mark a turn while Gemini disagreed, and disabling Gemini's VAD
+            # to compensate left no one telling Gemini the caller had finished —
+            # so it greeted once and never responded.
             audio_in_sample_rate=8000,
             audio_out_sample_rate=24000,
-            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.8)),
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_id or call_sid,
                 call_sid=call_sid,
@@ -264,7 +271,6 @@ async def run_bot(
                 auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
                 params=TwilioFrameSerializer.InputParams(
                     twilio_sample_rate=8000,
-                    sample_rate=24000,
                 ),
             ),
         ),
@@ -307,9 +313,19 @@ async def run_bot(
         required=["phone", "message"],
     )
 
+    # NOTE: scoped tightly to avoid latency. If the person answers to their
+    # name ("si", "soy yo", "con el habla") or asks about THEIR debt, identity
+    # is implicitly confirmed — answer directly, do NOT call this (it costs
+    # ~2s via LLM fallback and stalls the conversation).
     verify_identity_tool = FunctionSchema(
         name="verify_identity",
-        description="Verifica si la persona que contesto el telefono es el deudor esperado.",
+        description=(
+            "Verifica la identidad SOLO cuando sospechas que quien contesto NO es "
+            "el deudor (ej: dice 'el no esta', 'numero equivocado', o da otro nombre). "
+            "NO la uses si la persona responde a su nombre, dice 'si'/'soy yo', o "
+            "pregunta por su deuda — en esos casos la identidad ya esta confirmada: "
+            "responde directamente."
+        ),
         properties={
             "utterance": {"type": "string", "description": "Lo que dijo la persona al contestar"},
             "debtor_name": {"type": "string", "description": "Nombre del deudor esperado"},
@@ -319,7 +335,14 @@ async def run_bot(
 
     escalate_tool = FunctionSchema(
         name="escalate",
-        description="Escala el caso a un asesor humano cuando el deudor tiene una situacion especial.",
+        description=(
+            "Escala el caso a un asesor humano. Usala SIEMPRE que el deudor pida "
+            "hablar con una persona, un humano, un asesor, un agente, o 'alguien "
+            "de verdad' — o cuando tenga una situacion especial que tu no puedas "
+            "resolver (disputa del monto, reclamo legal, caso de salud). Despues "
+            "de llamarla, confirma al deudor que un asesor lo contactara, "
+            "despidete, y llama end_call."
+        ),
         properties={
             "debtor_id": {"type": "string", "description": "ID del deudor"},
             "reason": {"type": "string", "description": "Motivo de la escalacion"},
@@ -386,6 +409,11 @@ async def run_bot(
     from google.genai.types import StartSensitivity, EndSensitivity
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
+        # Model trade-off (see commit notes): native-audio sounds natural+fast
+        # but the 12-2025 preview threw 1008 on tool calls; 3.1-flash-live ran
+        # tools but went silent after the result. Trying native-audio-LATEST,
+        # which may have function-calling fixed while keeping the natural voice.
+        model="models/gemini-2.5-flash-native-audio-latest",
         voice_id="Charon",
         system_instruction=system_prompt,
         tools=tools_schema,
@@ -396,12 +424,19 @@ async def run_bot(
             # only text — the pipeline emits "bot speaking" events but ZERO
             # audio frames, so the caller hears nothing.
             modalities=GeminiModalities.AUDIO,
-            # DISABLE Gemini's native VAD. On a phone line the constant 16kHz
-            # input (with noise/echo) makes Gemini's auto-VAD fire an
-            # "interrupted" signal ~2s in, which CANCELS the bot's audio
-            # before any OutputAudioRawFrame is emitted. Silero VAD in the
-            # transport handles real user-speech interruptions instead.
-            vad=GeminiVADParams(disabled=True),
+            # Gemini's native VAD MUST stay ON — it's what detects end-of-turn
+            # and triggers the response. Disabling it entirely meant Gemini
+            # received the caller's audio but never knew the turn ended, so it
+            # greeted once and went silent forever. Instead we keep it ON but
+            # LOW-sensitivity + longer silence so phone-line noise/echo doesn't
+            # trigger false interruptions ~2s into the bot's own speech.
+            vad=GeminiVADParams(
+                disabled=False,
+                start_sensitivity=StartSensitivity.START_SENSITIVITY_LOW,
+                end_sensitivity=EndSensitivity.END_SENSITIVITY_LOW,
+                prefix_padding_ms=300,
+                silence_duration_ms=800,
+            ),
         ),
     )
 
@@ -433,14 +468,33 @@ async def run_bot(
     user_collector = TranscriptCollector(call_result, name="user_collector")
     bot_collector = TranscriptCollector(call_result, name="bot_collector")
 
+    # ── Context aggregators — REQUIRED for function calling to complete ──
+    # ROOT-CAUSE of "tool runs but bot goes silent forever": when a handler
+    # finishes, its result is broadcast as a FunctionCallResultFrame. The
+    # ASSISTANT aggregator is what writes that result into the LLMContext and
+    # re-pushes an LLMContextFrame to the service; only then does
+    # GeminiLiveLLMService._process_completed_function_calls() send the
+    # tool_response over the socket and Gemini generates the spoken answer.
+    # Without this pair, NO tool result ever reaches Gemini on ANY model.
+    # NOTE: constructed directly — llm.create_context_aggregator() is broken
+    # in pipecat 0.0.108 (deprecated from_openai_context path crashes with
+    # AttributeError on user_turn_strategies).
+    from pipecat.processors.aggregators.llm_response_universal import (
+        LLMContextAggregatorPair,
+    )
+    context_aggregator = LLMContextAggregatorPair(context)
+
     # ── Pipeline ─────────────────────────────────────────────────────────
+    # Canonical Pipecat order: assistant aggregator goes AFTER transport.output()
     pipeline = Pipeline(
         [
             transport.input(),
+            context_aggregator.user(),
             user_collector,
             llm,
             bot_collector,
             transport.output(),
+            context_aggregator.assistant(),
         ]
     )
 
@@ -475,7 +529,8 @@ async def run_bot(
 
     async def _handle_update_debtor(params):
         """update_debtor: patch debtor estado/fields via CobranzaOrchestrator."""
-        debtor_id = params.arguments.get("debtor_id", "")
+        # Same as escalate: trust the in-scope debtor's _id, not the model's guess.
+        debtor_id = str(debtor.get("_id", "")) or params.arguments.get("debtor_id", "")
         estado = params.arguments.get("estado", "")
         logger.info("[VOICE] update_debtor: debtor_id=%s estado=%s", debtor_id, estado)
         result = {"ok": False, "error": "orchestrator unavailable"}
@@ -485,7 +540,7 @@ async def run_bot(
             except Exception as exc:
                 logger.error("[VOICE] update_debtor error: %s", exc)
                 result = {"ok": False, "error": str(exc)[:100]}
-        await params.result_callback(result)
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_send_whatsapp(params):
         """send_whatsapp: enqueue WhatsApp message via CobranzaOrchestrator."""
@@ -499,7 +554,7 @@ async def run_bot(
             except Exception as exc:
                 logger.error("[VOICE] send_whatsapp error: %s", exc)
                 result = {"ok": False, "error": str(exc)[:100]}
-        await params.result_callback(result)
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_verify_identity(params):
         """verify_identity: regex + LLM fallback identity check."""
@@ -513,11 +568,13 @@ async def run_bot(
             except Exception as exc:
                 logger.error("[VOICE] verify_identity error: %s", exc)
                 result = {"confirmed": False, "error": str(exc)[:100]}
-        await params.result_callback(result)
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_escalate(params):
         """escalate: mark debtor escalado and notify dashboard."""
-        debtor_id = params.arguments.get("debtor_id", "")
+        # Gemini doesn't know the Mongo _id — always fall back to the in-scope
+        # debtor. Whatever id the model passes is ignored in favor of the real one.
+        debtor_id = str(debtor.get("_id", "")) or params.arguments.get("debtor_id", "")
         reason = params.arguments.get("reason", "escalado por agente")
         logger.info("[VOICE] escalate: debtor_id=%s reason=%s", debtor_id, reason)
         result = {"ok": False, "error": "orchestrator unavailable"}
@@ -527,7 +584,7 @@ async def run_bot(
             except Exception as exc:
                 logger.error("[VOICE] escalate error: %s", exc)
                 result = {"ok": False, "error": str(exc)[:100]}
-        await params.result_callback(result)
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_get_policy_info(params):
         """get_policy_info: exact per-debtor policy/balance data from MongoDB.
@@ -571,7 +628,12 @@ async def run_bot(
         }
         # Drop empty fields so the agent isn't fed nulls
         info = {k: v for k, v in info.items() if v not in (None, "", [])}
-        await params.result_callback({"found": bool(info), "poliza": info})
+        # run_llm=True: the assistant context aggregator re-pushes the context
+        # so Gemini receives the tool result and SPEAKS the answer.
+        await params.result_callback(
+            {"found": bool(info), "poliza": info},
+            properties=FunctionCallResultProperties(run_llm=True),
+        )
 
     async def _handle_search_knowledge(params):
         """search_knowledge (Agentic RAG): ground answers in the tenant's KB.
@@ -604,7 +666,10 @@ async def run_bot(
             except Exception as exc:
                 logger.error("[VOICE] search_knowledge error: %s", exc)
                 result = {"found": False, "error": str(exc)[:100]}
-        await params.result_callback(result)
+        # run_llm=True so the agent SPEAKS the retrieved answer (see get_policy_info)
+        await params.result_callback(
+            result, properties=FunctionCallResultProperties(run_llm=True)
+        )
 
     # cancel_on_interruption=False → user talking during goodbye won't cancel the hangup
     llm.register_function("end_call", _handle_end_call, cancel_on_interruption=False)
