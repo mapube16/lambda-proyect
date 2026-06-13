@@ -159,19 +159,61 @@ async def run_bot(
     # ── Camila system prompt ─────────────────────────────────────────────
     tono = estrategia.get("tono", "amable")
 
-    # Format monto naturally for speech
+    # Format monto naturally for speech (no diminutives — "pesos", not "pesitos")
     if monto >= 1_000_000:
-        monto_natural = f"{monto / 1_000_000:.0f} millones" if monto % 1_000_000 == 0 else f"{monto / 1_000_000:.1f} millones de pesitos".rstrip('0').rstrip('.')
+        monto_natural = f"{monto / 1_000_000:.0f} millones de pesos" if monto % 1_000_000 == 0 else f"{monto / 1_000_000:.1f} millones de pesos".rstrip('0').rstrip('.')
     elif monto >= 1_000:
-        monto_natural = f"{monto / 1_000:.0f} mil pesitos" if monto % 1_000 == 0 else f"{monto / 1_000:.1f} mil pesitos".rstrip('0').rstrip('.')
+        monto_natural = f"{monto / 1_000:.0f} mil pesos" if monto % 1_000 == 0 else f"{monto / 1_000:.1f} mil pesos".rstrip('0').rstrip('.')
     else:
-        monto_natural = f"{monto:.0f} pesitos"
+        monto_natural = f"{monto:.0f} pesos"
 
     # Format vencimiento naturally
     if hasattr(vencimiento, 'strftime'):
         vencimiento_str = vencimiento.strftime("%d de %B")
     else:
         vencimiento_str = str(vencimiento)
+
+    # ── Policy data injected straight into the prompt (latency) ──────────
+    # The debtor dict is already in memory; inlining its policy fields here means
+    # the model can answer "¿cuánto debo?", "¿qué tengo?", "¿cuándo vence?"
+    # WITHOUT a get_policy_info round-trip (which added ~0.7s of dead air on the
+    # most common question). This scales fine: it's ONE debtor per call (~250
+    # tokens, constant size), never accumulates. get_policy_info stays registered
+    # as a fallback for edge cases. General company knowledge is NOT inlined — that
+    # grows unbounded and stays in RAG/search_knowledge.
+    def _p_money(v):
+        try:
+            return f"{int(float(v)):,}".replace(",", ".") if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _p_date(v):
+        return str(v)[:10] if v else None
+
+    _tipo_poliza = debtor.get("ramo_nombre") or debtor.get("ramo_global_nombre")
+    _ramo = debtor.get("ramo_global_nombre") or debtor.get("ramo_nombre")
+    _policy_lines = []
+    if _tipo_poliza:
+        _policy_lines.append(f"- Tipo de poliza: {_tipo_poliza}" + (f" (ramo: {_ramo})" if _ramo and _ramo != _tipo_poliza else ""))
+    if debtor.get("numero_poliza"):
+        _policy_lines.append(f"- Numero de poliza: {debtor.get('numero_poliza')}")
+    if debtor.get("estado_cartera"):
+        _policy_lines.append(f"- Estado de cartera: {debtor.get('estado_cartera')}")
+    if debtor.get("estado_poliza_nombre"):
+        _policy_lines.append(f"- Estado de la poliza: {debtor.get('estado_poliza_nombre')}")
+    if _p_money(debtor.get("prima")):
+        _policy_lines.append(f"- Prima total: {_p_money(debtor.get('prima'))} pesos")
+    if _p_money(debtor.get("total_pagado")):
+        _policy_lines.append(f"- Total pagado: {_p_money(debtor.get('total_pagado'))} pesos")
+    if _p_date(debtor.get("fecha_limite_pago")):
+        _policy_lines.append(f"- Fecha limite de pago: {_p_date(debtor.get('fecha_limite_pago'))}")
+    if _p_date(debtor.get("fecha_fin")):
+        _policy_lines.append(f"- Vigencia hasta: {_p_date(debtor.get('fecha_fin'))}")
+    if debtor.get("periodicidad"):
+        _policy_lines.append(f"- Periodicidad: {debtor.get('periodicidad')}")
+    if debtor.get("vendedores_nombre"):
+        _policy_lines.append(f"- Asesor asignado: {debtor.get('vendedores_nombre')}")
+    _policy_block = ("\n".join(_policy_lines) + "\n") if _policy_lines else ""
 
     system_prompt = (
         f"Eres Camila, asesora de cobranza de De Pe Ge Seguros. Colombiana, de Armenia. "
@@ -191,17 +233,25 @@ async def run_bot(
         f"- AL SALUDAR Y AL DIRIGIRTE AL CLIENTE usa siempre 'senor' (ej: 'senor Carlos', 'buenas tardes senor'). "
         f"NUNCA uses 'don', 'dona', 'caballero' ni 'amigo'.\n"
         f"\n\n"
-        f"DATOS DE ESTA LLAMADA:\n"
+        f"DATOS DE ESTA LLAMADA (datos REALES y exactos de ESTE deudor — usalos directo, "
+        f"NO necesitas consultar ninguna herramienta para responder sobre su poliza, "
+        f"saldo o fechas; ya los tienes aqui):\n"
         f"- Nombre: {debtor_name}\n"
-        f"- Deuda: {monto_natural}\n"
+        f"- Deuda pendiente: {monto_natural}\n"
         f"- Vencimiento: {vencimiento_str}\n"
+        f"{_policy_block}"
+        f"\n"
+        f"COMO HABLAR DE LA POLIZA: cuando el deudor pregunte por su poliza, PRIMERO "
+        f"dile DE QUE TIPO es para que entienda de que se trata (ej: 'es su seguro de "
+        f"Vida' o 'su poliza de Autos'), y SOLO DESPUES, si viene al caso o lo pide, "
+        f"mencionas el numero de poliza. Nunca arranques soltando el numero.\n"
         f"\n\n"
         f"FLUJO DE LA CONVERSACION:\n"
         f"Siempre te debes presentar como Camila, asesora de cobranza de De Pe Ge Seguros. "
         f"1. Tu primer mensaje ya fue enviado (un saludo corto confirmando identidad). Espera la respuesta.\n"
         f"   Si responde 'si', 'soy yo', 'con el habla', o directamente PREGUNTA por su deuda "
         f"('cuanto debo', 'que paso con mi poliza') → la identidad queda confirmada. Responde de una "
-        f"usando get_policy_info, SIN llamar verify_identity.\n"
+        f"con los datos de 'DATOS DE ESTA LLAMADA', SIN llamar verify_identity ni ninguna otra herramienta.\n"
         f"2. Si confirma que es el/ella: presenta el motivo con tacto. NO sueltes el monto de una. "
         f"   Ejemplo: 'Mire, le cuento, lo llamo porque tiene un saldo pendiente con nosotros...'\n"
         f"3. Menciona el monto solo si el deudor pregunta o despues de que acepte escuchar.\n"
@@ -226,17 +276,18 @@ async def run_bot(
         f"- Groserías o enojo → NO te alteres. Baja el tono: 'Entiendo que es una situacion incomoda, "
         f"no es mi intencion molestarlo. Si prefiere lo llamamos en otro momento.'\n"
         f"\n\n"
-        f"CONSULTAR INFORMACION — tienes DOS fuentes, no las confundas:\n"
-        f"1. get_policy_info → datos EXACTOS de ESTE deudor (su poliza, su saldo, sus fechas). "
-        f"Usala cuando pregunte por LO SUYO: 'cuanto debo', 'cuando vence', 'que tengo contratado', "
-        f"'cual es mi poliza', 'cuanto he pagado'. NUNCA inventes un monto o fecha — siempre consulta.\n"
-        f"2. search_knowledge → informacion GENERAL de como funciona la empresa y los seguros "
+        f"CONSULTAR INFORMACION:\n"
+        f"- Para LO SUYO (su poliza, su saldo, sus fechas, lo pagado): los datos REALES ya "
+        f"estan ARRIBA en 'DATOS DE ESTA LLAMADA'. Respondele DIRECTO de ahi, sin llamar "
+        f"ninguna herramienta. NUNCA inventes un monto o fecha; si un dato puntual no aparece "
+        f"arriba, recien ahi puedes usar get_policy_info para consultarlo.\n"
+        f"- search_knowledge → informacion GENERAL de como funciona la empresa y los seguros "
         f"(condiciones, coberturas en general, deducibles, procedimientos, preguntas frecuentes). "
         f"Usala cuando pregunte COMO funcionan las cosas: 'que cubre el seguro', 'como es el deducible', "
-        f"'que pasa si no pago', 'como hago un reclamo'.\n"
-        f"REGLA DE ORO: si la pregunta es sobre SUS numeros → get_policy_info. "
-        f"Si es sobre COMO funciona algo → search_knowledge. Si search_knowledge no encuentra nada, "
-        f"dilo con honestidad y ofrece que un asesor lo contacte; NO inventes.\n"
+        f"'que pasa si no pago', 'como hago un reclamo'. Si no encuentra nada, dilo con honestidad "
+        f"y ofrece que un asesor lo contacte; NO inventes.\n"
+        f"REGLA DE ORO: SUS numeros → ya los tienes arriba, responde directo. "
+        f"COMO funciona algo → search_knowledge.\n"
         f"\n"
         f"REGLA ANTI-INVENTO (CRITICA): NUNCA actues sobre algo que el deudor NO dijo claramente. "
         f"Si no escuchaste bien, si hubo silencio, o si el audio fue confuso, NO asumas ni completes "
@@ -401,12 +452,13 @@ async def run_bot(
     get_policy_info_tool = FunctionSchema(
         name="get_policy_info",
         description=(
-            "Consulta los datos REALES y EXACTOS de la poliza de ESTE deudor "
-            "(numero de poliza, ramo, prima, saldo, fechas de vencimiento, estado "
-            "de cartera, lo pagado). Usala SIEMPRE que el deudor pregunte algo "
-            "sobre SU propia poliza o cuenta: 'cuanto debo', 'cuando vence', 'que "
-            "tengo contratado', 'cual es mi poliza'. Es la fuente de verdad — "
-            "NUNCA inventes estos datos."
+            "FALLBACK SOLAMENTE. Los datos de la poliza de ESTE deudor (tipo, "
+            "numero, prima, saldo, fechas, estado de cartera, lo pagado) YA ESTAN "
+            "en tu contexto bajo 'DATOS DE ESTA LLAMADA' — responde DIRECTO de ahi, "
+            "NO llames esta funcion para 'cuanto debo', 'cuando vence', 'que tengo', "
+            "'cual es mi poliza'. Usa esta funcion UNICAMENTE si el deudor pide un "
+            "dato puntual que NO aparece en ese bloque. Si la llamas sin necesidad, "
+            "agregas un retraso innecesario a la conversacion."
         ),
         properties={},
         required=[],
