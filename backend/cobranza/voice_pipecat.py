@@ -10,6 +10,7 @@ Tools: end_call, update_debtor, send_whatsapp, verify_identity, escalate.
 
 Target: <500ms TTFB.
 """
+import asyncio
 import logging
 import os
 import time
@@ -19,6 +20,7 @@ from pipecat.frames.frames import (
     EndFrame,
     LLMContextFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
     TTSTextFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
@@ -138,6 +140,22 @@ async def run_bot(
         await websocket.close(1008, "Voice module disabled")
         return CallResult()
 
+    # ── RAG short-circuit precheck (latency) ────────────────────────────
+    # search_knowledge costs ~5-7s (OpenAI embed + Pinecone). If the tenant has
+    # NO documents ingested, that round-trip is pure dead air for every call.
+    # One cheap indexed count here lets the handler skip Pinecone entirely.
+    tenant_has_rag_docs = False
+    if user_id:
+        try:
+            from database import get_db
+            _db = get_db()
+            tenant_has_rag_docs = (
+                await _db.rag_documents.count_documents({"user_id": user_id}, limit=1)
+            ) > 0
+        except Exception as _rag_err:
+            logger.warning("[VOICE] rag_documents precheck failed for %s: %s", user_id, _rag_err)
+            tenant_has_rag_docs = True  # fail-open: don't block real KB lookups
+
     # ── Camila system prompt ─────────────────────────────────────────────
     tono = estrategia.get("tono", "amable")
 
@@ -156,7 +174,7 @@ async def run_bot(
         vencimiento_str = str(vencimiento)
 
     system_prompt = (
-        f"Eres Camila, asesora de cobranza de De Pe Ge Seguros. Colombiana, de Bogota. "
+        f"Eres Camila, asesora de cobranza de De Pe Ge Seguros. Colombiana, de Armenia. "
         f"Tienes 28 anios, llevas 4 anios en la empresa. Eres una persona real, no un robot. "
         f"Tu tono es {tono}, cercano, como si hablaras con un vecino. "
         f"\n\n"
@@ -175,6 +193,7 @@ async def run_bot(
         f"- Vencimiento: {vencimiento_str}\n"
         f"\n\n"
         f"FLUJO DE LA CONVERSACION:\n"
+        f"Siempre te debes presentar como Camila, asesora de cobranza de De Pe Ge Seguros. "
         f"1. Tu primer mensaje ya fue enviado (un saludo corto confirmando identidad). Espera la respuesta.\n"
         f"   Si responde 'si', 'soy yo', 'con el habla', o directamente PREGUNTA por su deuda "
         f"('cuanto debo', 'que paso con mi poliza') → la identidad queda confirmada. Responde de una "
@@ -189,10 +208,14 @@ async def run_bot(
         f"MANEJO DE OBJECIONES (muy importante):\n"
         f"- 'No tengo plata' → 'Entiendo, y por eso mismo lo llamo, para mirar como le podemos ayudar. "
         f"Podemos hacer un acuerdo de pago a cuotas, que le queda mas comodo?'\n"
-        f"- 'Ya pague' → 'Ah listo, que pena. Dejeme verificar, puede ser que no se haya registrado aun. "
-        f"Tiene a mano el comprobante?'\n"
+        f"- 'Ya pague' / 'ya lo cancele' / 'pague ayer' → PRIMERO llama la funcion "
+        f"notify_payment_claim (para avisar al equipo de De Pe Ge que revise el "
+        f"comprobante), y LUEGO di: 'Ah, listo, que pena. El equipo va a revisar el "
+        f"comprobante y le confirmamos. Gracias por avisar.' NUNCA confirmes tu el "
+        f"pago — eso lo valida el equipo.\n"
         f"- 'No me interesa' / 'No quiero' → Intenta UNA sola vez con empatia: "
-        f"'Entiendo, pero mire que si dejamos pasar mas tiempo puede generar intereses. "
+        f"'Entiendo, pero mire que si dejamos pasar mas tiempo su poliza se puede ver "
+        f"afectada, y lo que queremos es ayudarlo a mantener su cobertura. "
         f"Le conviene que lo miremos ahora.' Si insiste, respeta su decision.\n"
         f"- 'Quien es usted?' / desconfianza → 'Claro, con toda razon. Soy Camila de De Pe Ge Seguros. "
         f"Si quiere puede verificar llamando al numero que aparece en su poliza.'\n"
@@ -234,7 +257,7 @@ async def run_bot(
         f"PROHIBIDO:\n"
         f"- Amenazar, presionar agresivamente, o mentir.\n"
         f"- Compartir datos con terceros. Si contesta alguien que no es el deudor, NO menciones la deuda.\n"
-        f"- Llamar fuera de horario (7am-7pm).\n"
+        f"- Llamar fuera de horario (8am-5pm).\n"
         f"- Sonar como robot o leer un guion. Eres una persona real teniendo una conversacion."
     )
 
@@ -292,6 +315,7 @@ async def run_bot(
             "Termina la llamada. Usa esta funcion SIEMPRE que la conversacion deba finalizar: "
             "cuando el deudor dice que no quiere hablar mas, cuando ya se llego a un acuerdo, "
             "cuando te despides, o cuando el deudor pide que no lo llamen mas."
+            "cuando pide hablar con un humano (despues de llamar escalate), o cuando la conversacion se vuelve improductiva o el deudor se enoja."
         ),
         properties={
             "reason": {"type": "string", "description": "Motivo breve de por que se termina la llamada"},
@@ -311,12 +335,19 @@ async def run_bot(
 
     send_whatsapp_tool = FunctionSchema(
         name="send_whatsapp",
-        description="Envia un mensaje de WhatsApp al deudor con informacion de pago o seguimiento.",
+        # SECURITY: the model does NOT choose the recipient. We always send to
+        # the debtor's real phone from MongoDB — never a number the model
+        # invents (it once hallucinated +573001234567). Only `message` is
+        # model-supplied.
+        description=(
+            "Envia un mensaje de WhatsApp AL DEUDOR (al numero registrado) con "
+            "informacion de pago o seguimiento. El destinatario es siempre el "
+            "deudor; tu solo escribes el contenido del mensaje."
+        ),
         properties={
-            "phone": {"type": "string", "description": "Numero de telefono con codigo de pais"},
-            "message": {"type": "string", "description": "Contenido del mensaje de WhatsApp"},
+            "message": {"type": "string", "description": "Contenido del mensaje de WhatsApp para el deudor"},
         },
-        required=["phone", "message"],
+        required=["message"],
     )
 
     # NOTE: scoped tightly to avoid latency. If the person answers to their
@@ -399,9 +430,34 @@ async def run_bot(
         required=["query"],
     )
 
+    # Payment claim: when the debtor says they ALREADY PAID, we can't verify it
+    # on the call — the comprobante must be reviewed by the DPG team. This tool
+    # marks the debtor as pago_reportado AND notifies the team's WhatsApp so a
+    # human checks the receipt. It does NOT confirm the payment (that's the
+    # team's job); it just routes the claim for review.
+    notify_payment_claim_tool = FunctionSchema(
+        name="notify_payment_claim",
+        description=(
+            "Usala SIEMPRE que el deudor diga que YA PAGO o que ya hizo el pago "
+            "('ya pague', 'ya lo cancele', 'pague ayer', 'ya hice la consignacion', "
+            "'ya transferi'). Notifica al equipo de De Pe Ge para que revise el "
+            "comprobante. Tu NO confirmas el pago — solo registras el reporte. "
+            "Despues de llamarla, dile al deudor que el equipo revisara el "
+            "comprobante y le confirmara."
+        ),
+        properties={
+            "detalle": {
+                "type": "string",
+                "description": "Lo que dijo el deudor sobre el pago (fecha, medio, monto si lo menciona). Ej: 'dice que pago ayer por transferencia'",
+            },
+        },
+        required=["detalle"],
+    )
+
     tools_schema = ToolsSchema(standard_tools=[
         end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool,
         escalate_tool, get_policy_info_tool, search_knowledge_tool,
+        notify_payment_claim_tool,
     ])
 
     # ── Gemini Live (STT + LLM + TTS all-in-one, 8kHz telephony) ────────
@@ -416,6 +472,18 @@ async def run_bot(
     )
     from pipecat.transcriptions.language import Language
     from google.genai.types import StartSensitivity, EndSensitivity
+    # Per-tenant VAD start-sensitivity. This SDK only exposes HIGH / LOW (no
+    # MEDIUM). We default HIGH: LOW reacts to less-confident onsets and was what
+    # produced phantom/hallucinated turns. Proactivity instead comes from the
+    # shorter silence_duration (turn closes faster → bot answers sooner).
+    _vad_start_map = {
+        "HIGH": StartSensitivity.START_SENSITIVITY_HIGH,
+        "LOW": StartSensitivity.START_SENSITIVITY_LOW,
+    }
+    _vad_start_sensitivity = _vad_start_map.get(
+        str(tenant_config.get("vad_start_sensitivity") or "HIGH").upper(),
+        StartSensitivity.START_SENSITIVITY_HIGH,
+    )
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         # Model trade-off (see commit notes): native-audio sounds natural but on
@@ -429,7 +497,11 @@ async def run_bot(
         # LLMContextAggregatorPair. So it should both transcribe and complete
         # function calls correctly now.
         model="models/gemini-3.1-flash-live-preview",
-        voice_id="Charon",
+        # Camila is a woman → feminine Gemini Live voice. Prebuilt feminine
+        # voices: Aoede (warm/natural), Leda (bright/youthful), Kore, Zephyr.
+        # Per-tenant override from MongoDB (no hardcoded tenant data); default
+        # Aoede when the tenant hasn't set one.
+        voice_id=str(tenant_config.get("voice_id") or "Aoede"),
         system_instruction=system_prompt,
         tools=tools_schema,
         params=GeminiInputParams(
@@ -454,12 +526,19 @@ async def run_bot(
             # longer prefix_padding (500ms) gives more lead-in context so a single
             # click/breath can't be mistaken for the start of an utterance.
             # end HIGH + 600ms: still detect end-of-turn reasonably fast.
+            # LATENCY TUNING (configurable per-tenant via tenant_config.vad_*):
+            # - silence_duration 400ms (was 600): closes the caller's turn ~200ms
+            #   sooner → bot starts answering faster (the main "responde antes"
+            #   lever; SDK has no MEDIUM start-sensitivity to lean on).
+            # - prefix_padding 300ms (was 500): less lead-in lag before a turn.
+            # - start stays HIGH to avoid the phantom/hallucinated turns that LOW
+            #   produced earlier.
             vad=GeminiVADParams(
                 disabled=False,
-                start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
+                start_sensitivity=_vad_start_sensitivity,
                 end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
-                prefix_padding_ms=500,
-                silence_duration_ms=600,
+                prefix_padding_ms=int(tenant_config.get("vad_prefix_padding_ms") or 300),
+                silence_duration_ms=int(tenant_config.get("vad_silence_duration_ms") or 400),
             ),
         ),
     )
@@ -522,14 +601,16 @@ async def run_bot(
         ]
     )
 
-    # DIAGNOSTIC: allow_interruptions=False so a (false) interruption signal
-    # can't cancel the bot's audio mid-utterance. If audio finally reaches the
-    # caller with this off, the root cause is confirmed to be spurious
-    # interruptions; we then re-enable with proper VAD tuning.
+    # Interruptions ENABLED: with start_sensitivity tuned (MEDIUM, not LOW) the
+    # spurious-interruption problem that forced this off is gone, and barge-in
+    # makes the conversation far more natural — the caller can cut the bot off
+    # and it responds immediately instead of talking over them. Per-tenant
+    # override (set tenant_config.allow_interruptions=false to disable).
+    _allow_interruptions = bool(tenant_config.get("allow_interruptions", True))
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
-            allow_interruptions=False,
+            allow_interruptions=_allow_interruptions,
             enable_metrics=True,
             report_only_initial_ttfb=True,
         ),
@@ -555,7 +636,6 @@ async def run_bot(
         logger.info("[VOICE] end_call invoked: reason=%s", reason)
         await params.result_callback({"status": "ending", "reason": reason})
         # Allow farewell TTS to play before disconnect, then hard-cancel.
-        import asyncio
         await asyncio.sleep(4.0)
         logger.info("[VOICE] end_call: cancelling pipeline (hard hangup)")
         await task.cancel()
@@ -576,12 +656,19 @@ async def run_bot(
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_send_whatsapp(params):
-        """send_whatsapp: enqueue WhatsApp message via CobranzaOrchestrator."""
-        phone = params.arguments.get("phone", "")
+        """send_whatsapp: enqueue WhatsApp message to the DEBTOR via orchestrator.
+
+        The recipient is ALWAYS the debtor's registered phone (MongoDB) — never
+        a number the model supplies. This prevents the model from hallucinating
+        a recipient (it once invented +573001234567).
+        """
         message = params.arguments.get("message", "")
-        logger.info("[VOICE] send_whatsapp: phone=%s", phone)
+        phone = str(debtor.get("telefono", "")).strip()
+        logger.info("[VOICE] send_whatsapp -> debtor phone=%s", phone)
         result = {"ok": False, "error": "orchestrator unavailable"}
-        if orchestrator and phone:
+        if not phone:
+            result = {"ok": False, "error": "debtor has no phone on file"}
+        elif orchestrator and message:
             try:
                 result = await orchestrator.send_whatsapp(phone, message)
             except Exception as exc:
@@ -616,6 +703,49 @@ async def run_bot(
                 result = await orchestrator.escalate(debtor_id, reason)
             except Exception as exc:
                 logger.error("[VOICE] escalate error: %s", exc)
+                result = {"ok": False, "error": str(exc)[:100]}
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
+
+    async def _handle_notify_payment_claim(params):
+        """notify_payment_claim: debtor says they already paid.
+
+        Two side effects: (1) mark the debtor pago_reportado so the auto-dialer
+        stops calling while the team reviews; (2) WhatsApp the DPG team the claim
+        so a human verifies the comprobante. We do NOT mark the debt as paid —
+        only the team can confirm after seeing the receipt.
+        """
+        detalle = params.arguments.get("detalle", "el deudor reporta que ya pago")
+        debtor_id = str(debtor.get("_id", ""))
+        logger.info("[VOICE] notify_payment_claim: debtor_id=%s detalle=%s", debtor_id, detalle[:80])
+        result = {"ok": False, "error": "orchestrator unavailable"}
+        if orchestrator and debtor_id:
+            try:
+                # 1) Park the debtor while the team reviews the receipt.
+                await orchestrator.update_debtor(debtor_id, {"estado": "pago_reportado"})
+                # 2) Notify the team's WhatsApp so a human checks it.
+                # Per-tenant value — MUST come from MongoDB tenant_config, never
+                # hardcoded/env. Accept a few key aliases for resilience.
+                team_phone = str(
+                    tenant_config.get("notification_whatsapp")
+                    or tenant_config.get("team_whatsapp")
+                    or ""
+                ).strip()
+                if team_phone:
+                    msg = (
+                        f"📩 Reporte de pago — revisar comprobante\n"
+                        f"Deudor: {debtor.get('nombre', 'N/D')}\n"
+                        f"Teléfono: {debtor.get('telefono', 'N/D')}\n"
+                        f"Póliza: {debtor.get('numero_poliza', 'N/D')}\n"
+                        f"Detalle: {detalle}"
+                    )
+                    await orchestrator.send_whatsapp(team_phone, msg)
+                    result = {"ok": True, "notified_team": True}
+                else:
+                    # No team number configured in tenant_config — still parked, but flag it.
+                    logger.warning("[VOICE] notify_payment_claim: tenant_config.notification_whatsapp not set — debtor parked but team NOT notified")
+                    result = {"ok": True, "notified_team": False, "warning": "team whatsapp not configured"}
+            except Exception as exc:
+                logger.error("[VOICE] notify_payment_claim error: %s", exc)
                 result = {"ok": False, "error": str(exc)[:100]}
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
@@ -678,10 +808,33 @@ async def run_bot(
         query = params.arguments.get("query", "")
         logger.info("[VOICE] search_knowledge: query=%s", query[:80])
         result = {"results": [], "found": False}
+        # Short-circuit: tenant has no KB docs → skip the ~5-7s embed+Pinecone
+        # round-trip entirely and answer instantly (precomputed at call start).
+        if not tenant_has_rag_docs:
+            logger.info("[VOICE] search_knowledge: tenant has no RAG docs — short-circuit")
+            await params.result_callback(
+                {"found": False, "message": "No hay informacion sobre eso en la base de conocimiento."},
+                properties=FunctionCallResultProperties(run_llm=True),
+            )
+            return
         if user_id and query:
             try:
                 from cobranza.rag_service import search_knowledge
-                matches = await search_knowledge(user_id, query, top_k=3)
+                # Filler speech: the embed+Pinecone lookup takes a beat. Speak a
+                # short natural filler so the caller doesn't sit in dead air while
+                # we retrieve (fire-and-forget; doesn't block the lookup).
+                import random as _rnd
+                _filler = _rnd.choice([
+                    "Permítame un segundito que reviso eso...",
+                    "Déjeme verlo un momento...",
+                    "A ver, déjeme consultar eso...",
+                ])
+                await task.queue_frames([TTSSpeakFrame(_filler)])
+                # Hard timeout so a slow Pinecone/OpenAI call can't stall the
+                # conversation; on timeout we degrade gracefully to "no info".
+                matches = await asyncio.wait_for(
+                    search_knowledge(user_id, query, top_k=3), timeout=4.0
+                )
                 if matches:
                     # Compact payload for the LLM: just the text + title, ranked
                     result = {
@@ -696,6 +849,9 @@ async def run_bot(
                         "found": False,
                         "message": "No hay informacion sobre eso en la base de conocimiento.",
                     }
+            except asyncio.TimeoutError:
+                logger.warning("[VOICE] search_knowledge timed out (>4s) — degrading")
+                result = {"found": False, "message": "No pude consultar eso a tiempo."}
             except Exception as exc:
                 logger.error("[VOICE] search_knowledge error: %s", exc)
                 result = {"found": False, "error": str(exc)[:100]}
@@ -712,6 +868,7 @@ async def run_bot(
     llm.register_function("escalate", _handle_escalate)
     llm.register_function("get_policy_info", _handle_get_policy_info)
     llm.register_function("search_knowledge", _handle_search_knowledge)
+    llm.register_function("notify_payment_claim", _handle_notify_payment_claim)
 
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")
