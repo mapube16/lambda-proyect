@@ -183,9 +183,13 @@ async def run_bot(
         f"- Frases CORTAS. Maximo 1-2 oraciones por turno. Como en una conversacion real por telefono.\n"
         f"- Muletillas naturales: 'aja', 'listo', 'mire', 'claro', 'si senor', 'que pena con usted', 'no, tranquilo'.\n"
         f"- Pausas naturales: '...', 'mmm', 'a ver'. NO hables como un guion leido.\n"
-        f"- Numeros naturales: 'quinientos mil pesitos', 'un millon doscientos', NO '500,000 pesos'.\n"
+        f"- Numeros naturales: 'quinientos mil pesos', 'un millon doscientos', NO '500,000 pesos'.\n"
         f"- Respuestas cortas cuando el otro habla: 'aja', 'si claro', 'entiendo', 'listo'. Escucha mas de lo que hablas.\n"
         f"- NUNCA repitas el mismo argumento dos veces con las mismas palabras.\n"
+        f"- NADA de diminutivos. Di 'pesos' (no 'pesitos'), 'saldo' (no 'saldito'), "
+        f"'un momento' (no 'un segundito'), 'espere' (no 'esperecito'). Habla en terminos normales, profesionales pero calidos.\n"
+        f"- AL SALUDAR Y AL DIRIGIRTE AL CLIENTE usa siempre 'senor' (ej: 'senor Carlos', 'buenas tardes senor'). "
+        f"NUNCA uses 'don', 'dona', 'caballero' ni 'amigo'.\n"
         f"\n\n"
         f"DATOS DE ESTA LLAMADA:\n"
         f"- Nombre: {debtor_name}\n"
@@ -199,7 +203,7 @@ async def run_bot(
         f"('cuanto debo', 'que paso con mi poliza') → la identidad queda confirmada. Responde de una "
         f"usando get_policy_info, SIN llamar verify_identity.\n"
         f"2. Si confirma que es el/ella: presenta el motivo con tacto. NO sueltes el monto de una. "
-        f"   Ejemplo: 'Mire, le cuento, lo llamo porque tiene un saldito pendiente con nosotros...'\n"
+        f"   Ejemplo: 'Mire, le cuento, lo llamo porque tiene un saldo pendiente con nosotros...'\n"
         f"3. Menciona el monto solo si el deudor pregunta o despues de que acepte escuchar.\n"
         f"4. Ofrece opciones: pago completo, acuerdo de pago, o que lo llamen despues.\n"
         f"5. Si acepta algo: confirma y agradece. 'Listo, perfecto, entonces quedamos asi.'\n"
@@ -506,7 +510,12 @@ async def run_bot(
         tools=tools_schema,
         params=GeminiInputParams(
             language=Language.ES_US,
-            temperature=0.7,
+            # 0.5 (was 0.7): less sampling deliberation on the post-tool-result
+            # generation → the second inference turn (result → spoken answer,
+            # measured ~0.7–1.1s) comes back a bit faster. Modest but free, and
+            # cobranza wants consistent, on-script answers more than creative ones.
+            # Per-tenant override via tenant_config.voice_temperature.
+            temperature=float(tenant_config.get("voice_temperature") or 0.5),
             # CRITICAL: force AUDIO output. Without this, Gemini Live returns
             # only text — the pipeline emits "bot speaking" events but ZERO
             # audio frames, so the caller hears nothing.
@@ -523,41 +532,48 @@ async def run_bot(
             # nothing, but STT produced "Quiero hablar con un asesor" and the bot
             # called escalate on words never spoken). HIGH start-sensitivity means
             # only real, confident speech triggers a turn — no phantom input.
-            # longer prefix_padding (500ms) gives more lead-in context so a single
-            # click/breath can't be mistaken for the start of an utterance.
-            # end HIGH + 600ms: still detect end-of-turn reasonably fast.
-            # LATENCY TUNING (configurable per-tenant via tenant_config.vad_*):
-            # - silence_duration 400ms (was 600): closes the caller's turn ~200ms
-            #   sooner → bot starts answering faster (the main "responde antes"
-            #   lever; SDK has no MEDIUM start-sensitivity to lean on).
-            # - prefix_padding 300ms (was 500): less lead-in lag before a turn.
+            # LATENCY TUNING (configurable per-tenant via tenant_config.vad_*).
+            # Measured server-side response latency is already ~0.7–1.1s, but the
+            # caller PERCEIVES dead air from the VAD's end-of-turn wait, which the
+            # server log can't see (Gemini reports user start+stop at the same ts).
+            # That wait = silence_duration_ms, so it's the real lever here.
+            # - end_sensitivity HIGH: per Google's API, HIGH = MORE sensitive to
+            #   end-of-speech → closes the turn FASTER (this is the fast setting,
+            #   keep it).
+            # - silence_duration 250ms (was 400): Gemini waits less silence before
+            #   deciding the caller finished → bot answers sooner on EVERY turn.
+            #   250ms is about the floor before normal mid-sentence pauses start
+            #   getting clipped on a phone line; tune up per-tenant if it cuts people off.
+            # - prefix_padding 200ms (was 300): less lead-in lag opening a turn.
             # - start stays HIGH to avoid the phantom/hallucinated turns that LOW
-            #   produced earlier.
+            #   produced earlier (there is no MEDIUM in the SDK — only HIGH/LOW).
             vad=GeminiVADParams(
                 disabled=False,
                 start_sensitivity=_vad_start_sensitivity,
                 end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
-                prefix_padding_ms=int(tenant_config.get("vad_prefix_padding_ms") or 300),
-                silence_duration_ms=int(tenant_config.get("vad_silence_duration_ms") or 400),
+                prefix_padding_ms=int(tenant_config.get("vad_prefix_padding_ms") or 200),
+                silence_duration_ms=int(tenant_config.get("vad_silence_duration_ms") or 250),
             ),
         ),
     )
 
     # ── First greeting (spoken as TTS, not LLM-generated) ─────────────
+    # Always address the client as "senor" + first name (per client request),
+    # never "don"/"dona"/"caballero". No diminutives anywhere.
     import random
     first_name = debtor_name.split()[0] if debtor_name and debtor_name != "senor o senora" else ""
     if first_name:
         greetings = [
-            f"Aló... buenas tardes. ¿Hablo con {first_name}?",
-            f"Buenas tardes... ¿{first_name}?",
-            f"Aló, buenas tardes. ¿Será que hablo con {first_name}?",
-            f"Hola, buenas tardes... ¿estoy hablando con {first_name}?",
+            f"Aló... buenas tardes. ¿Hablo con el señor {first_name}?",
+            f"Buenas tardes... ¿señor {first_name}?",
+            f"Aló, buenas tardes. ¿Será que hablo con el señor {first_name}?",
+            f"Buenas tardes... ¿estoy hablando con el señor {first_name}?",
         ]
     else:
         greetings = [
-            "Aló... buenas tardes. ¿Con quién tengo el gusto?",
-            "Buenas tardes... ¿con quién hablo?",
-            "Aló, buenas tardes. ¿Quién me contesta?",
+            "Aló... buenas tardes, señor. ¿Con quién tengo el gusto?",
+            "Buenas tardes, señor... ¿con quién hablo?",
+            "Aló, buenas tardes, señor. ¿Quién me contesta?",
         ]
     first_message = random.choice(greetings)
 
@@ -616,11 +632,11 @@ async def run_bot(
         ]
     )
 
-    # Interruptions ENABLED: with start_sensitivity tuned (MEDIUM, not LOW) the
-    # spurious-interruption problem that forced this off is gone, and barge-in
-    # makes the conversation far more natural — the caller can cut the bot off
-    # and it responds immediately instead of talking over them. Per-tenant
-    # override (set tenant_config.allow_interruptions=false to disable).
+    # Interruptions ENABLED: with start_sensitivity HIGH the spurious-interruption
+    # problem that forced this off is gone, and barge-in makes the conversation
+    # far more natural — the caller can cut the bot off and it responds immediately
+    # instead of talking over them. Per-tenant override (set
+    # tenant_config.allow_interruptions=false to disable).
     _allow_interruptions = bool(tenant_config.get("allow_interruptions", True))
     task = PipelineTask(
         pipeline,
@@ -840,7 +856,7 @@ async def run_bot(
                 # we retrieve (fire-and-forget; doesn't block the lookup).
                 import random as _rnd
                 _filler = _rnd.choice([
-                    "Permítame un segundito que reviso eso...",
+                    "Permítame un momento que reviso eso...",
                     "Déjeme verlo un momento...",
                     "A ver, déjeme consultar eso...",
                 ])
