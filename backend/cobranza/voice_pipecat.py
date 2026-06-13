@@ -210,6 +210,12 @@ async def run_bot(
         f"REGLA DE ORO: si la pregunta es sobre SUS numeros → get_policy_info. "
         f"Si es sobre COMO funciona algo → search_knowledge. Si search_knowledge no encuentra nada, "
         f"dilo con honestidad y ofrece que un asesor lo contacte; NO inventes.\n"
+        f"\n"
+        f"REGLA ANTI-INVENTO (CRITICA): NUNCA actues sobre algo que el deudor NO dijo claramente. "
+        f"Si no escuchaste bien, si hubo silencio, o si el audio fue confuso, NO asumas ni completes "
+        f"la frase: pregunta '¿Disculpe, no le escuche bien, me puede repetir?'. JAMAS llames a una "
+        f"funcion (escalate, end_call, etc.) basandote en algo que crees que dijo pero no estas seguro. "
+        f"Solo llama escalate si el deudor PIDIO EXPLICITAMENTE un asesor/humano. Ante la duda, pregunta.\n"
         f"\n\n"
         f"CUANDO COLGAR — usa la funcion end_call (OBLIGATORIO):\n"
         f"Tienes una funcion llamada 'end_call'. DEBES usarla para terminar la llamada.\n"
@@ -320,11 +326,14 @@ async def run_bot(
     verify_identity_tool = FunctionSchema(
         name="verify_identity",
         description=(
-            "Verifica la identidad SOLO cuando sospechas que quien contesto NO es "
-            "el deudor (ej: dice 'el no esta', 'numero equivocado', o da otro nombre). "
-            "NO la uses si la persona responde a su nombre, dice 'si'/'soy yo', o "
-            "pregunta por su deuda — en esos casos la identidad ya esta confirmada: "
-            "responde directamente."
+            "USO RARISIMO. Llamala UNICAMENTE si la persona dice EXPLICITAMENTE que "
+            "NO es el deudor: 'el no esta', 'numero equivocado', 'se equivoco', o da "
+            "OTRO nombre distinto. "
+            "NUNCA la llames por un simple saludo ('alo', 'si', 'bueno', 'hola', 'a ver', "
+            "'diga') — eso es solo contestar el telefono, NO es motivo de verificacion. "
+            "NUNCA la llames si la persona responde a su nombre, dice 'soy yo', o pregunta "
+            "por su deuda. En TODOS esos casos la identidad ya esta confirmada: saluda y "
+            "continua normal. Ante la duda, NO la llames."
         ),
         properties={
             "utterance": {"type": "string", "description": "Lo que dijo la persona al contestar"},
@@ -409,11 +418,17 @@ async def run_bot(
     from google.genai.types import StartSensitivity, EndSensitivity
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
-        # Model trade-off (see commit notes): native-audio sounds natural+fast
-        # but the 12-2025 preview threw 1008 on tool calls; 3.1-flash-live ran
-        # tools but went silent after the result. Trying native-audio-LATEST,
-        # which may have function-calling fixed while keeping the natural voice.
-        model="models/gemini-2.5-flash-native-audio-latest",
+        # Model trade-off (see commit notes): native-audio sounds natural but on
+        # 8kHz telephony audio it transcribes the CALLER poorly — input
+        # transcripts came back as "[.]" (noise), so it never recognized policy
+        # questions and never fired get_policy_info; turns were also choppy/laggy
+        # (confirmed on call CA8a4d33d9: "habló entrecortado", tool never fired).
+        # 3.1-flash-live does proper STT (handles phone audio) and DID execute
+        # tools before — its only prior failure was going silent after a tool
+        # result, which was the MISSING CONTEXT AGGREGATOR, now fixed via
+        # LLMContextAggregatorPair. So it should both transcribe and complete
+        # function calls correctly now.
+        model="models/gemini-3.1-flash-live-preview",
         voice_id="Charon",
         system_instruction=system_prompt,
         tools=tools_schema,
@@ -430,12 +445,21 @@ async def run_bot(
             # greeted once and went silent forever. Instead we keep it ON but
             # LOW-sensitivity + longer silence so phone-line noise/echo doesn't
             # trigger false interruptions ~2s into the bot's own speech.
+            # start HIGH: require CONFIDENT speech onset before opening a turn.
+            # With start LOW, phone-line noise/silence opened phantom turns that
+            # Gemini then HALLUCINATED into full sentences (observed: caller said
+            # nothing, but STT produced "Quiero hablar con un asesor" and the bot
+            # called escalate on words never spoken). HIGH start-sensitivity means
+            # only real, confident speech triggers a turn — no phantom input.
+            # longer prefix_padding (500ms) gives more lead-in context so a single
+            # click/breath can't be mistaken for the start of an utterance.
+            # end HIGH + 600ms: still detect end-of-turn reasonably fast.
             vad=GeminiVADParams(
                 disabled=False,
-                start_sensitivity=StartSensitivity.START_SENSITIVITY_LOW,
-                end_sensitivity=EndSensitivity.END_SENSITIVITY_LOW,
-                prefix_padding_ms=300,
-                silence_duration_ms=800,
+                start_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
+                end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
+                prefix_padding_ms=500,
+                silence_duration_ms=600,
             ),
         ),
     )
@@ -517,15 +541,24 @@ async def run_bot(
     orchestrator = CobranzaOrchestrator(user_id=user_id, tenant_config=tenant_config) if user_id else None
 
     async def _handle_end_call(params):
-        """end_call: TwilioFrameSerializer handles hang-up via EndFrame."""
+        """end_call: play the farewell, then tear the pipeline down hard.
+
+        We deliberately do NOT queue an EndFrame here. Gemini Live defers
+        EndFrame handling "until the bot turn is finished" and, after a tool
+        call, often never emits turn_complete — so the EndFrame sat for the full
+        30s deferral timeout, holding the line open ~50s after the goodbye
+        (observed on CA759d6036: end_call at 11:46:42, cleanup at 11:47:32).
+        task.cancel() stops the pipeline immediately, which drops the WS and
+        hangs up the Twilio call without waiting on a turn that won't complete.
+        """
         reason = params.arguments.get("reason", "conversacion finalizada")
         logger.info("[VOICE] end_call invoked: reason=%s", reason)
         await params.result_callback({"status": "ending", "reason": reason})
-        # Allow farewell TTS to play before disconnect
+        # Allow farewell TTS to play before disconnect, then hard-cancel.
         import asyncio
         await asyncio.sleep(4.0)
-        # TwilioFrameSerializer automatically signals hang-up on EndFrame
-        await task.queue_frames([EndFrame()])
+        logger.info("[VOICE] end_call: cancelling pipeline (hard hangup)")
+        await task.cancel()
 
     async def _handle_update_debtor(params):
         """update_debtor: patch debtor estado/fields via CobranzaOrchestrator."""
@@ -696,6 +729,21 @@ async def run_bot(
         logger.info("[VOICE] EVENT: on_client_disconnected")
         await task.queue_frames([EndFrame()])
 
+    # ── Hard call-duration watchdog ──────────────────────────────────────
+    # Voicemail answers never say goodbye, so end_call never fires and the
+    # pipeline lives forever (observed: a voicemail call ran 280s ALONGSIDE
+    # the next real call, starving it — slow turns, missing replies). Force
+    # an EndFrame after MAX_CALL_SECONDS no matter what.
+    import asyncio as _asyncio
+    MAX_CALL_SECONDS = 240  # prompt already says "maximo 3-4 minutos"
+
+    async def _call_watchdog():
+        await _asyncio.sleep(MAX_CALL_SECONDS)
+        logger.warning("[VOICE] Watchdog: call %s exceeded %ds — forcing hang-up", call_sid, MAX_CALL_SECONDS)
+        await task.queue_frames([EndFrame()])
+
+    watchdog = _asyncio.create_task(_call_watchdog())
+
     # ── Run ───────────────────────────────────────────────────────────────
     logger.info("[VOICE] Starting pipeline for call %s...", call_sid)
     try:
@@ -704,6 +752,8 @@ async def run_bot(
         logger.info("[VOICE] Pipeline finished OK for call %s", call_sid)
     except Exception as e:
         logger.error("[VOICE] ERROR in pipeline: %s: %s", type(e).__name__, e, exc_info=True)
+    finally:
+        watchdog.cancel()
 
     call_result.ended_at = time.time()
     call_result.duration_seconds = int(call_result.ended_at - call_result.started_at)

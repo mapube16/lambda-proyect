@@ -9,7 +9,7 @@ Endpoints:
 import logging
 import os
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, status
@@ -43,7 +43,18 @@ async def twilio_webhook(request: Request):
     """
     form = dict(await request.form())
     call_sid = form.get("CallSid", "unknown")
-    logger.info("[Webhook] TWILIO call %s answered", call_sid)
+    answered_by = form.get("AnsweredBy", "")
+    logger.info("[Webhook] TWILIO call %s answered (AnsweredBy=%s)", call_sid, answered_by)
+
+    # AMD: if a machine/voicemail answered, hang up immediately. Streaming to a
+    # voicemail wastes Gemini tokens and leaves a zombie pipeline running for
+    # minutes (the recording never says goodbye, so end_call never fires).
+    if answered_by.startswith("machine") or answered_by == "fax":
+        logger.warning("[Webhook] %s answered by %s — hanging up (no stream)", call_sid, answered_by)
+        return PlainTextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+            media_type="application/xml",
+        )
 
     host = (
         os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
@@ -310,6 +321,23 @@ async def initiate_call_v2(
     if has_been_contacted_today(debtor):
         raise HTTPException(400, "Ya fue contactado hoy (Ley 2300)")
 
+    # ── Concurrency cap (Etapa 1 of scaling plan) ─────────────────────────
+    # One uvicorn process degrades visibly with 2+ simultaneous Gemini Live
+    # pipelines (observed: zombie voicemail call starved a real call — slow
+    # turns, missing replies). Cap active calls; the campaign scheduler
+    # retries on its next tick, turning bursts into a controlled drip.
+    # Stale records (crashed calls) are excluded via the 10-min cutoff and
+    # cleaned up by the TTL index on started_at.
+    max_concurrent = int(os.getenv("MAX_CONCURRENT_CALLS", "5"))
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+    active = await db.cobranza_calls_in_progress.count_documents(
+        {"started_at": {"$gte": cutoff}}
+    )
+    if active >= max_concurrent:
+        logger.warning("[Init] Concurrency cap hit (%d/%d active) — rejecting call for %s",
+                       active, max_concurrent, debtor_id)
+        raise HTTPException(429, f"Capacidad de llamadas llena ({active}/{max_concurrent}). Reintenta en unos minutos.")
+
     try:
         from twilio.rest import Client
 
@@ -324,15 +352,31 @@ async def initiate_call_v2(
         to_number = debtor.get("telefono")
         twilio_client = Client(twilio_sid, twilio_token)
 
+        # AMD trade-off: machine_detection="Enable" blocks the webhook until
+        # Twilio decides human-vs-machine, then we hang up on "machine". It
+        # protects against the 280s zombie-voicemail call — but it FALSE-POSITIVES
+        # on a slow human "Aló" + pause, classifying a real person as
+        # machine_start and hanging up before the bot ever connects (observed on
+        # CA9b483c: real pickup dropped as machine_start). For manual testing set
+        # VOICE_AMD_ENABLED=false to connect every answer straight to the bot;
+        # the 240s watchdog still caps any voicemail that slips through.
+        amd_enabled = os.getenv("VOICE_AMD_ENABLED", "true").lower() in ("1", "true", "yes")
+        create_kwargs = dict(
+            to=to_number,
+            from_=from_number,
+            url=f"{webhook_url}/api/cobranza/voice/webhook",
+            method="POST",
+        )
+        if amd_enabled:
+            # "DetectMessageEnd" is more conservative than "Enable": it waits for
+            # the voicemail greeting to finish rather than guessing early, so a
+            # human who says "Aló" then pauses is far less likely to be misjudged.
+            create_kwargs["machine_detection"] = "DetectMessageEnd"
+            create_kwargs["machine_detection_timeout"] = 8
         try:
             loop = asyncio.get_event_loop()
             call = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: twilio_client.calls.create(
-                    to=to_number,
-                    from_=from_number,
-                    url=f"{webhook_url}/api/cobranza/voice/webhook",
-                    method="POST",
-                )),
+                loop.run_in_executor(None, lambda: twilio_client.calls.create(**create_kwargs)),
                 timeout=15
             )
         except asyncio.TimeoutError:

@@ -24,7 +24,7 @@ async def _safe_index(collection, keys, **kwargs):
     try:
         await collection.create_index(keys, **kwargs)
     except OperationFailure as exc:
-        if exc.code == 86:  # IndexKeySpecsConflict
+        if exc.code in (85, 86):  # IndexOptionsConflict / IndexKeySpecsConflict
             logger.warning("Index conflict on %s (skipped): %s", collection.name, exc.details.get("errmsg", ""))
         else:
             raise
@@ -51,6 +51,9 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.rejected_leads, [("user_id", 1), ("lead_id", 1)], unique=True)
     await _safe_index(db.whatsapp_agents, "phone_number", unique=True)
     await _safe_index(db.whatsapp_agents, "cliente_id")
+    # Phase 25 voice: cobranza_calls_in_progress already has a TTL index on
+    # started_at (expireAfterSeconds=3600) — orphaned records auto-evict in 1h.
+    # The MAX_CONCURRENT_CALLS guard additionally ignores records >10 min old.
     # ── Landa Foundation (Phase 12) indexes ──────────────────────────────────
     await _safe_index(db.leads, "estado")
     await _safe_index(db.leads, [("user_id", 1), ("estado", 1)])
