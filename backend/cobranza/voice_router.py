@@ -276,7 +276,7 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
 
         # Push real-time WebSocket event to dashboard
         try:
-            from main import manager
+            from services.connection_manager import manager
             await manager.send_to_user(
                 str(debtor["user_id"]),
                 {

@@ -25,7 +25,7 @@ async def _push_ws_event(user_id: str, debtor_id: str, estado: str) -> None:
     Non-fatal: errors are logged as warnings, not re-raised.
     """
     try:
-        from main import manager
+        from services.connection_manager import manager
         await manager.send_to_user(
             str(user_id),
             {"type": "debtor_update", "debtor_id": debtor_id, "estado": estado},

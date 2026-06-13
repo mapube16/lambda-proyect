@@ -562,7 +562,22 @@ async def run_bot(
     first_message = random.choice(greetings)
 
     # ── LLM Context ─────────────────────────────────────────────────────
-    messages = [{"role": "system", "content": system_prompt}]
+    # Seed the greeting into the INITIAL context so Gemini speaks it the moment
+    # the context is set (inference_on_context_initialization=True), with no wait
+    # for the caller to talk. TTSSpeakFrame does NOT work here: Gemini Live is
+    # audio-native and there's no separate TTS service in the pipeline to render
+    # it, so the frame queued silently (observed: "speaking greeting" logged but
+    # no audio). Letting Gemini generate the greeting is the only path that
+    # actually produces sound on this transport.
+    greeting_instruction = (
+        f"\n\nIMPORTANTE — APERTURA DE LA LLAMADA: La llamada acaba de conectar. "
+        f"Tu PRIMER mensaje debe ser EXACTAMENTE este saludo y nada mas, sin "
+        f"esperar a que la otra persona hable: \"{first_message}\""
+    )
+    messages = [
+        {"role": "system", "content": system_prompt + greeting_instruction},
+        {"role": "user", "content": "[La llamada acaba de conectar — saluda ahora.]"},
+    ]
     context = LLMContext(messages)
 
     # ── Transcript collectors ────────────────────────────────────────────
@@ -860,25 +875,38 @@ async def run_bot(
             result, properties=FunctionCallResultProperties(run_llm=True)
         )
 
-    # cancel_on_interruption=False → user talking during goodbye won't cancel the hangup
+    # cancel_on_interruption=False for any handler with REAL side effects: with
+    # barge-in enabled, the caller speaking mid-execution must NOT abort a DB
+    # write or an outbound WhatsApp half-way. Read-only tools (get_policy_info,
+    # search_knowledge, verify_identity) stay cancellable — re-running them is
+    # harmless and aborting them frees the turn faster.
     llm.register_function("end_call", _handle_end_call, cancel_on_interruption=False)
-    llm.register_function("update_debtor", _handle_update_debtor)
-    llm.register_function("send_whatsapp", _handle_send_whatsapp)
+    llm.register_function("update_debtor", _handle_update_debtor, cancel_on_interruption=False)
+    llm.register_function("send_whatsapp", _handle_send_whatsapp, cancel_on_interruption=False)
+    llm.register_function("escalate", _handle_escalate, cancel_on_interruption=False)
     llm.register_function("verify_identity", _handle_verify_identity)
-    llm.register_function("escalate", _handle_escalate)
     llm.register_function("get_policy_info", _handle_get_policy_info)
     llm.register_function("search_knowledge", _handle_search_knowledge)
-    llm.register_function("notify_payment_claim", _handle_notify_payment_claim)
+    # cancel_on_interruption=False: this handler does real side effects (parks
+    # the debtor + WhatsApps the team). With barge-in enabled, the caller
+    # speaking mid-execution was cancelling it before the WhatsApp went out
+    # (observed: notify_payment_claim fired then "has been cancelled" twice).
+    # It must run to completion regardless of interruptions.
+    llm.register_function(
+        "notify_payment_claim", _handle_notify_payment_claim, cancel_on_interruption=False
+    )
 
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
-        logger.info("[VOICE] EVENT: on_client_connected — expected greeting: %s", first_message)
-        # Inject a user message that triggers the LLM to speak the greeting
-        context.messages.append({
-            "role": "user",
-            "content": f"[La llamada acaba de conectar. Di EXACTAMENTE esto y nada mas: '{first_message}']",
-        })
+        logger.info("[VOICE] EVENT: on_client_connected — seeding context to greet")
+        # The greeting is NOT a TTSSpeakFrame (silent with Gemini Live — there's
+        # no separate TTS service to render it). It's seeded into the INITIAL
+        # context above as a system instruction + an opening user turn, and
+        # inference_on_context_initialization=True makes Gemini generate+speak it
+        # the moment the context is set. Pushing the context here kicks that off
+        # the instant the call connects, so the bot talks FIRST without waiting
+        # for the caller and without the ~15s of dead air the old approach had.
         await task.queue_frames([LLMContextFrame(context=context)])
 
     @transport.event_handler("on_client_disconnected")

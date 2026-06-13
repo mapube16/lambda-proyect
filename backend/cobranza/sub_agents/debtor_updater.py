@@ -71,7 +71,7 @@ async def update_debtor_status(db, user_id: str, debtor_id: str, fields: dict) -
 
     # Push WS event to dashboard (non-fatal — per PATTERNS Shared Pattern)
     try:
-        from main import manager
+        from services.connection_manager import manager
         await manager.send_to_user(
             str(user_id),
             {"type": "debtor_update", "debtor_id": debtor_id, "estado": new_estado},
