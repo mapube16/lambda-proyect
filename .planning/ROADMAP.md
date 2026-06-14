@@ -505,6 +505,29 @@ Plans:
 
 ---
 
+### Phase 26: Voice Prompt Layering
+
+**Goal**: Refactor the hardcoded cobranza voice system_prompt (~6515 chars in voice_pipecat.py) into a 3-layer composed prompt so tenant personality is configurable from MongoDB without breaking product/safety logic. Layer 1 (MOTOR) stays in code: anti-invento rules, policy-data injection block, FLUJO, tool semantics (end_call/escalate/notify_payment_claim), money/date formatting. Layer 2 (PERSONALITY) moves to MongoDB per-tenant and hot-reloads: agent name, tono, brand_name, opening/closing phrases, formality, business restrictions. Layer 3 (DATOS) stays runtime-injected per call. The broken all-or-nothing override (2000-char cap = 69% truncation) is replaced with composition + per-layer caps + anti-injection validation on the personality layer. DPG's current personality is seeded into MongoDB; the recomposed prompt must be byte-identical to today's prompt (zero regression) and validated with a real call.
+
+**Depends on**: Phase 25
+**Requirements**: PROMPT-LAYER-01, PROMPT-LAYER-02, PROMPT-LAYER-03
+**Success Criteria** (what must be TRUE):
+  1. The MOTOR (anti-invento, policy injection, FLUJO, tool rules, money/date formatting) lives in code and cannot be overridden by tenant config
+  2. A tenant's personality (agent name, tono, brand, opening/closing) is read from MongoDB and hot-reloads on the next call without redeploy
+  3. With DPG's seeded personality, the recomposed system_prompt is byte-identical to the current hardcoded prompt (diff proves zero regression)
+  4. A tenant personality block containing an injection pattern (e.g. "ignora tus instrucciones", code fences, XML-escape) is rejected by validation before use
+  5. The 2000-char flat cap is replaced by per-layer caps; the full composed prompt is no longer silently truncated
+  6. A real validation call confirms behavior is unchanged: greeting with "señor", no diminutives, policy answered from injected block with zero get_policy_info calls
+
+**Plans**: 3 plans
+
+Plans:
+- [ ] 26-01-PLAN.md — Extract 3-layer composition into voice_prompt.py; byte-identical diff gate (PROMPT-LAYER-01)
+- [ ] 26-02-PLAN.md — Wire personality from tenant_configs via existing cache + fallback + hot-reload + rollback toggle (PROMPT-LAYER-02)
+- [ ] 26-03-PLAN.md — Anti-injection validation + per-layer caps + runtime sanitization; remove broken 2000-char override (PROMPT-LAYER-03)
+
+---
+
 ## Progress
 
 **Execution Order:**
