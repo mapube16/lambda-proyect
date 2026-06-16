@@ -51,6 +51,25 @@ async def _push_dlq(reason: str, payload: dict, error: Exception | None = None) 
         logger.error("[webhook] DLQ push failed: %s", dlq_exc)
 
 
+async def _push_dlq(reason: str, payload: dict, error: Exception | None = None) -> None:
+    """Persist a webhook failure payload for later replay/debugging."""
+    try:
+        arq_pool = state.arq_pool
+        if arq_pool is None:
+            logger.warning("[webhook] DLQ unavailable: arq_pool is not ready")
+            return
+        item = {
+            "type": "vapi_webhook",
+            "reason": reason,
+            "error": str(error) if error else "",
+            "payload": payload,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await arq_pool.rpush("dlq:webhooks:vapi", json.dumps(item))
+    except Exception as dlq_exc:
+        logger.error("[webhook] DLQ push failed: %s", dlq_exc)
+
+
 # ── Tool dispatch helper ───────────────────────────────────────────────────────
 
 async def dispatch_tool(name: str, params: dict, call_obj: dict) -> str:

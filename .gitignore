@@ -22,3 +22,10 @@ google_service_account.json
 .venv/
 backend/.venv/
 **/.venv/
+
+# Claude Code internals
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/projects/
+.git-rewrite/
+.planning/
