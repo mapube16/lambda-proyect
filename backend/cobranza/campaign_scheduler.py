@@ -77,6 +77,11 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
 # Job 1: Pre-vencimiento reminder (3 days before due, pendiente debtors)
 # ---------------------------------------------------------------------------
 
+async def _is_campaign_paused(db, user_id: str) -> bool:
+    doc = await db.cobranza_config.find_one({"user_id": user_id}, {"campaign_paused": 1})
+    return bool((doc or {}).get("campaign_paused", False))
+
+
 async def pre_vencimiento_job() -> None:
     """
     Contacts debtors in estado='pendiente' whose vencimiento is within the next
@@ -105,6 +110,10 @@ async def pre_vencimiento_job() -> None:
             continue
 
         user_id = debtor.get("user_id")
+
+        if await _is_campaign_paused(db, user_id):
+            logger.info("[pre_vencimiento_job] Campaign paused for user %s — skipping debtor %s", user_id, debtor["_id"])
+            continue
 
         await db.debtors.update_one(
             {"_id": debtor["_id"]},
@@ -157,6 +166,11 @@ async def post_vencimiento_job() -> None:
 
         user_id = debtor.get("user_id")
         config_doc = await db.cobranza_config.find_one({"user_id": user_id})
+
+        if (config_doc or {}).get("campaign_paused", False):
+            logger.info("[post_vencimiento_job] Campaign paused for user %s — skipping debtor %s", user_id, debtor["_id"])
+            continue
+
         estrategia = (config_doc or {}).get("estrategia", {})
 
         # Respect frecuencia_dias: days since last contact

@@ -1280,6 +1280,8 @@ export function CobranzaTab() {
   const [ley2300Confirm, setLey2300Confirm] = useState<string | null>(null); // debtor_id pending confirmation
   const csvInputRef = useRef<HTMLInputElement>(null);
   const csvUpdateRef = useRef<HTMLInputElement>(null);
+  const [campaignPaused, setCampaignPaused] = useState<boolean | null>(null);
+  const [togglingCampaign, setTogglingCampaign] = useState(false);
 
   // ── Toast helpers ──────────────────────────────────────────────────────────
   const dismissToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
@@ -1295,6 +1297,37 @@ export function CobranzaTab() {
       .then(d => setConfigured(!!d.configured))
       .catch(() => setConfigured(false));
   }, []);
+
+  // ── Campaign pause state ───────────────────────────────────────────────────
+  useEffect(() => {
+    apiFetch('/api/cobranza/campaign/status')
+      .then(r => r.json())
+      .then(d => setCampaignPaused(!!d.campaign_paused))
+      .catch(() => setCampaignPaused(false));
+  }, []);
+
+  const handleToggleCampaign = async () => {
+    setTogglingCampaign(true);
+    try {
+      const endpoint = campaignPaused ? '/api/cobranza/campaign/resume' : '/api/cobranza/campaign/pause';
+      const r = await apiFetch(endpoint, { method: 'POST' });
+      if (r.ok) {
+        const data = await r.json();
+        setCampaignPaused(data.campaign_paused);
+        addToast({
+          id: `campaign-toggle-${Date.now()}`,
+          message: data.campaign_paused ? 'Campaña pausada — no se iniciarán nuevas llamadas' : 'Campaña reanudada',
+          ok: true,
+        });
+      } else {
+        addToast({ id: `campaign-err-${Date.now()}`, message: 'Error al cambiar estado de campaña', ok: false });
+      }
+    } catch {
+      addToast({ id: `campaign-err-${Date.now()}`, message: 'Error de conexión', ok: false });
+    } finally {
+      setTogglingCampaign(false);
+    }
+  };
 
   // ── Fetch debtors ──────────────────────────────────────────────────────────
   const fetchDebtors = useCallback(async () => {
@@ -1540,6 +1573,35 @@ export function CobranzaTab() {
             {/* hidden inputs */}
             <input ref={csvInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('create')} />
             <input ref={csvUpdateRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('update')} />
+            {/* Campaign pause/resume toggle */}
+            {campaignPaused !== null && (
+              <button
+                onClick={handleToggleCampaign}
+                disabled={togglingCampaign}
+                title={campaignPaused ? 'Reanudar campaña automática' : 'Pausar campaña automática'}
+                style={{
+                  height: 32, padding: '0 14px',
+                  border: campaignPaused
+                    ? `1px solid rgba(21,165,106,0.30)`
+                    : `1px solid rgba(224,62,76,0.30)`,
+                  background: campaignPaused ? C.greenBg : C.pinkBg,
+                  color: campaignPaused ? C.green : C.pink,
+                  cursor: togglingCampaign ? 'not-allowed' : 'pointer',
+                  fontSize: 12, fontFamily: C.SG, fontWeight: 600, letterSpacing: '0.05em',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  opacity: togglingCampaign ? 0.6 : 1,
+                  transition: 'all 0.15s',
+                }}
+              >
+                <span style={{
+                  width: 7, height: 7, borderRadius: '50%',
+                  background: campaignPaused ? C.green : C.pink,
+                  flexShrink: 0,
+                  ...(campaignPaused ? {} : { animation: 'cobr-pulse 1.5s infinite' }),
+                }} />
+                {togglingCampaign ? '…' : campaignPaused ? 'REANUDAR' : 'PAUSAR'}
+              </button>
+            )}
             {/* Nuevo deudor */}
             <button
               onClick={() => setShowCreateModal(true)}

@@ -20,6 +20,7 @@ from auth import get_current_user
 from database import get_db
 from cobranza.debtor_crud import get_debtor_by_id, update_debtor
 from cobranza.voice_pipecat import run_bot, CallResult
+from services.connection_manager import manager as _ws_manager
 
 _TERMINAL_ESTADOS = {"promesa_de_pago", "escalado", "pagado"}
 
@@ -276,8 +277,7 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
 
         # Push real-time WebSocket event to dashboard
         try:
-            from services.connection_manager import manager
-            await manager.send_to_user(
+            await _ws_manager.send_to_user(
                 str(debtor["user_id"]),
                 {
                     "type": "debtor_update",

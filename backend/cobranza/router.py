@@ -450,6 +450,48 @@ async def onboarding_approve(
     return {"campaign_id": user_id, "ok": True}
 
 
+# ── Campaign Pause / Resume ────────────────────────────────────────────────────
+
+@router.post("/campaign/pause")
+async def pause_campaign(current_user: dict = Depends(get_current_user)):
+    """Pause the automated call campaign for this tenant."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.cobranza_config.update_one(
+        {"user_id": user_id},
+        {"$set": {"campaign_paused": True, "campaign_paused_at": now, "updated_at": now}},
+        upsert=True,
+    )
+    logger.info("[campaign] Paused for user %s", user_id)
+    return {"ok": True, "campaign_paused": True}
+
+
+@router.post("/campaign/resume")
+async def resume_campaign(current_user: dict = Depends(get_current_user)):
+    """Resume the automated call campaign for this tenant."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.cobranza_config.update_one(
+        {"user_id": user_id},
+        {"$set": {"campaign_paused": False, "campaign_resumed_at": now, "updated_at": now}},
+        upsert=True,
+    )
+    logger.info("[campaign] Resumed for user %s", user_id)
+    return {"ok": True, "campaign_paused": False}
+
+
+@router.get("/campaign/status")
+async def campaign_status(current_user: dict = Depends(get_current_user)):
+    """Return whether the automated campaign is currently paused."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    doc = await db.cobranza_config.find_one({"user_id": user_id}, {"campaign_paused": 1})
+    paused = bool((doc or {}).get("campaign_paused", False))
+    return {"campaign_paused": paused}
+
+
 # ── Llamar Ahora (manual immediate call) ──────────────────────────────────────
 
 async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict) -> None:
