@@ -55,10 +55,22 @@ async def send_email(
             msg["From"] = f"{sender_name} <{sender_email}>"
             msg["To"] = to
 
-            with smtplib.SMTP(host, port, timeout=30) as server:
-                server.starttls()
-                server.login(user, password)
-                server.sendmail(sender_email, [to], msg.as_string())
+            # Puerto 465 = SSL implícito (SMTPS) → SMTP_SSL, NO starttls.
+            # Puerto 587/25 = texto plano + STARTTLS.
+            if port == 465:
+                with smtplib.SMTP_SSL(host, port, timeout=30) as server:
+                    server.login(user, password)
+                    server.sendmail(sender_email, [to], msg.as_string())
+            else:
+                with smtplib.SMTP(host, port, timeout=30) as server:
+                    server.ehlo()
+                    try:
+                        server.starttls()
+                        server.ehlo()
+                    except smtplib.SMTPException:
+                        pass  # servidor sin STARTTLS (raro en 587)
+                    server.login(user, password)
+                    server.sendmail(sender_email, [to], msg.as_string())
 
             logger.info(f"[email_sender] Email sent to {to} via {host}:{port}")
             return True
@@ -113,10 +125,20 @@ async def send_email_html(
             msg["From"] = f"{sender_name} <{sender_email}>"
             msg["To"] = to
 
-            with smtplib.SMTP(host, port, timeout=30) as server:
-                server.starttls()
-                server.login(user, password)
-                server.sendmail(sender_email, [to], msg.as_string())
+            if port == 465:
+                with smtplib.SMTP_SSL(host, port, timeout=30) as server:
+                    server.login(user, password)
+                    server.sendmail(sender_email, [to], msg.as_string())
+            else:
+                with smtplib.SMTP(host, port, timeout=30) as server:
+                    server.ehlo()
+                    try:
+                        server.starttls()
+                        server.ehlo()
+                    except smtplib.SMTPException:
+                        pass
+                    server.login(user, password)
+                    server.sendmail(sender_email, [to], msg.as_string())
 
             logger.info(f"[email_sender] HTML email sent to {to} via {host}:{port}")
             return True

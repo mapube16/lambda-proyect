@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import json
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends, Request, Body
@@ -13,6 +14,7 @@ from database import (
     list_whatsapp_agents, delete_whatsapp_agent,
 )
 from services.notifications import send_whatsapp_text
+import state
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +33,29 @@ class WhatsAppAgentConfig(BaseModel):
     activo: bool = True
 
 
-async def _safe_task(coro, label: str):
+async def _push_dlq(reason: str, payload: dict, error: Exception | None = None) -> None:
+    try:
+        arq_pool = state.arq_pool
+        if arq_pool is None:
+            logger.warning("[WA] DLQ unavailable: arq_pool is not ready")
+            return
+        item = {
+            "type": "whatsapp_webhook",
+            "reason": reason,
+            "error": str(error) if error else "",
+            "payload": payload,
+        }
+        await arq_pool.rpush("dlq:webhooks:whatsapp", json.dumps(item))
+    except Exception as dlq_exc:
+        logger.error("[WA] DLQ push failed: %s", dlq_exc)
+
+
+async def _safe_task(coro, label: str, payload: dict):
     try:
         await coro
     except Exception as exc:
         logging.error("[WA] %s crashed: %s", label, exc, exc_info=True)
+        await _push_dlq(label, payload, exc)
 
 
 # ── Old Twilio webhook (legacy) ───────────────────────────────────────────────
@@ -56,6 +76,7 @@ async def whatsapp_webhook(request: Request):
             await handle_inbound_message(from_phone, body, from_twilio, agent_config)
         except Exception as e:
             logger.error("[WA] handle error: %s", e, exc_info=True)
+            await _push_dlq("legacy_webhook", {"from_phone": from_phone, "to_number": from_twilio, "body": body}, e)
 
     asyncio.create_task(_run())
     return Response(content="", media_type="text/xml")
@@ -116,15 +137,16 @@ async def whatsapp_incoming(request: Request):
                 await handle_inbound_message(from_phone, body, to_number, agent_config)
             except Exception as e:
                 logging.error("[WA] legacy bot error: %s", e)
+                await _push_dlq("legacy_bot", {"from_phone": from_phone, "to_number": to_number, "body": body}, e)
         asyncio.create_task(_legacy())
     elif bot_mode == "calendar":
         try:
             from calendar_agent import process_calendar_message
             asyncio.create_task(process_calendar_message(from_phone, body, media_url))
         except ImportError:
-            asyncio.create_task(_safe_task(wa_handler.process_inbound(from_phone=from_phone, to_number=to_number, body="Agente de calendario no disponible aun.", media_url="", profile=profile), "process_inbound/calendar"))
+            asyncio.create_task(_safe_task(wa_handler.process_inbound(from_phone=from_phone, to_number=to_number, body="Agente de calendario no disponible aun.", media_url="", profile=profile), "process_inbound/calendar", {"from_phone": from_phone, "to_number": to_number, "body": body, "media_url": media_url}))
     else:
-        asyncio.create_task(_safe_task(wa_handler.process_inbound(from_phone=from_phone, to_number=to_number, body=body, media_url=media_url, profile=profile), "process_inbound"))
+        asyncio.create_task(_safe_task(wa_handler.process_inbound(from_phone=from_phone, to_number=to_number, body=body, media_url=media_url, profile=profile), "process_inbound", {"from_phone": from_phone, "to_number": to_number, "body": body, "media_url": media_url}))
 
     return Response(content="<Response/>", media_type="text/xml")
 

@@ -24,7 +24,7 @@ async def _safe_index(collection, keys, **kwargs):
     try:
         await collection.create_index(keys, **kwargs)
     except OperationFailure as exc:
-        if exc.code == 86:  # IndexKeySpecsConflict
+        if exc.code in (85, 86):  # IndexOptionsConflict / IndexKeySpecsConflict
             logger.warning("Index conflict on %s (skipped): %s", collection.name, exc.details.get("errmsg", ""))
         else:
             raise
@@ -51,6 +51,9 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.rejected_leads, [("user_id", 1), ("lead_id", 1)], unique=True)
     await _safe_index(db.whatsapp_agents, "phone_number", unique=True)
     await _safe_index(db.whatsapp_agents, "cliente_id")
+    # Phase 25 voice: cobranza_calls_in_progress already has a TTL index on
+    # started_at (expireAfterSeconds=3600) — orphaned records auto-evict in 1h.
+    # The MAX_CONCURRENT_CALLS guard additionally ignores records >10 min old.
     # ── Landa Foundation (Phase 12) indexes ──────────────────────────────────
     await _safe_index(db.leads, "estado")
     await _safe_index(db.leads, [("user_id", 1), ("estado", 1)])
@@ -70,17 +73,74 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.debtors, [("user_id", 1), ("estado", 1)])
     await _safe_index(db.debtors, [("user_id", 1), ("created_at", -1)])
     await _safe_index(db.debtors, "vapi_call_id", sparse=True)
-    await _safe_index(db.debtors, [("user_id", 1), ("telefono", 1)], unique=True, partialFilterExpression={"source": "manual"})
+    # The legacy unique (user_id, telefono) index applied to ALL debtors but
+    # SOFTSEGUROS represents each póliza of a client as its own debtor doc — a
+    # single client/teléfono can legitimately appear N times. The unique index
+    # now applies ONLY to manual cobranza debtors (source=="manual"); SOFTSEGUROS
+    # ones are de-duplicated by the (user_id, softseguros_poliza_id) index below.
+    # NOTE: this requires Phase 17 cobranza inserts to set source="manual" explicitly.
+    try:
+        await db.debtors.drop_index("user_id_1_telefono_1")
+    except Exception:
+        pass  # not yet created, or already partial
+    # Backfill: existing manual debtors don't have `source` set. Tag them so the
+    # new partial index matches and they keep their uniqueness guarantee.
+    try:
+        await db.debtors.update_many(
+            {"source": {"$exists": False}}, {"$set": {"source": "manual"}}
+        )
+    except Exception:  # pragma: no cover
+        pass
+    await _safe_index(
+        db.debtors,
+        [("user_id", 1), ("telefono", 1)],
+        unique=True,
+        partialFilterExpression={"source": "manual"},
+    )
+    # ── Phase 18: SOFTSEGUROS credentials per user ───────────────────────────
+    await _safe_index(db.softseguros_credentials, "user_id", unique=True)
+    # ── Phase 18: SOFTSEGUROS sync engine indexes ────────────────────────────
+    # Idempotency: a póliza id maps to exactly one debtor per user.
+    # partialFilterExpression (not sparse) so the uniqueness only applies to
+    # docs with source=="softseguros" — Phase 17 manual debtors (which may carry
+    # softseguros_poliza_id=null) are excluded entirely. A prior boot may have
+    # created this index with sparse=True; drop the stale one before recreating.
+    try:
+        await db.debtors.drop_index("user_id_1_softseguros_poliza_id_1")
+    except Exception:
+        pass  # index doesn't exist yet, or has a different name — fine
+    await _safe_index(
+        db.debtors,
+        [("user_id", 1), ("softseguros_poliza_id", 1)],
+        unique=True,
+        partialFilterExpression={"source": "softseguros"},
+    )
+    await _safe_index(db.softseguros_sync_state, "user_id", unique=True)
+    await _safe_index(db.softseguros_sync_logs, [("user_id", 1), ("completed_at", -1)])
     # ── Email OAuth + Events ──────────────────────────────────────────────────
     await _safe_index(db.email_events, [("user_id", 1), ("timestamp", -1)])
     await _safe_index(db.email_events, "message_id")
     await _safe_index(db.email_events, "lead_id")
+    # ── Phase 24: Signal sources ─────────────────────────────────────────────
+    await _safe_index(db.signal_leads, [("user_id", 1), ("source", 1), ("nit", 1)], unique=True, sparse=True)
+    await _safe_index(db.signal_leads, [("user_id", 1), ("source", 1), ("signal_key", 1)], unique=True, sparse=True)
+    await _safe_index(db.signal_leads, [("user_id", 1), ("processed", 1)])
+    await _safe_index(db.signal_source_configs, "user_id", unique=True)
+    await _safe_index(db.cost_events, [("user_id", 1), ("timestamp", -1)])
+    await _safe_index(db.cost_events, [("user_id", 1), ("source", 1)])
+    await _safe_index(db.tenant_quotas, "user_id", unique=True)
+    await _safe_index(db.tenant_quotas, [("reset_date", 1)])
     # ── Phase 17: Voice Orchestrator (Assembly AI) ───────────────────────────
     await _safe_index(db.cobranza_calls_in_progress, "call_sid", unique=True)
     await _safe_index(db.cobranza_calls_in_progress, [("user_id", 1), ("started_at", -1)])
     await _safe_index(db.cobranza_calls_in_progress, [("started_at", 1)], expireAfterSeconds=3600)
     await _safe_index(db.cobranza_calls, [("user_id", 1), ("created_at", -1)])
     await _safe_index(db.cobranza_calls, "call_id", unique=True)
+    # ── Phase 25: Agentic Multi-Tenant Architecture indexes ──────────────────
+    await _safe_index(db.tenant_configs, "user_id", unique=True)
+    await _safe_index(db.agent_instances, "user_id", unique=True)
+    await _safe_index(db.rag_documents, [("user_id", 1), ("filename", 1)])
+    await _safe_index(db.rag_documents, [("user_id", 1), ("created_at", -1)])
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
@@ -511,11 +571,12 @@ async def get_runs_by_user(user_id: str) -> list:
 
 # ── Leads ─────────────────────────────────────────────────────────────────────
 
-async def save_lead(run_id: str, user_id: str, lead_data: dict) -> str:
+async def save_lead(run_id: str, user_id: str, lead_data: dict, campaign_id: str = None) -> str:
     db = get_db()
     result = await db.leads.insert_one({
         "run_id": run_id,
         "user_id": user_id,
+        "campaign_id": campaign_id,
         "company_name": lead_data.get("company_name", ""),
         "url": lead_data.get("url", ""),
         "phone": lead_data.get("phone", ""),
@@ -879,6 +940,116 @@ async def get_or_create_prospecting_knowledge(user_id: str) -> dict:
     }
     await upsert_prospecting_knowledge(user_id, seed)
     return await get_prospecting_knowledge(user_id)
+
+
+# ── Phase 24: Signal Sources ─────────────────────────────────────────────────
+
+async def upsert_signal_lead(user_id: str, signal: dict) -> bool:
+    db = get_db()
+    source = str(signal.get("source") or "")
+    if not source:
+        return False
+
+    nit = str(signal.get("nit") or "")
+    signal_key = str(signal.get("signal_key") or "")
+
+    query = {"user_id": user_id, "source": source}
+    if nit:
+        query["nit"] = nit
+    elif signal_key:
+        query["signal_key"] = signal_key
+    else:
+        return False
+
+    now = datetime.now(timezone.utc)
+    payload = {
+        "user_id": user_id,
+        "source": source,
+        "empresa": signal.get("empresa", ""),
+        "nit": nit,
+        "sector": signal.get("sector", ""),
+        "ciudad": signal.get("ciudad", ""),
+        "fecha_senal": signal.get("fecha_senal") or now,
+        "confianza": float(signal.get("confianza") or 0),
+        "metadata": signal.get("metadata", {}) or {},
+        "signal_key": signal_key,
+        "processed": bool(signal.get("processed", False)),
+        "updated_at": now,
+    }
+
+    result = await db.signal_leads.update_one(
+        query,
+        {"$setOnInsert": {**payload, "created_at": now}, "$set": payload},
+        upsert=True,
+    )
+    return result.upserted_id is not None
+
+
+async def list_signal_leads(
+    user_id: str,
+    source: Optional[str] = None,
+    limit: int = 200,
+    processed: Optional[bool] = None,
+) -> list:
+    db = get_db()
+    query = {"user_id": user_id}
+    if source:
+        query["source"] = source
+    if processed is not None:
+        query["processed"] = processed
+    cursor = db.signal_leads.find(query).sort("fecha_senal", -1).limit(limit)
+    docs = await cursor.to_list(length=limit)
+    for d in docs:
+        d["_id"] = str(d["_id"])
+    return docs
+
+
+async def mark_signal_leads_processed(user_id: str, lead_ids: list[str]) -> int:
+    if not lead_ids:
+        return 0
+    db = get_db()
+    result = await db.signal_leads.update_many(
+        {"user_id": user_id, "_id": {"$in": [ObjectId(i) for i in lead_ids]}},
+        {"$set": {"processed": True, "processed_at": datetime.now(timezone.utc)}},
+    )
+    return int(result.modified_count or 0)
+
+
+async def set_signal_source_config(user_id: str, enabled_sources: list[str], weights: dict) -> None:
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.signal_source_configs.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "enabled_sources": enabled_sources,
+                "weights": weights,
+                "updated_at": now,
+                "user_id": user_id,
+            },
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+
+
+async def get_signal_source_config(user_id: str) -> dict:
+    db = get_db()
+    doc = await db.signal_source_configs.find_one({"user_id": user_id}) or {}
+    if doc and "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
+
+
+async def record_cost_event(user_id: str, source: str, cost_usd: float, metadata: Optional[dict] = None) -> None:
+    db = get_db()
+    await db.cost_events.insert_one({
+        "user_id": user_id,
+        "source": source,
+        "cost_usd": float(cost_usd),
+        "metadata": metadata or {},
+        "timestamp": datetime.now(timezone.utc),
+    })
 
 
 async def get_all_client_summaries(user_ids: list[str]) -> dict[str, dict]:
@@ -1511,3 +1682,78 @@ async def get_or_create_prospecting_knowledge(user_id: str) -> dict:
     await upsert_prospecting_knowledge(user_id, seed)
     return await get_prospecting_knowledge(user_id)
 
+
+# ── Tenant Quota (Phase 24 Wave 4) ────────────────────────────────────────────
+
+_PLAN_LIMITS: dict[str, int] = {
+    "free":       100,
+    "pro":        1000,
+    "enterprise": 999_999,
+}
+
+
+async def get_or_create_tenant_quota(user_id: str, plan: str = "pro") -> dict:
+    """Return quota doc, creating with default plan if missing."""
+    db = get_db()
+    doc = await db.tenant_quotas.find_one({"user_id": user_id})
+    if doc:
+        if "_id" in doc:
+            doc["_id"] = str(doc["_id"])
+        return doc
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        reset_date = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        reset_date = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    new_doc = {
+        "user_id": user_id,
+        "plan": plan,
+        "monthly_leads_limit": _PLAN_LIMITS.get(plan, 1000),
+        "monthly_leads_used": 0,
+        "reset_date": reset_date,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.tenant_quotas.insert_one(new_doc)
+    new_doc["_id"] = str(new_doc.pop("_id", ""))
+    return new_doc
+
+
+async def increment_quota_used(user_id: str, count: int = 1) -> None:
+    """Increment monthly_leads_used after each lead found."""
+    db = get_db()
+    await db.tenant_quotas.update_one(
+        {"user_id": user_id},
+        {"$inc": {"monthly_leads_used": count}, "$set": {"updated_at": datetime.now(timezone.utc)}},
+    )
+
+
+async def check_and_reset_quota(user_id: str) -> dict:
+    """Reset quota if reset_date passed. Returns up-to-date doc."""
+    doc = await get_or_create_tenant_quota(user_id)
+    now = datetime.now(timezone.utc)
+    reset_date = doc.get("reset_date")
+    if isinstance(reset_date, str):
+        reset_date = datetime.fromisoformat(reset_date)
+    if reset_date and now >= reset_date:
+        if now.month == 12:
+            next_reset = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            next_reset = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        db = get_db()
+        await db.tenant_quotas.update_one(
+            {"user_id": user_id},
+            {"$set": {"monthly_leads_used": 0, "reset_date": next_reset, "updated_at": now}},
+        )
+        doc = await get_or_create_tenant_quota(user_id)
+    return doc
+
+
+async def get_all_tenant_quotas() -> list[dict]:
+    """Staff: return all quota docs."""
+    db = get_db()
+    docs = await db.tenant_quotas.find({}).to_list(length=500)
+    for d in docs:
+        if "_id" in d:
+            d["_id"] = str(d["_id"])
+    return docs

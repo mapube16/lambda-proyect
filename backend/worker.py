@@ -2,19 +2,26 @@
 ARQ Worker — executes the Hive prospecting pipeline out-of-process.
 
 Runs as a separate Railway service: `arq worker.WorkerSettings`.
-The FastAPI lifespan does NOT run here — this module initializes its OWN
-MongoDB and Redis clients in on_startup (RESEARCH Pitfall 2 + Pitfall 6).
-Never import or reference state.* / manager from this file.
+Events are written to MongoDB; the frontend polls /api/runs/{run_id}/status.
 """
 import asyncio
-import json
 import logging
 import os
+import sys
 
-import redis.asyncio as aioredis
+# Windows: stdout por defecto es cp1252 y revienta con caracteres como '→'/'ñ'
+# en prints de debug, tumbando el job entero. Forzamos UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+from dotenv import load_dotenv
+load_dotenv()
 
 import database
-from arq_pool import redis_settings_from_url, redis_url
+from arq_pool import redis_settings_from_url
 from hive_adapter import HiveAdapter
 
 logger = logging.getLogger("worker")
@@ -25,6 +32,7 @@ async def run_prospecting_job(
     ctx: dict,
     run_id: str,
     user_id: str,
+    campaign_id: str,
     campaign: dict,
     max_results: int,
     personality_prompt: str,
@@ -32,15 +40,63 @@ async def run_prospecting_job(
     excluded_domains: list,
     source_priority: str,
 ) -> dict:
-    """ARQ job: run the Hive pipeline, publish events to ws:{user_id}:{run_id}."""
-    redis_client: aioredis.Redis = ctx["redis"]
-    channel = f"ws:{user_id}:{run_id}"
+    """ARQ job: run the Hive pipeline. Results are persisted to MongoDB for polling."""
 
-    async def publish_event(uid: str, message: dict) -> None:
-        await redis_client.publish(f"ws:{uid}:{run_id}", json.dumps(message))
+    async def noop_event(uid: str, message: dict) -> None:
+        """No-op — frontend polls MongoDB instead of receiving WS events."""
+        pass
 
-    adapter = HiveAdapter(send_to_user_callback=publish_event)
+    adapter = HiveAdapter(send_to_user_callback=noop_event)
     try:
+        # Mark the run as running so the UI can distinguish "en cola" from "corriendo".
+        try:
+            await database.update_run_status(run_id, status="running")
+        except Exception as db_exc:
+            logger.warning("[worker] could not update run status to running: %s", db_exc)
+
+        # ── Vertical AISLADO: empresas recién creadas (RUES) ──────────────────
+        # No usa el grafo web (las empresas nuevas no tienen sitio). Descubre por
+        # RUES y enriquece por NIT. Evita el cuelgue por resolución Bing.
+        _kind = str(campaign.get("pipeline") or source_priority or "").lower()
+        if _kind == "rues" or str(campaign.get("source_priority") or "").lower() == "rues":
+            from rues_radar import build_recien_creadas_leads
+            # TODA empresa recién matriculada es prospecto (necesita seguros desde el
+            # día uno), sin importar sector ni ciudad → sin filtro (industria/ciudad = None).
+            dias = int(campaign.get("rues_dias_recientes", 180) or 180)
+            logger.info("[worker] RUES vertical aislado — todas las recién creadas (sin filtro de sector/ciudad)")
+            leads = await build_recien_creadas_leads(industria=None, ciudad=None, max_results=max_results, dias_recientes=dias)
+            for ld in leads:
+                try:
+                    await database.save_lead(run_id, user_id, ld, campaign_id)
+                except Exception as e:
+                    logger.warning("[worker] RUES save_lead failed: %s", e)
+            qn = sum(1 for l in leads if l.get("system_state") == "SUCCESS_READY_FOR_REVIEW")
+            await database.update_run_status(run_id, status="complete", total_found=len(leads), total_approved=qn)
+            logger.info("[worker] RUES vertical done: %d leads (%d calificados)", len(leads), qn)
+            return {"status": "complete", "run_id": run_id, "leads": len(leads)}
+
+        # ── Vertical AISLADO: SECOP (pólizas de cumplimiento) ─────────────────
+        # Licitaciones abiertas → proponentes probables → enriquecer NIT. Sin Bing.
+        if _kind == "secop" or str(campaign.get("source_priority") or "").lower() == "secop":
+            from secop_radar import build_secop_leads
+            # Pólizas de cumplimiento: TODA empresa que se presente a un proceso es
+            # prospecto, sin importar sector ni ciudad → sin filtro (keyword=None).
+            logger.info("[worker] SECOP vertical aislado — todas las empresas presentándose (sin filtro de sector)")
+            leads = await build_secop_leads(keyword=None, ciudad=None, max_results=max_results)
+            for ld in leads:
+                try:
+                    await database.save_lead(run_id, user_id, ld, campaign_id)
+                except Exception as e:
+                    logger.warning("[worker] SECOP save_lead failed: %s", e)
+            qn = sum(1 for l in leads if l.get("system_state") == "SUCCESS_READY_FOR_REVIEW")
+            await database.update_run_status(run_id, status="complete", total_found=len(leads), total_approved=qn)
+            logger.info("[worker] SECOP vertical done: %d leads (%d calificados)", len(leads), qn)
+            return {"status": "complete", "run_id": run_id, "leads": len(leads)}
+
+        # Wrap save_lead to include campaign_id from the job parameter
+        async def save_lead_with_campaign(run_id: str, user_id: str, lead_data: dict) -> str:
+            return await database.save_lead(run_id, user_id, lead_data, campaign_id)
+
         await adapter.start_run(
             user_id=user_id,
             inputs={
@@ -52,21 +108,18 @@ async def run_prospecting_job(
                 "source_priority": source_priority,
             },
             run_id=run_id,
-            save_lead=database.save_lead,
+            save_lead=save_lead_with_campaign,
         )
-        # HiveAdapter.start_run launches an asyncio.Task and returns immediately;
-        # await the in-flight task so the ARQ job stays alive until the pipeline finishes.
         task = adapter._runs.get(user_id)
         if isinstance(task, asyncio.Task):
             await task
         try:
             await database.update_run_status(run_id, status="complete")
-        except Exception as db_exc:  # noqa: BLE001
+        except Exception as db_exc:
             logger.warning("[worker] could not update run status to complete: %s", db_exc)
         return {"status": "complete", "run_id": run_id}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("[worker] job failed run=%s: %s", run_id, exc)
-        await redis_client.publish(channel, json.dumps({"type": "error", "message": str(exc)}))
         try:
             await database.update_run_status(run_id, status="error")
         except Exception:
@@ -74,25 +127,70 @@ async def run_prospecting_job(
         raise
 
 
+async def log_debtor_communication(
+    ctx: dict,
+    user_id: str,
+    debtor_id: str,
+    channel: str,          # "whatsapp" | "voice" | "sms"
+    direction: str,        # "outbound" | "inbound"
+    content: str,
+    result: str = "",
+) -> dict:
+    """ARQ job: registra una comunicación en historial_llamadas del deudor.
+
+    Llamado async desde sub-agents (whatsapp_notifier, etc.) para no bloquear
+    los tool calls del agente de voz. Filtra por user_id para garantizar
+    tenant isolation (T-25-15): un job nunca toca el deudor de otro tenant.
+    """
+    from datetime import datetime, timezone
+
+    from bson import ObjectId
+
+    try:
+        db = database.get_db()
+        record = {
+            "tipo": f"{channel}_{direction}",
+            "channel": channel,
+            "direction": direction,
+            "content": content[:500],
+            "result": result,
+            "ts": datetime.now(timezone.utc),
+        }
+        try:
+            oid = ObjectId(debtor_id)
+        except Exception:
+            logger.warning("[log_comm] Invalid debtor_id: %s", debtor_id)
+            return {"ok": False, "error": "invalid_debtor_id"}
+
+        await db.debtors.update_one(
+            {"_id": oid, "user_id": user_id},  # user_id filter: tenant isolation
+            {
+                "$push": {"historial_llamadas": record},
+                "$set": {"updated_at": datetime.now(timezone.utc)},
+            },
+        )
+        logger.info("[log_comm] Communication logged: user=%s debtor=%s channel=%s", user_id, debtor_id, channel)
+        return {"ok": True}
+    except Exception as exc:
+        logger.error("[log_comm] Failed: %s", exc)
+        return {"ok": False, "error": str(exc)[:100]}
+
+
 async def on_startup(ctx: dict) -> None:
-    """Init Worker-owned resources. Runs once when the worker process boots."""
-    ctx["redis"] = await aioredis.from_url(redis_url(), decode_responses=False)
-    await database.init_db()  # uses MONGODB_URI/MONGO_URL env var — must be set on Worker service
-    logger.info("[worker] started — redis + mongo initialized")
+    await database.init_db()
+    logger.info("[worker] started — mongo initialized")
 
 
 async def on_shutdown(ctx: dict) -> None:
-    redis_client = ctx.get("redis")
-    if redis_client is not None:
-        await redis_client.aclose()
+    pass
 
 
 class WorkerSettings:
-    functions = [run_prospecting_job]
+    functions = [run_prospecting_job, log_debtor_communication]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = redis_settings_from_url()
     max_jobs = 5
-    job_timeout = 3600      # 1h max per prospecting run
-    keep_result = 86400     # keep result 24h for status checks
-    max_tries = 1           # do NOT auto-retry — prospecting costs LLM/scraping calls (RESEARCH anti-pattern)
+    job_timeout = 600
+    keep_result = 86400
+    max_tries = 1

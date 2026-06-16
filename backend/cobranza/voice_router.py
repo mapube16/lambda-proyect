@@ -2,13 +2,14 @@
 voice_router.py — FastAPI endpoints for Pipecat voice orchestrator.
 
 Endpoints:
-1. POST /webhook — TwiML (upgrades to WebSocket)
-2. WebSocket /ws/{call_sid} — Pipecat pipeline handles everything
-3. POST /call/initiate-v2 — Outbound call initiation
+1. POST /webhook — TeXML (Telnyx; upgrades to WebSocket)
+2. WebSocket /ws/{call_control_id} — Pipecat pipeline handles everything
+3. POST /call/initiate-v2 — Outbound call initiation via Telnyx Call Control
 """
 import logging
 import os
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, status
@@ -31,28 +32,45 @@ class VoiceCallInitRequest(BaseModel):
     debtor_id: str
 
 
-# ── TwiML Webhook ────────────────────────────────────────────────────────────
+# ── TeXML Webhook (Telnyx) ───────────────────────────────────────────────────
 
 
 @router.post("/webhook")
-async def twiml_webhook(request: Request):
-    """Twilio calls this when outbound call connects. Upgrades to bidirectional WebSocket."""
-    from twilio.twiml.voice_response import VoiceResponse, Connect
-
+async def twilio_webhook(request: Request):
+    """
+    Twilio calls this when an outbound call connects.
+    Returns TwiML <Connect><Stream> to establish bidirectional WebSocket.
+    """
     form = dict(await request.form())
     call_sid = form.get("CallSid", "unknown")
-    logger.info("[Webhook] Call %s answered", call_sid)
+    answered_by = form.get("AnsweredBy", "")
+    logger.info("[Webhook] TWILIO call %s answered (AnsweredBy=%s)", call_sid, answered_by)
 
-    host = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002").replace("https://", "").replace("http://", "")
+    # AMD: if a machine/voicemail answered, hang up immediately. Streaming to a
+    # voicemail wastes Gemini tokens and leaves a zombie pipeline running for
+    # minutes (the recording never says goodbye, so end_call never fires).
+    if answered_by.startswith("machine") or answered_by == "fax":
+        logger.warning("[Webhook] %s answered by %s — hanging up (no stream)", call_sid, answered_by)
+        return PlainTextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>',
+            media_type="application/xml",
+        )
+
+    host = (
+        os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
+        .replace("https://", "")
+        .replace("http://", "")
+    )
     ws_url = f"wss://{host}/api/cobranza/voice/ws/{call_sid}"
 
-    response = VoiceResponse()
-    connect = Connect()
-    connect.stream(url=ws_url)
-    response.append(connect)
-
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f'<Connect><Stream url="{ws_url}" /></Connect>'
+        "</Response>"
+    )
     logger.info("[Webhook] TwiML -> Stream %s", ws_url)
-    return PlainTextResponse(str(response), media_type="application/xml")
+    return PlainTextResponse(twiml, media_type="application/xml")
 
 
 # ── Recording Callback ──────────────────────────────────────────────────────
@@ -109,16 +127,45 @@ async def get_recording(recording_sid: str, current_user: dict = Depends(get_cur
 @router.websocket("/ws/{call_sid}")
 async def voice_websocket(websocket: WebSocket, call_sid: str):
     """
-    Twilio Media Streams WebSocket.
+    Twilio bidirectional WebSocket for audio streaming.
 
     Pipecat takes over: STT → LLM → TTS all streaming in parallel.
     """
-    logger.info("[WS] Incoming connection for call %s", call_sid)
+    logger.info("[WS] TWILIO incoming connection for call %s", call_sid)
 
     db = get_db()
+    stream_id = ""
 
     try:
-        # Load call context
+        # ── WebSocket handshake: accept + parse Twilio start frame ───────
+        await websocket.accept()
+
+        try:
+            from pipecat.runner.utils import parse_telephony_websocket
+            _transport_type, call_data = await parse_telephony_websocket(websocket)
+            stream_id = call_data.get("stream_id") or call_data.get("stream_sid") or call_sid
+        except ImportError:
+            # parse_telephony_websocket not available — fall back to manual parse
+            import json as _json
+            logger.warning("[WS] parse_telephony_websocket not available, using manual handshake")
+            while True:
+                raw = await websocket.receive_text()
+                msg = _json.loads(raw)
+                event = msg.get("event", "")
+                if event == "start":
+                    start_data = msg.get("start", {})
+                    stream_id = start_data.get("stream_id") or start_data.get("stream_sid") or call_sid
+                    break
+                elif event == "connected":
+                    continue
+        except Exception as parse_err:
+            logger.error("[WS] Handshake parse error: %s", parse_err)
+            stream_id = stream_id or call_sid
+
+        logger.info("[WS] Handshake: stream_id=%s call_sid=%s", stream_id, call_sid)
+
+        # ── Load call context from in-progress mapping ───────────────────
+        # Telnyx uses call_control_id as primary key (same as our call_sid field)
         call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
 
         if call_mapping:
@@ -129,27 +176,29 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             estrategia = (config_doc or {}).get("estrategia", {})
         else:
             logger.warning("[WS] No call mapping for %s — rejecting", call_sid)
-            await websocket.accept()
             await websocket.close(1008, "No call mapping found")
             return
 
         if not debtor:
             logger.error("[WS] No debtor for %s, closing", call_sid)
-            await websocket.accept()
             await websocket.close(1008, "Missing debtor")
             return
 
         logger.info("[WS] Starting Pipecat for call %s (debtor=%s)", call_sid, debtor.get("nombre"))
 
-        # Pipecat needs the websocket already accepted
-        await websocket.accept()
-        logger.info("[WS] WebSocket accepted, handing to Pipecat")
-
+        # CRITICAL: pass the REAL Twilio stream_id (MZ...) parsed from the
+        # handshake — NOT call_sid. The TwilioFrameSerializer tags every
+        # outgoing media event with streamSid; if it's the call_sid instead
+        # of the MZ stream id, Twilio silently drops all bot audio.
+        logger.info("[WS] Passing stream_id=%s to run_bot (call_sid=%s)", stream_id, call_sid)
         call_result = await run_bot(
             websocket=websocket,
             call_sid=call_sid,
             debtor=debtor,
             estrategia=estrategia,
+            user_id=user_id,
+            stream_id=stream_id,
+            call_control_id=call_sid,
         )
 
         logger.info("[WS] Pipecat finished for call %s (duration=%ss)", call_sid, call_result.duration_seconds)
@@ -203,7 +252,7 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
             "duracion_segundos": result.duration_seconds,
             "resultado": new_estado,
             "transcript": transcript[:2000],
-            "engine": "pipecat-openai-realtime",
+            "engine": "pipecat-telnyx-gemini-live",
         }
 
         now = datetime.now(timezone.utc)
@@ -227,7 +276,7 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
 
         # Push real-time WebSocket event to dashboard
         try:
-            from main import manager
+            from services.connection_manager import manager
             await manager.send_to_user(
                 str(debtor["user_id"]),
                 {
@@ -272,24 +321,69 @@ async def initiate_call_v2(
     if has_been_contacted_today(debtor):
         raise HTTPException(400, "Ya fue contactado hoy (Ley 2300)")
 
+    # ── Concurrency cap (Etapa 1 of scaling plan) ─────────────────────────
+    # One uvicorn process degrades visibly with 2+ simultaneous Gemini Live
+    # pipelines (observed: zombie voicemail call starved a real call — slow
+    # turns, missing replies). Cap active calls; the campaign scheduler
+    # retries on its next tick, turning bursts into a controlled drip.
+    # Stale records (crashed calls) are excluded via the 10-min cutoff and
+    # cleaned up by the TTL index on started_at.
+    max_concurrent = int(os.getenv("MAX_CONCURRENT_CALLS", "5"))
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+    active = await db.cobranza_calls_in_progress.count_documents(
+        {"started_at": {"$gte": cutoff}}
+    )
+    if active >= max_concurrent:
+        logger.warning("[Init] Concurrency cap hit (%d/%d active) — rejecting call for %s",
+                       active, max_concurrent, debtor_id)
+        raise HTTPException(429, f"Capacidad de llamadas llena ({active}/{max_concurrent}). Reintenta en unos minutos.")
+
     try:
         from twilio.rest import Client
-        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+
+        twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
         from_number = os.getenv("TWILIO_VOICE_PHONE_NUMBER")
         webhook_url = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
 
-        if not all([account_sid, auth_token, from_number]):
-            raise HTTPException(500, "Twilio not configured")
+        if not all([twilio_sid, twilio_token, from_number]):
+            raise HTTPException(500, "TWILIO not configured (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VOICE_PHONE_NUMBER required)")
 
-        client = Client(account_sid, auth_token)
         to_number = debtor.get("telefono")
-        call = client.calls.create(
-            to=to_number, from_=from_number,
-            url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+        twilio_client = Client(twilio_sid, twilio_token)
+
+        # AMD trade-off: machine_detection="Enable" blocks the webhook until
+        # Twilio decides human-vs-machine, then we hang up on "machine". It
+        # protects against the 280s zombie-voicemail call — but it FALSE-POSITIVES
+        # on a slow human "Aló" + pause, classifying a real person as
+        # machine_start and hanging up before the bot ever connects (observed on
+        # CA9b483c: real pickup dropped as machine_start). For manual testing set
+        # VOICE_AMD_ENABLED=false to connect every answer straight to the bot;
+        # the 240s watchdog still caps any voicemail that slips through.
+        amd_enabled = os.getenv("VOICE_AMD_ENABLED", "true").lower() in ("1", "true", "yes")
+        create_kwargs = dict(
+            to=to_number,
+            from_=from_number,
+            url=f"{webhook_url}/api/cobranza/voice/webhook",
+            method="POST",
         )
+        if amd_enabled:
+            # "DetectMessageEnd" is more conservative than "Enable": it waits for
+            # the voicemail greeting to finish rather than guessing early, so a
+            # human who says "Aló" then pauses is far less likely to be misjudged.
+            create_kwargs["machine_detection"] = "DetectMessageEnd"
+            create_kwargs["machine_detection_timeout"] = 8
+        try:
+            loop = asyncio.get_event_loop()
+            call = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: twilio_client.calls.create(**create_kwargs)),
+                timeout=15
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "TWILIO call initiation timed out")
+
         call_sid = call.sid
-        logger.info("[Init] Call %s -> %s", call_sid, to_number)
+        logger.info("[Init] TWILIO call %s -> %s", call_sid, to_number)
 
         await db.cobranza_calls_in_progress.insert_one({
             "call_sid": call_sid, "user_id": user_id,
@@ -299,7 +393,7 @@ async def initiate_call_v2(
 
         await update_debtor(db, user_id, debtor_id, {"estado": "llamando", "vapi_call_id": call_sid})
 
-        return {"ok": True, "call_sid": call_sid, "message": "Call initiated (Pipecat)"}
+        return {"ok": True, "call_sid": call_sid, "message": "Call initiated (Pipecat + Twilio)"}
 
     except HTTPException:
         raise

@@ -2,17 +2,20 @@ import os
 import json
 import asyncio
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field
 
-from auth import get_current_user
+from auth import get_current_user, require_staff
 from database import (
     get_db, get_active_campaign, save_campaign, get_runs_by_user, get_leads_by_run,
     create_run, update_run_status, get_ideal_leads, get_rejected_leads,
     get_client_profile, get_prospecting_excluded_domains, save_lead,
     upsert_prospecting_knowledge, get_prospecting_knowledge, get_or_create_prospecting_knowledge,
+    get_signal_source_config, set_signal_source_config, list_signal_leads,
+    get_or_create_tenant_quota, check_and_reset_quota, get_all_tenant_quotas,
 )
 from onboarding import chat_turn, extract_campaign_from_nl
 from pipeline_helpers import _build_runtime_agents, _normalize_agent_configs
@@ -49,6 +52,11 @@ class NLProspectRequest(BaseModel):
 class KnowledgeUpsertRequest(BaseModel):
     product_description: Optional[str] = None
     icp_summary: Optional[str] = None
+
+
+class SignalConfigRequest(BaseModel):
+    enabled_sources: list[str] = ["rues", "bright_data"]
+    weights: dict = {"rues": 1.0, "bright_data": 1.5}
 
 
 # ── Prospecting ───────────────────────────────────────────────────────────────
@@ -150,7 +158,11 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
     user_id = str(current_user["user_id"])
     context = await _build_campaign_chat_context(user_id)
-    reply = await chat_turn(request.messages, api_key, context=context)
+    try:
+        async with asyncio.timeout(30):
+            reply = await chat_turn(request.messages, api_key, context=context)
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="LLM request timed out")
     if "CAMPAIGN_READY:" in reply:
         try:
             marker = "CAMPAIGN_READY:"
@@ -171,7 +183,11 @@ async def leads_chat(request: LeadsChatRequest, current_user: dict = Depends(get
     if not api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
     from chat_leads import leads_chat_turn
-    return await leads_chat_turn(request.messages, str(current_user["user_id"]), api_key)
+    try:
+        async with asyncio.timeout(30):
+            return await leads_chat_turn(request.messages, str(current_user["user_id"]), api_key)
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="LLM request timed out")
 
 
 # ── Campaigns ─────────────────────────────────────────────────────────────────
@@ -197,6 +213,57 @@ async def get_runs(current_user: dict = Depends(get_current_user)):
     return await get_runs_by_user(str(current_user["user_id"]))
 
 
+@router.get("/api/runs/{run_id}/status")
+async def get_run_status(run_id: str, current_user: dict = Depends(get_current_user)):
+    """Polling endpoint — replaces WebSocket for prospecting progress."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    run = await db.runs.find_one({"run_id": run_id, "user_id": user_id})
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Leads for this run
+    raw_leads = await db.leads.find({"run_id": run_id, "user_id": user_id}).to_list(length=200)
+    leads = []
+    for l in raw_leads:
+        l["_id"] = str(l["_id"])
+        leads.append({
+            "id": l["_id"],
+            "leadId": l["_id"],
+            "title": l.get("company_name") or l.get("empresa") or l.get("url", ""),
+            "url": l.get("url", ""),
+            "status": "success" if l.get("system_state") == "SUCCESS_READY_FOR_REVIEW" else
+                      "rejected" if l.get("system_state") == "REJECTED_BY_AI" else "error",
+            "markdown": l.get("expediente_markdown"),
+            "json_payload": l.get("expediente_json"),
+            "approved": True if l.get("hitl_status") == "approved" else
+                        False if l.get("hitl_status") == "rejected" else None,
+            "phone": l.get("phone"),
+            "address": l.get("address"),
+            "rating": (l.get("expediente_json") or {}).get("score") if isinstance(l.get("expediente_json"), dict) else None,
+        })
+
+    # Checkpoint leads (HITL pending approval)
+    checkpoint_leads_raw = await db.leads.find(
+        {"run_id": run_id, "user_id": user_id, "estado": "checkpoint"}
+    ).to_list(length=20)
+    checkpoint_leads = [
+        {"leadId": str(l["_id"]), "empresa": l.get("company_name", ""), "puntaje": (l.get("expediente_json") or {}).get("score")}
+        for l in checkpoint_leads_raw
+    ]
+
+    status = run.get("status", "queued")
+    return {
+        "run_id": run_id,
+        "status": status,
+        "leads": leads,
+        "agent_logs": run.get("agent_logs") or {},
+        "checkpoint_leads": checkpoint_leads,
+        "total_analyzed": run.get("total_found", 0),
+        "total_approved": run.get("total_approved", 0),
+    }
+
+
 @router.get("/api/runs/{run_id}/report")
 async def get_run_report(run_id: str, current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["user_id"])
@@ -210,6 +277,65 @@ async def get_run_report(run_id: str, current_user: dict = Depends(get_current_u
 @router.get("/api/runs/{run_id}/leads")
 async def get_run_leads(run_id: str, current_user: dict = Depends(get_current_user)):
     return await get_leads_by_run(run_id, str(current_user["user_id"]))
+
+
+# ── Signal Sources ───────────────────────────────────────────────────────────
+
+@router.post("/api/prospect/signal-sources/config")
+async def configure_signal_sources(
+    request: SignalConfigRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = str(current_user["user_id"])
+    valid_sources = {"rues", "bright_data", "hunter", "google_maps"}
+    enabled = [s for s in request.enabled_sources if s in valid_sources]
+    weights = {k: float(v) for k, v in (request.weights or {}).items() if k in valid_sources}
+    await set_signal_source_config(user_id, enabled, weights)
+    return {"status": "updated", "config": {"enabled_sources": enabled, "weights": weights}}
+
+
+@router.get("/api/prospect/signal-sources/config")
+async def get_signal_sources_config(current_user: dict = Depends(get_current_user)):
+    user_id = str(current_user["user_id"])
+    config = await get_signal_source_config(user_id)
+    return {
+        "enabled_sources": config.get("enabled_sources", []),
+        "weights": config.get("weights", {}),
+    }
+
+
+@router.get("/api/prospect/signal-sources/usage")
+async def get_signal_usage(current_user: dict = Depends(get_current_user)):
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    costs = await db.cost_events.aggregate([
+        {"$match": {"user_id": user_id, "timestamp": {"$gte": month_start}}},
+        {"$group": {"_id": "$source", "count": {"$sum": 1}, "total_cost": {"$sum": "$cost_usd"}}},
+    ]).to_list(length=100)
+    total_cost = sum(c.get("total_cost", 0) for c in costs)
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "costs_by_source": {c["_id"]: {"count": c["count"], "cost_usd": c["total_cost"]} for c in costs},
+        "total_cost_this_month": total_cost,
+    }
+
+
+@router.get("/api/prospect/signals/audit")
+async def audit_signals(
+    current_user: dict = Depends(get_current_user),
+    limit: int = 100,
+    source: Optional[str] = None,
+):
+    user_id = str(current_user["user_id"])
+    month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    signals = await list_signal_leads(user_id, source=source, limit=limit)
+    filtered = [s for s in signals if s.get("created_at") and s["created_at"] >= month_start]
+    return {
+        "count": len(filtered),
+        "signals": filtered,
+        "sources": sorted({s.get("source") for s in filtered if s.get("source")}),
+    }
 
 
 # ── Apply Chat Intent ─────────────────────────────────────────────────────────
@@ -368,3 +494,46 @@ async def upsert_my_knowledge(
         raise HTTPException(status_code=400, detail="No fields to update")
     await upsert_prospecting_knowledge(user_id, fields)
     return {"status": "ok"}
+
+
+# ── Quota (Phase 24 Wave 4) ───────────────────────────────────────────────────
+
+@router.get("/api/quota/me")
+async def get_my_quota(current_user: dict = Depends(get_current_user)):
+    """Broker-facing: remaining leads quota for the current month."""
+    user_id = str(current_user["user_id"])
+    doc = await check_and_reset_quota(user_id)
+    limit = int(doc.get("monthly_leads_limit") or 1000)
+    used = int(doc.get("monthly_leads_used") or 0)
+    remaining = max(0, limit - used)
+    reset_date = doc.get("reset_date")
+    if hasattr(reset_date, "isoformat"):
+        reset_iso = reset_date.isoformat()
+    else:
+        reset_iso = str(reset_date)
+    days_until_reset = None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        rd = _dt.fromisoformat(reset_iso.replace("Z", "+00:00")) if isinstance(reset_iso, str) else reset_date
+        days_until_reset = max(0, (rd - _dt.now(_tz.utc)).days)
+    except Exception:
+        pass
+    return {
+        "plan": doc.get("plan", "pro"),
+        "monthly_limit": limit,
+        "monthly_used": used,
+        "remaining": remaining,
+        "reset_date": reset_iso,
+        "days_until_reset": days_until_reset,
+        "percentage_used": int((used / limit) * 100) if limit else 0,
+    }
+
+
+@router.get("/api/admin/quotas")
+async def get_all_quotas(_staff: dict = Depends(require_staff)):
+    """Staff-facing: all broker quotas for analytics."""
+    docs = await get_all_tenant_quotas()
+    for d in docs:
+        if "reset_date" in d and hasattr(d["reset_date"], "isoformat"):
+            d["reset_date"] = d["reset_date"].isoformat()
+    return {"total_brokers": len(docs), "quotas": docs}

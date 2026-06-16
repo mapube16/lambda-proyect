@@ -147,6 +147,11 @@ LOW_QUALITY_DISCOVERY_DOMAINS = {
     "glassdoor.com",
     "g2.com",
     "capterra.com",
+    # Document / slide hosting (not companies — added Phase 25)
+    "scribd.com", "es.scribd.com", "slideshare.net", "es.slideshare.net",
+    "issuu.com", "prezi.com", "medium.com", "studocu.com", "coursehero.com",
+    "academia.edu", "docplayer.es", "docplayer.net", "calameo.com",
+    "slideplayer.es", "yumpu.com",
 }
 
 LOW_QUALITY_DOMAIN_SUFFIXES = (
@@ -199,6 +204,13 @@ def _is_low_quality_candidate(url: str, title: str = "") -> bool:
         "las mejores", "los mejores", "top 10", "top 5", "más prometedoras",
         "informe top", "ecosistema startup", "mejores startups",
     )):
+        return True
+    # PDF / documentos / slides — no son sitios de empresa
+    if path.endswith((".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx")):
+        return True
+    if any(seg in path for seg in ("/document/", "/documents/", "/presentation/", "/file/d/", "/slides/")):
+        return True
+    if " | pdf" in title_l or title_l.endswith(" pdf") or "scribd" in title_l:
         return True
     return False
 
@@ -872,6 +884,13 @@ async def discover_companies(
     """
     from urllib.parse import urlparse
 
+    # Agregador de portales (Fincaraíz/OLX/ML/…) DESHABILITADO para lead-gen:
+    # solo devuelve anuncios anónimos sin contacto del dueño. El vertical de
+    # arrendamiento ahora apunta a INMOBILIARIAS (empresas contactables) vía web.
+    # El código del agregador se conserva en vertical_arrendamiento.py por si se
+    # usa luego como señal de volumen para rankear inmobiliarias.
+    _is_arrendamiento = False
+
     seen_domains: set[str] = set()
     excluded_domains = {d.lower().strip() for d in (excluded_domains or set()) if d}
     merged: list[dict] = []
@@ -894,6 +913,24 @@ async def discover_companies(
                 continue
             if domain and domain not in seen_domains:
                 seen_domains.add(domain)
+                merged.append(item)
+
+    def add_signal(items: list[dict]):
+        """Add curated signal-source results (Fincaraíz, RUES resolved).
+        Skips the low-quality/directory filter — these are known, curated sources."""
+        for item in items:
+            if len(merged) >= max_results:
+                return
+            url = item.get("url", "")
+            domain = urlparse(url).netloc.replace("www.", "")
+            # Still exclude explicitly blacklisted tenant domains
+            if domain and domain in excluded_domains:
+                continue
+            if domain and domain not in seen_domains:
+                seen_domains.add(domain)
+                merged.append(item)
+            elif not domain:
+                # No domain yet (URL will be resolved later) — still add
                 merged.append(item)
 
     def add_secop(items: list[dict]):
@@ -922,13 +959,18 @@ async def discover_companies(
         "SET" if bright_data_key else "MISSING"
     )
 
-    # Source selection based on client budget/tier
+    # Source selection.
+    # "signal_only" = skip Serper/BrightData web search entirely.
+    # Used when the user deselects web search and picks only RUES/SECOP/Fincaraíz.
     sources_to_use = []
-    bright_data_type = "web_scraper"  # "web_scraper" or "serp"
+    bright_data_type = "web_scraper"
 
-    if source_priority == "bright_data" and bright_data_key:
+    if source_priority == "signal_only":
+        sources_to_use = []
+        logger.info("[Discovery] signal_only mode — skipping web search")
+    elif source_priority == "bright_data" and bright_data_key:
         sources_to_use = ["bright_data"]
-        bright_data_type = "web_scraper"  # Use Web Scraper for premium clients (extracts emails/phones)
+        bright_data_type = "web_scraper"
     elif source_priority == "hybrid" and bright_data_key and serper_key:
         sources_to_use = ["bright_data", "serper"]
         bright_data_type = "web_scraper"
@@ -995,8 +1037,8 @@ async def discover_companies(
             "[Discovery] Sources=%s Results=%s enriched=%d → %d únicos (saltados_historial=%d, saltados_baja_calidad=%d)",
             sources_str, discovery_results, enriched_count, len(merged), skipped_history, skipped_low_quality
         )
-    else:
-        # No Serper key — try Bing + DDG (may be blocked in cloud environments)
+    elif source_priority != "signal_only":
+        # No Serper key and not signal-only — try Bing + DDG fallback
         logger.warning("[Discovery] SERPER_API_KEY not set — falling back to Bing/DDG (may fail in prod)")
         bing_task = discover_companies_bing(industria, ciudad, per_source)
         ddg_task = loop.run_in_executor(None, _discover_ddg_multi, industria, ciudad, per_source)
@@ -1015,41 +1057,57 @@ async def discover_companies(
             len(gmaps_results), len(bing_results), len(ddg_results), len(merged), skipped_history, skipped_low_quality
         )
 
-    # SECOP source: government contractors
-    if use_secop and len(merged) < max_results:
+    # SECOP source: government contractors — always runs if selected, regardless of serper quota
+    if use_secop:
         from secop import discover_companies_secop, resolve_secop_urls
-        secop_needed = max_results - len(merged)
-        secop_raw = await discover_companies_secop(industria, ciudad, secop_needed * 2)
+        secop_raw = await discover_companies_secop(industria, ciudad, max_results * 2)
         secop_resolved = await resolve_secop_urls(secop_raw, max_concurrent=3)
-        add_secop(secop_resolved[:secop_needed])
+        add_secop(secop_resolved[:max_results])
         logger.info("[Discovery] SECOP: %d raw → %d resueltas → %d total", len(secop_raw), len(secop_resolved), len(merged))
 
     # RUES source: recently registered companies (Cámara de Comercio)
-    if use_rues and len(merged) < max_results:
+    if use_rues:
         from rues import discover_companies_rues, resolve_rues_urls
-        rues_needed = max_results - len(merged)
         rues_raw = await discover_companies_rues(
             industria, ciudad,
-            max_results=rues_needed * 2,
+            max_results=max_results * 2,
             dias_recientes=rues_dias_recientes,
         )
         rues_resolved = await resolve_rues_urls(rues_raw, max_concurrent=3)
-        add_secop(rues_resolved[:rues_needed])  # reuse add_secop (same NIT-dedup logic)
+        add_secop(rues_resolved[:max_results])
         logger.info("[Discovery] RUES: %d raw → %d resueltas → %d total", len(rues_raw), len(rues_resolved), len(merged))
 
-    # Fincaraíz source: rental property listings (inmobiliarias + particulares)
-    if use_fincaraiz and len(merged) < max_results:
+    # Fincaraíz source: legacy flag kept for backwards compat —
+    # when arrendamiento vertical auto-activates it's handled below.
+    if use_fincaraiz and not _is_arrendamiento:
         from fincaraiz_signal import discover_via_fincaraiz
-        fincaraiz_needed = max_results - len(merged)
         fincaraiz_results = await discover_via_fincaraiz(
             ciudad=ciudad,
             tipo_inmueble=fincaraiz_tipo,
             only_particular=fincaraiz_only_particular,
-            max_results=fincaraiz_needed,
-            fetch_details=True,
+            max_results=max_results,
         )
-        add(fincaraiz_results)
-        logger.info("[Discovery] Fincaraíz: %d listings → %d total", len(fincaraiz_results), len(merged))
+        add_signal(fincaraiz_results)
+        logger.info("[Discovery] Fincaraíz (flag): %d listings → %d total", len(fincaraiz_results), len(merged))
+
+    # ── Arrendamiento vertical — auto-activates from industria keyword ────────
+    # Aggregates Fincaraíz + Mercado Libre + OLX + Metro Cuadrado + Ciencuadras.
+    # Never activates for other verticals (desempleo, empresarial, etc.).
+    if _is_arrendamiento:
+        from vertical_arrendamiento import discover_arrendamiento
+        needed = max_results - len(merged)
+        if needed > 0:
+            arr_results = await discover_arrendamiento(
+                ciudad=ciudad,
+                max_results=needed,
+                include_particulares=True,
+                include_inmobiliarias=True,
+            )
+            add_signal(arr_results)
+            logger.info(
+                "[Discovery] Arrendamiento vertical: %d results → %d total",
+                len(arr_results), len(merged),
+            )
 
     return merged
 
@@ -1489,6 +1547,28 @@ def _enrich_rejection_payload(result_json: dict, analysis: dict, company: dict) 
 
 # ── Multi-agent analysis pipeline ─────────────────────────────────────────────
 
+def _append_signal_context(prompt: str, signals: list[dict] | None) -> str:
+    if not signals:
+        return prompt
+    lines = [
+        "\n\n═══════════════════════════════════════",
+        "SEÑALES DETECTADAS (datos externos):",
+        "═══════════════════════════════════════",
+    ]
+    for sig in signals:
+        sig_type = str(sig.get("type") or "").strip()
+        value = sig.get("value")
+        if sig_type == "new_hires":
+            lines.append(f"- Contrataciones recientes: {value}")
+        elif sig_type == "growth_rate":
+            lines.append(f"- Crecimiento estimado: {value}")
+        elif sig_type == "funding_round":
+            lines.append("- Ronda de financiamiento reciente")
+        else:
+            lines.append(f"- {sig_type or 'señal'}: {value}")
+    return prompt + "\n" + "\n".join(lines)
+
+
 async def analyze_company(
     company: dict,
     campaign: dict,
@@ -1556,11 +1636,13 @@ async def analyze_company(
     # ── Stage 2: Analista B2B ─────────────────────────────────────────────────
     await stage("analista", f"Analizando perfil: {company['title'][:30]}...")
     analista_model = _normalize_openai_model_name(merged.get("llm_analista", ""), "gpt-5.4-2026-03-05")
+    signals = company.get("signals") or []
     if personality_prompt and personality_prompt.strip():
         # Use client-specific analyst prompt from Queen onboarding
         analista_content = _build_prompt(url, scraped, merged, override_template=personality_prompt)
     else:
         analista_content = _analista_prompt(url, scraped, merged)
+    analista_content = _append_signal_context(analista_content, signals)
     try:
         r1 = await client.chat.completions.create(
             model=analista_model,
@@ -1661,9 +1743,30 @@ async def run_prospect(
     await notify(buscador_id, AgentState.TOOL_USE, tool="web_search",
                  status=f"{source_label}: {merged['industria_objetivo']} en {merged['ciudad_objetivo']}")
 
+    def _truthy(val) -> bool:
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("true", "1", "yes")
+
+    use_rues     = _truthy(merged.get("use_rues", False))
+    use_secop    = _truthy(merged.get("use_secop", False))
+    use_fincaraiz = _truthy(merged.get("use_fincaraiz", False))
+
+    active_sources = ["serper"] + ([s for s, v in [("rues", use_rues), ("secop", use_secop), ("fincaraiz", use_fincaraiz)] if v])
+    logger.info(
+        "[Prospect] signal sources active: %s (use_rues=%s use_secop=%s use_fincaraiz=%s)",
+        active_sources, use_rues, use_secop, use_fincaraiz,
+    )
+    await notify(buscador_id, AgentState.TOOL_USE, tool="web_search",
+                 status=f"Fuentes: {', '.join(active_sources)}")
+
     companies = await discover_companies(
         merged["industria_objetivo"], merged["ciudad_objetivo"], max_results, gmaps_key,
-        use_secop=bool(merged.get("use_secop", False)),
+        use_secop=use_secop,
+        use_rues=use_rues,
+        use_fincaraiz=use_fincaraiz,
+        excluded_domains=set(merged.get("excluded_domains") or []),
+        source_priority=merged.get("source_priority", "serper"),
     )
 
     if not companies:

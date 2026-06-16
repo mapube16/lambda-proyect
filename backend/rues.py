@@ -92,8 +92,11 @@ CIIU_MAP: dict[str, list[str]] = {
 
 
 def _resolve_ciiu(industria: str) -> list[str]:
-    """Map industry keyword to list of CIIU codes. Returns [] if no match."""
+    """Map industry keyword to list of CIIU codes. Returns [] if no match
+    or if no industry given (→ sin filtro CIIU = todas las recién creadas)."""
     lower = (industria or "").lower().strip()
+    if not lower:
+        return []
     for keyword, codes in CIIU_MAP.items():
         if keyword in lower or lower in keyword:
             return codes

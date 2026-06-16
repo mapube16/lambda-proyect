@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import date
 from typing import Optional
 
@@ -276,3 +277,158 @@ async def build_poliza_leads(
         "proponentes_probables":  proponentes_final,
         "resumen":                resumen,
     }
+
+
+# Dataset: Proponentes por Proceso SECOP II — una fila por (proceso, oferente).
+# ESTA es la fuente correcta de "empresas presentándose a procesos".
+_PROPONENTES_URL = "https://www.datos.gov.co/resource/hgi6-6wh3.json"
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_PAREN_RE = re.compile(r"\s*\(.*?\)\s*")
+
+
+async def fetch_proponentes(
+    keyword: str | None = None,
+    ciudad: str | None = None,
+    max_results: int = 20,
+    dias_recientes: int = 365,
+) -> list[dict]:
+    """
+    Empresas que SE PRESENTARON a procesos públicos (oferentes), desde el dataset
+    Proponentes-por-Proceso. Deduplica por NIT y agrega los procesos a los que
+    cada empresa se presentó. A veces el email viene en el nombre del proveedor.
+
+    keyword es OPCIONAL: para pólizas de cumplimiento, CUALQUIER empresa que se
+    presente a un proceso es prospecto, sin importar sector ni ciudad. Si keyword
+    viene vacío, trae todos los proponentes recientes (orden por fecha DESC).
+    """
+    params = {
+        "$order": "fecha_publicaci_n DESC",
+        "$limit": max(300, max_results * 12),
+    }
+    if keyword:
+        params["$q"] = keyword
+    try:
+        async with httpx.AsyncClient(timeout=25) as client:
+            resp = await client.get(_PROPONENTES_URL, params=params, headers=_HEADERS)
+            resp.raise_for_status()
+            rows = resp.json()
+    except Exception as e:
+        logger.error("[Proponentes] error: %s", e)
+        return []
+    if not isinstance(rows, list):
+        return []
+
+    from datetime import timedelta
+    cutoff = (date.today() - timedelta(days=dias_recientes)).isoformat()
+
+    agg: dict[str, dict] = {}
+    for r in rows:
+        nit = (r.get("nit_proveedor") or "").strip()
+        if not nit:
+            continue
+        fecha = (r.get("fecha_publicaci_n") or "")[:10]
+        if fecha and fecha < cutoff:
+            continue
+        nombre_raw = (r.get("proveedor") or "").strip()
+        m = _EMAIL_RE.search(nombre_raw)
+        email = m.group(0).lower() if m else ""
+        nombre = _PAREN_RE.sub(" ", nombre_raw).strip().title()
+        a = agg.setdefault(nit, {"nit": nit, "nombre": nombre, "email": email, "procesos": [], "ultima_fecha": fecha or ""})
+        if email and not a["email"]:
+            a["email"] = email
+        if nombre and not a["nombre"]:
+            a["nombre"] = nombre
+        a["procesos"].append({
+            "nombre": (r.get("nombre_procedimiento") or "").strip(),
+            "entidad": (r.get("entidad_compradora") or "").strip().title(),
+            "fecha": fecha,
+        })
+        if fecha > a["ultima_fecha"]:
+            a["ultima_fecha"] = fecha
+
+    out = list(agg.values())
+    # Más procesos recientes presentados = más activo = mejor prospecto
+    out.sort(key=lambda x: (len(x["procesos"]), x["ultima_fecha"]), reverse=True)
+    logger.info("[Proponentes] keyword=%r -> %d filas -> %d empresas únicas", keyword, len(rows), len(out))
+    return out[:max_results]
+
+
+def _score_proponente(p: dict, exp: dict) -> int:
+    n = len(p.get("procesos", []))
+    base = 70 + min(n * 5, 20)
+    if exp.get("phone") or exp.get("rep_legal_telefono") or p.get("email"):
+        base += 5
+    return min(base, 98)
+
+
+async def build_secop_leads(
+    keyword: str | None = None,
+    ciudad: str | None = None,
+    max_results: int = 20,
+) -> list[dict]:
+    """
+    Vertical SECOP aislado: empresas PRESENTÁNDOSE a procesos públicos
+    (dataset Proponentes-por-Proceso) → enriquecidas por NIT. Shape de save_lead.
+    keyword opcional: sin él, trae TODAS las empresas presentándose (cualquier
+    sector/ciudad), que es lo correcto para pólizas de cumplimiento.
+    """
+    from nit_enricher import enrich_nits_batch
+
+    proponentes = await fetch_proponentes(keyword, ciudad, max_results=max_results, dias_recientes=365)
+    if not proponentes:
+        logger.info("[SECOP-leads] 0 proponentes para %r", keyword)
+        return []
+
+    nits = [p["nit"] for p in proponentes if p.get("nit")]
+    expedientes = await enrich_nits_batch(nits, max_concurrent=4)
+    exp_map = {e["nit"]: e for e in expedientes if isinstance(e, dict) and e.get("nit")}
+
+    leads: list[dict] = []
+    for p in proponentes:
+        exp = exp_map.get(p["nit"], {})
+        score = _score_proponente(p, exp)
+        razon = exp.get("razon_social") or p.get("nombre") or f"NIT {p['nit']}"
+        rep_legal = exp.get("representante_legal") or ""
+        email = p.get("email") or exp.get("rep_legal_email") or exp.get("email") or ""
+        phone = exp.get("rep_legal_telefono") or exp.get("phone") or ""
+        procs = p.get("procesos", [])
+        n = len(procs)
+        ej = procs[0] if procs else {}
+        resumen = (
+            f"Empresa presentándose a contratación pública: {n} proceso(s) reciente(s). "
+            f"Ej: \"{(ej.get('nombre') or '')[:70]}\"" + (f" — {ej.get('entidad')}" if ej.get('entidad') else "") + "."
+        )
+        procesos_txt = "; ".join(f"{x.get('nombre','')[:50]} ({x.get('entidad','')})" for x in procs[:3])
+        leads.append({
+            "company_name": razon,
+            "url": exp.get("website") or "",
+            "phone": phone,
+            "address": exp.get("direccion_oficial") or exp.get("direccion") or "",
+            "score": score,
+            "system_state": "SUCCESS_READY_FOR_REVIEW",
+            "expediente_markdown": None,
+            "expediente_json": {
+                "empresa": razon,
+                "score": score,
+                "system_state": "SUCCESS_READY_FOR_REVIEW",
+                "motivo_descalificacion": "",
+                "resumen_empresa": resumen,
+                "evidencia_encontrada": f"Procesos a los que se presentó: {procesos_txt}",
+                "nit": p["nit"],
+                "decisor": {
+                    "nombre": rep_legal,
+                    "cargo": "Representante Legal" if rep_legal else "",
+                    "email": email,
+                    "telefono": phone,
+                },
+                "contratos_secop": n,  # nº de procesos a los que se presentó (recientes)
+                "valor_total": "",
+                "procesos": procs[:5],
+                "fuentes_consultadas": ["SECOP Proponentes", "RUES/NIT"],
+            },
+            "nit": p["nit"],
+        })
+
+    leads.sort(key=lambda x: x["score"], reverse=True)
+    logger.info("[SECOP-leads] %d leads para %r", len(leads), keyword)
+    return leads

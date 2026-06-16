@@ -212,7 +212,9 @@
       "Bash(PYTHONDONTWRITEBYTECODE=1 /c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -c \"from cobranza.voice_pipecat import run_bot; print\\('Import OK'\\)\")",
       "Bash(/c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(t['public_url']\\) for t in d['tunnels']]\")",
       "Bash(PYTHONDONTWRITEBYTECODE=1 /c/Users/maxim/Desktop/hive-pixel-office/.venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8002 --log-level debug)",
-      "Bash(ngrok version:*)"
+      "Bash(ngrok version:*)",
+      "Skill(gsd-plan-phase)",
+      "Skill(gsd-plan-phase:*)"
     ]
   }
 }

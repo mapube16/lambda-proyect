@@ -511,7 +511,7 @@ export function ClientDashboard({
       return r.ok ? await r.json() : null;
     },
     enabled: isAuthenticated,
-    refetchInterval: 5000, // Auto-refresh every 5 seconds
+    refetchInterval: 30000, // Auto-refresh every 30s (status only; was 5s — too chatty)
   });
 
   const cobranzaEnabled = cobranzaData?.enabled ?? false;
@@ -545,7 +545,7 @@ export function ClientDashboard({
       return r.ok ? await r.json() : null;
     },
     enabled: isAuthenticated,
-    refetchInterval: 5000, // Auto-refresh every 5 seconds
+    refetchInterval: 30000, // Auto-refresh every 30s (status only; was 5s — too chatty)
   });
 
   const emailConnected = emailData?.connected ?? false;
