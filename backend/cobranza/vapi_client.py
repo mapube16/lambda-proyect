@@ -6,6 +6,7 @@ so the SDK is optional at startup (consistent with Phase 16 WhatsApp lazy import
 """
 import os
 import logging
+import asyncio
 from datetime import datetime
 
 logger = logging.getLogger("cobranza.vapi")
@@ -80,20 +81,21 @@ async def initiate_call(debtor: dict, config: dict) -> str:
             ]
             first_message = random.choice(greetings)
 
-        call = await client.calls.create(
-            assistant_id=assistant_id,
-            phone_number_id=phone_number_id,
-            customer={"number": debtor["telefono"], "name": nombre},
-            assistant_overrides={
-                "first_message": first_message,
-                "variable_values": {
-                    "debtor_id": str(debtor["_id"]),
-                    "debtor_name": nombre,
-                    "monto": monto_fmt,
-                    "vencimiento": vencimiento_str,
+        async with asyncio.timeout(15):
+            call = await client.calls.create(
+                assistant_id=assistant_id,
+                phone_number_id=phone_number_id,
+                customer={"number": debtor["telefono"], "name": nombre},
+                assistant_overrides={
+                    "first_message": first_message,
+                    "variable_values": {
+                        "debtor_id": str(debtor["_id"]),
+                        "debtor_name": nombre,
+                        "monto": monto_fmt,
+                        "vencimiento": vencimiento_str,
+                    },
                 },
-            },
-        )
+            )
         logger.info("[Vapi] Call created: %s → debtor %s", call.id, debtor["_id"])
         return call.id
     except Exception as e:

@@ -54,7 +54,10 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    # Try Authorization header first, then httpOnly cookie
+    # Try Authorization header first, then ?token= query (for top-level browser
+    # redirects like OAuth connect that can't send the header), then cookie.
+    if token is None:
+        token = request.query_params.get("token")
     if token is None:
         token = request.cookies.get("hive_token")
     if token is None:

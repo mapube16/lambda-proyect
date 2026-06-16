@@ -1,6 +1,7 @@
 import os
 import logging
 import hashlib
+import asyncio
 from typing import List
 from urllib.parse import urlparse, urlunparse
 
@@ -82,7 +83,8 @@ async def ingest_knowledge_url(client_id: str, request: UrlIngestRequest, _staff
     results = []
     for target_url in deduped_urls:
         try:
-            text = await fetch_url_text(target_url)
+            async with asyncio.timeout(30):
+                text = await fetch_url_text(target_url)
         except Exception as e:
             results.append({"url": target_url, "error": f"Cannot fetch URL: {e}"})
             continue
@@ -90,7 +92,12 @@ async def ingest_knowledge_url(client_id: str, request: UrlIngestRequest, _staff
             results.append({"url": target_url, "error": "No readable text found at URL"})
             continue
         filename = build_filename(target_url)
-        chunk_count = await ingest_document(user_id=client_id, text=text, filename=filename, source_type=source_type)
+        try:
+            async with asyncio.timeout(60):
+                chunk_count = await ingest_document(user_id=client_id, text=text, filename=filename, source_type=source_type)
+        except TimeoutError:
+            results.append({"url": target_url, "error": "Ingest timed out"})
+            continue
         results.append({"url": target_url, "url_canonical": canonicalize_url(target_url), "filename": filename, "source_type": source_type, "chunks_stored": chunk_count})
 
     stored = [r for r in results if not r.get("error")]

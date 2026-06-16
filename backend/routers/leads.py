@@ -13,8 +13,6 @@ from database import (
     get_db, get_lead_by_id, get_leads_by_user, update_lead_hitl,
     get_ideal_leads, get_rejected_leads,
 )
-from services.connection_manager import manager
-from services.notifications import notify_user
 
 logger = logging.getLogger(__name__)
 
@@ -139,14 +137,17 @@ async def send_lead_email(lead_id: str, request: SendEmailRequest, current_user:
     campaign = await db.campaigns.find_one({"user_id": user_id}, sort=[("created_at", -1)])
     camp = campaign or {}
     try:
-        status = await send_lead_outreach(
-            to_email=to_email, to_name=decisor.get("nombre") or "",
-            subject=subject, body_text=body,
-            sender_name=camp.get("nombre_remitente", ""),
-            sender_empresa=camp.get("empresa_remitente", ""),
-            reply_to_email=camp.get("email_remitente", ""),
-            user_id=user_id,
-        )
+        async with asyncio.timeout(10):
+            status = await send_lead_outreach(
+                to_email=to_email, to_name=decisor.get("nombre") or "",
+                subject=subject, body_text=body,
+                sender_name=camp.get("nombre_remitente", ""),
+                sender_empresa=camp.get("empresa_remitente", ""),
+                reply_to_email=camp.get("email_remitente", ""),
+                user_id=user_id,
+            )
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Email send timed out")
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail="Email service temporarily unavailable")
     except Exception as e:
@@ -216,11 +217,6 @@ async def lead_decision(lead_id: str, request: LeadDecisionRequest, current_user
     if request.decision == "aprobar":
         canal = request.canal_elegido or updated.get("canal_elegido", "email")
         asyncio.create_task(_run_outreach(lead_id, user_id, canal, intento=1))
-        await notify_user(user_id, {"type": "lead_checkpoint", "lead_id": lead_id, "empresa": updated.get("company_name") or updated.get("empresa", ""), "puntaje": updated.get("puntaje", 0), "accion": "aprobado"})
-    elif request.decision == "rechazar":
-        await notify_user(user_id, {"type": "lead_archived", "lead_id": lead_id, "empresa": updated.get("company_name") or updated.get("empresa", "")})
-    else:
-        await manager.send_to_user(user_id, {"type": "agent_state", "agent": "investigador", "state": "idle", "message": f"Lead pausado: {updated.get('company_name', lead_id)}"})
     # Phase 23 SIGNAL-FB-01: fire-and-forget feedback to prospecting_knowledge
     if request.decision in ("aprobar", "rechazar"):
         signal_text = _build_lead_signal(updated)
@@ -271,7 +267,6 @@ async def handover_tomar(lead_id: str, current_user: dict = Depends(get_current_
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request data")
     await schedule_retry(lead_id, canal="notificacion_48h", days=2)
-    await notify_user(user_id, {"type": "lead_handover", "lead_id": lead_id, "empresa": updated.get("company_name") or updated.get("empresa", ""), "canal": lead.get("canal_elegido", "email")})
     return {"status": "ok", "lead_id": lead_id, "estado": "handover"}
 
 
@@ -317,5 +312,4 @@ async def reporte_llamada(lead_id: str, request: CallReportRequest, current_user
                 pass
         asyncio.create_task(_interpret_and_act())
     empresa = lead.get("company_name") or lead.get("empresa", "")
-    await manager.send_to_user(user_id, {"type": "agent_state", "agent": "outreach", "state": "idle", "message": f"Reporte registrado para {empresa}"})
     return {"status": "ok", "lead_id": lead_id, "resultado": resultado}

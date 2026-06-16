@@ -23,11 +23,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 7: Lead Dashboard** - Expediente cards with score, decisor, email draft; kill switch rejection display; one-click email copy
 - [ ] **Phase 8: Real-Time Visualization** - Map all 9 graph node states to character animations; WebSocket delivery without UI block; error states on pipeline failure
 - [ ] **Phase 18: Infrastructure Foundation** - Railway 3-service deployment (API + Worker + Redis); ARQ job queue replaces in-process execution; API enqueues jobs and returns run_id immediately
-- [ ] **Phase 19: Tenant Isolation** - tenant_id on all MongoDB documents; all queries filtered by tenant_id; Redis pub/sub WebSocket bridge routes Worker events to the correct frontend connection
+- ⏳ **Phase 19: Tenant Isolation** - tenant_id on all MongoDB documents; all queries filtered by tenant_id; Redis pub/sub WebSocket bridge routes Worker events to the correct frontend connection **(PLANNING PHASE)**
 - [x] **Phase 20: Scraping Improvements** - curl_cffi Chrome131 TLS impersonation replaces httpx; Crawl4AI compresses HTML to Markdown before LLM; DIRECTORY_DOMAINS blocklist; extract_homepage() normalization
  (completed 2026-05-28)
 - [ ] **Phase 21: Pipeline Parametrization** - VerticalConfig dataclass per insurance vertical; SignalLead TypedDict contract for all signal_sources; user selects vertical at campaign configuration
 - [ ] **Phase 22: Cost Observability** - CostEvent logged per LLM and Serper call with tenant_id + run_id; user can query total cost per run via API
+- [ ] **Phase 24: Signal Sources Colombianas** - RUES (recent registrations) + Bright Data (LinkedIn hiring signals) + Hunter.io (decision makers) + Google Maps; Signal deduplication (fuzzy) + intent-based ranking; Quota enforcement per broker ✨ **(STANDBY: Blocks on Phase 19)**
+- [ ] **Phase 25: Agentic Multi-Tenant Architecture** - MongoDB-persisted agent configs (system prompts, model, tools); hot-reload without redeploy; CobranzaOrchestrator multi-tenant with sub-agents (debtor_updater, whatsapp_notifier, identity_verifier, escalation_handler); Bandwidth/Telnyx replaces Twilio; Pipecat + Gemini Live replaces OpenAI Realtime + Assembly AI; RAG per tenant (Pinecone Starter + OpenAI embeddings + semantic chunking); Redis Upstash cache with immediate toggle invalidation
 
 ## Phase Details
 
@@ -477,6 +479,52 @@ Plans:
 - [ ] 23-03-PLAN.md - Wave 3: Fire-and-forget signal feedback hook on POST /api/leads/{id}/decision
 - [x] 23-04-PLAN.md - Wave 3: NLProspectInput + ExtractedParamsCard + KnowledgeBasePanel + LearningBadge in AgentPanel.tsx
 - [ ] 23-05-PLAN.md - Wave 4: Backend+frontend health gates + human-verify end-to-end checkpoint
+
+### Phase 25: Agentic Multi-Tenant Architecture
+
+**Goal**: MongoDB-persisted agent configuration (system prompts, model, tools, rules) enables hot-reload without redeploy; CobranzaOrchestrator provides multi-tenant voice orchestration with 4 sub-agents; Bandwidth or Telnyx replaces Twilio (40-60% cost reduction); Pipecat + Gemini Live replaces OpenAI Realtime + Assembly AI for true streaming voice; RAG per tenant using Pinecone Starter + OpenAI text-embedding-3-small with semantic chunking; Redis Upstash cache with immediate invalidation for on/off toggles
+**Depends on**: Phase 19
+**Requirements**: AGENT-CFG-01, AGENT-CFG-02, AGENT-CFG-03, VOICE-01, VOICE-02, RAG-01, RAG-02, CACHE-01
+**Success Criteria** (what must be TRUE):
+  1. Changing `voice_system_prompt` in MongoDB for a tenant reflects in the next voice call without any redeploy
+  2. Setting `modules.voice = false` for a tenant stops new voice calls within 1 request (immediate Redis cache invalidation)
+  3. 10 concurrent tenants each with their own agent_instances can run voice calls simultaneously, with no cross-tenant data leakage
+  4. A voice call uses Bandwidth or Telnyx (not Twilio) — confirmed by outbound call SID format or provider billing dashboard
+  5. Pipecat + Gemini Live pipeline achieves <500ms TTFB on first agent utterance
+  6. RAG document uploaded for tenant A is not retrievable by tenant B (Pinecone namespace isolation)
+  7. Sub-agents (debtor_updater, whatsapp_notifier, identity_verifier, escalation_handler) execute successfully when called from voice agent tools
+
+**Plans**: 5 plans
+
+Plans:
+- [x] 25-01-PLAN.md — Wave 1: MongoDB collections CRUD + Redis cache layer (tenant_config.py, config_cache.py, database.py indexes, xfail scaffold, deps)
+- [x] 25-02-PLAN.md — Wave 2: CobranzaOrchestrator + 4 sub-agents (direct dispatch, user_id isolation)
+- [x] 25-03-PLAN.md — Wave 3: Telnyx + Gemini Live voice pipeline (hot-reload prompt, TeXML webhook)
+- [x] 25-04-PLAN.md — Wave 3: RAG service (Pinecone namespace per user_id, ingest + search)
+- [ ] 25-05-PLAN.md — Wave 4: Tenant admin API + ARQ log_debtor_communication + wiring
+
+---
+
+### Phase 26: Voice Prompt Layering
+
+**Goal**: Refactor the hardcoded cobranza voice system_prompt (~6515 chars in voice_pipecat.py) into a 3-layer composed prompt so tenant personality is configurable from MongoDB without breaking product/safety logic. Layer 1 (MOTOR) stays in code: anti-invento rules, policy-data injection block, FLUJO, tool semantics (end_call/escalate/notify_payment_claim), money/date formatting. Layer 2 (PERSONALITY) moves to MongoDB per-tenant and hot-reloads: agent name, tono, brand_name, opening/closing phrases, formality, business restrictions. Layer 3 (DATOS) stays runtime-injected per call. The broken all-or-nothing override (2000-char cap = 69% truncation) is replaced with composition + per-layer caps + anti-injection validation on the personality layer. DPG's current personality is seeded into MongoDB; the recomposed prompt must be byte-identical to today's prompt (zero regression) and validated with a real call.
+
+**Depends on**: Phase 25
+**Requirements**: PROMPT-LAYER-01, PROMPT-LAYER-02, PROMPT-LAYER-03
+**Success Criteria** (what must be TRUE):
+  1. The MOTOR (anti-invento, policy injection, FLUJO, tool rules, money/date formatting) lives in code and cannot be overridden by tenant config
+  2. A tenant's personality (agent name, tono, brand, opening/closing) is read from MongoDB and hot-reloads on the next call without redeploy
+  3. With DPG's seeded personality, the recomposed system_prompt is byte-identical to the current hardcoded prompt (diff proves zero regression)
+  4. A tenant personality block containing an injection pattern (e.g. "ignora tus instrucciones", code fences, XML-escape) is rejected by validation before use
+  5. The 2000-char flat cap is replaced by per-layer caps; the full composed prompt is no longer silently truncated
+  6. A real validation call confirms behavior is unchanged: greeting with "señor", no diminutives, policy answered from injected block with zero get_policy_info calls
+
+**Plans**: 3 plans
+
+Plans:
+- [ ] 26-01-PLAN.md — Extract 3-layer composition into voice_prompt.py; byte-identical diff gate (PROMPT-LAYER-01)
+- [ ] 26-02-PLAN.md — Wire personality from tenant_configs via existing cache + fallback + hot-reload + rollback toggle (PROMPT-LAYER-02)
+- [ ] 26-03-PLAN.md — Anti-injection validation + per-layer caps + runtime sanitization; remove broken 2000-char override (PROMPT-LAYER-03)
 
 ---
 

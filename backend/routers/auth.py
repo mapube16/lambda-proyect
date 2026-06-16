@@ -14,7 +14,7 @@ from auth import (
     get_current_user, SECRET_KEY, ALGORITHM,
 )
 from database import (
-    get_user_by_email, create_user, add_phone_to_user,
+    get_user_by_email, get_user_by_id, create_user, add_phone_to_user,
     create_registration_request, get_all_registration_requests,
     update_registration_request_status,
 )
@@ -24,6 +24,25 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ── Auth cookie helper ──────────────────────────────────────────────────────────
+# secure=True means the browser only sends the cookie over HTTPS. On HTTP localhost
+# (dev) that silently drops the cookie → every request is unauthenticated → 401 loop.
+# Gate it on COOKIE_SECURE (default false for dev; set true in production/HTTPS).
+_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in ("1", "true", "yes")
+
+
+def _set_auth_cookie(response, token: str) -> None:
+    response.set_cookie(
+        key="hive_token",
+        value=token,
+        httponly=True,
+        secure=_COOKIE_SECURE,
+        samesite="lax",
+        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60,
+        path="/",
+    )
 
 
 class AddPhoneRequest(BaseModel):
@@ -66,13 +85,46 @@ async def login(user: UserCreate, request: Request):
         "role": db_user.get("role", "client"),
         "email": db_user["email"],
         "authenticated": True,
+        "access_token": token,
     }
     response = JSONResponse(content=response_data, status_code=200)
-    response.set_cookie(
-        key="hive_token", value=token, httponly=True, secure=True, samesite="lax",
-        max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60, path="/",
-    )
+    _set_auth_cookie(response, token)
     return response
+
+
+@router.post("/auth/dev-token")
+async def dev_token():
+    """Development endpoint: returns a token for dpg.seguros@gmail.com without rate limiting"""
+    from datetime import timedelta
+    user_id = "6a1aec6e89dbf2987cef054e"
+    role = "client"
+    # Token largo para desarrollo/demo (evita expiración a los 15 min mientras se prueba).
+    token = create_access_token(data={"sub": user_id, "role": role}, expires_delta=timedelta(hours=12))
+    return {
+        "user_id": user_id,
+        "role": role,
+        "email": "dpg.seguros@gmail.com",
+        "authenticated": True,
+        "access_token": token,
+    }
+
+
+@router.get("/auth/me")
+async def auth_me(current_user: dict = Depends(get_current_user)):
+    """Validate the httpOnly cookie and return the current user's identity.
+    The frontend calls this on load to rehydrate the session after a reload
+    (the JWT lives only in the cookie, so there's nothing in JS to read directly).
+    Returns 401 if the cookie is missing/expired."""
+    user_id = str(current_user["user_id"])
+    db_user = await get_user_by_id(user_id)
+    if not db_user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return {
+        "user_id": user_id,
+        "role": db_user.get("role", current_user.get("role", "client")),
+        "email": db_user.get("email"),
+        "authenticated": True,
+    }
 
 
 @router.post("/api/ws-ticket")
@@ -114,10 +166,7 @@ async def google_login(data: dict):
             "authenticated": True,
         }
         response = JSONResponse(content=response_data, status_code=200)
-        response.set_cookie(
-            key="hive_token", value=token, httponly=True, secure=True, samesite="lax",
-            max_age=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")) * 60, path="/",
-        )
+        _set_auth_cookie(response, token)
         return response
     except Exception as e:
         logger.error("[google_login] Authentication error: %s", e)
@@ -377,26 +426,67 @@ async def save_email_template(current_user: dict = Depends(get_current_user), te
 
 
 @router.post("/api/me/email-test")
-async def send_test_email(current_user: dict = Depends(get_current_user)):
-    from database import get_email_oauth_tokens, get_email_template
+async def send_test_email(
+    current_user: dict = Depends(get_current_user),
+    to: Optional[str] = Body(None, embed=True),
+):
+    """Envía un correo de prueba (a la dirección 'to' o, si no, al propio remitente).
+    Soporta buzón OAuth (Gmail/Outlook) y SMTP — lo que esté configurado."""
+    from database import get_email_oauth_tokens, get_smtp_config
     from email_oauth import decrypt_tokens
-    from email_sender_oauth import send_email_oauth
     user_id = current_user.get("user_id")
-    tokens_info = await get_email_oauth_tokens(user_id)
-    if not tokens_info:
-        raise HTTPException(status_code=400, detail="Email not configured. Please connect Gmail first.")
-    provider = tokens_info.get("provider")
-    encrypted_tokens = tokens_info.get("encrypted_tokens")
-    sender_email = tokens_info.get("email_sender_address")
-    template = await get_email_template(user_id)
     subject = "Correo de prueba - Landa"
-    body = f"""<h2>Hola!</h2><p>Este es un correo de prueba para validar que tu conexion con {provider.title()} funciona correctamente.</p><p>Si recibes este mensaje, estas listo para empezar a enviar correos desde <strong>{sender_email}</strong>!</p><hr><p style="font-size:12px;color:#999;">{template.get('footer', 'Landa - Plataforma de prospeccion con IA')}</p>"""
-    try:
-        tokens = decrypt_tokens(encrypted_tokens)
-        success = await send_email_oauth(provider=provider, access_token=tokens.get("access_token"), to_email=sender_email, to_name=sender_email.split("@")[0], subject=subject, html_body=body, sender_email=sender_email, sender_name="Landa Test")
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to send test email")
-        return {"message": "Test email sent successfully!", "sent_to": sender_email, "from": sender_email}
-    except Exception as e:
-        logger.error("[test_email] Error: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to send test email. Please try again later.")
+
+    # 1) OAuth (Gmail/Outlook)
+    tokens_info = await get_email_oauth_tokens(user_id)
+    if tokens_info:
+        from email_sender_oauth import send_email_oauth
+        provider = tokens_info.get("provider")
+        sender_email = tokens_info.get("email_sender_address")
+        dest = (to or "").strip() or sender_email
+        body = f"""<h2>¡Funciona! ✅</h2><p>Tu conexión con {provider.title()} está bien configurada. Enviado desde <strong>{sender_email}</strong>.</p><hr><p style="font-size:12px;color:#999;">Landa — correo de prueba.</p>"""
+        try:
+            tokens = decrypt_tokens(tokens_info.get("encrypted_tokens"))
+            ok = await send_email_oauth(provider=provider, access_token=tokens.get("access_token"), to_email=dest, to_name=dest.split("@")[0], subject=subject, html_body=body, sender_email=sender_email, sender_name="Landa")
+            if not ok:
+                raise HTTPException(status_code=502, detail="El proveedor rechazó el envío de prueba.")
+            return {"message": f"Correo de prueba enviado a {dest}", "sent_to": dest, "via": provider}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("[test_email oauth] %s", e)
+            raise HTTPException(status_code=502, detail="No se pudo enviar la prueba (OAuth).")
+
+    # 2) SMTP
+    smtp_enc = await get_smtp_config(user_id)
+    if smtp_enc:
+        try:
+            cfg = decrypt_tokens(smtp_enc)
+        except Exception:
+            raise HTTPException(status_code=500, detail="No se pudo leer la configuración SMTP.")
+        sender_email = cfg.get("email")
+        dest = (to or "").strip() or sender_email
+        from email_sender import send_email
+        try:
+            ok = await send_email(
+                to=dest, subject=subject,
+                body="¡Funciona! ✅ Tu conexión SMTP está bien configurada. — Landa (correo de prueba)",
+                sender_name="Landa", sender_email=sender_email,
+                smtp_host=cfg.get("smtp_host"), smtp_port=int(cfg.get("smtp_port") or 587),
+                smtp_user=cfg.get("email"), smtp_password=cfg.get("password"),
+            )
+        except Exception as e:
+            logger.error("[test_email smtp] %s", e)
+            raise HTTPException(status_code=502, detail="Error enviando por SMTP.")
+        if not ok:
+            host = (cfg.get("smtp_host") or "").lower()
+            if "gmail" in host:
+                detail = ("Gmail rechazó la conexión. Casi siempre es la contraseña: Gmail exige una "
+                          "App Password (no tu contraseña normal). Actívala en Cuenta de Google → "
+                          "Seguridad → Contraseñas de aplicaciones, y pégala aquí.")
+            else:
+                detail = "El servidor SMTP rechazó el envío. Revisa host, puerto, usuario y contraseña."
+            raise HTTPException(status_code=502, detail=detail)
+        return {"message": f"Correo de prueba enviado a {dest}", "sent_to": dest, "via": "smtp"}
+
+    raise HTTPException(status_code=400, detail="No hay buzón configurado. Conecta Gmail/Outlook o configura SMTP primero.")

@@ -1,0 +1,441 @@
+08:25:46: Windows does not support adding a signal handler to an eventloop
+DEBUG:arq.worker:Windows does not support adding a signal handler to an eventloop
+08:25:46: Windows does not support adding a signal handler to an eventloop
+DEBUG:arq.worker:Windows does not support adding a signal handler to an eventloop
+08:25:47: Starting worker for 1 functions: run_prospecting_job
+INFO:arq.worker:Starting worker for 1 functions: run_prospecting_job
+08:25:47: redis_version=8.2.1 mem_usage=1.60M clients_connected=15 db_keys=15
+INFO:arq.worker:redis_version=8.2.1 mem_usage=1.60M clients_connected=15 db_keys=15
+INFO:worker:[worker] started — mongo initialized
+08:25:58: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:25:59: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:00: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:01: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:03: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:04: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:05: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:06: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:07: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:08: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:09: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:10: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:11: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:12: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:13: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:14: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:15: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:16: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:17: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:18: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:19: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:20: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:21: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:22: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:23: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:24: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:25: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:26: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:27: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:28: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:29: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:30: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:31: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:32: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:33: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:34: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:35: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:36: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:37: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:38: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:39: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:41: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:42: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:43: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:44: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:45: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:46: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:26:47: job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+DEBUG:arq.worker:job e959e110-9648-4e75-8b37-89f6f8cdcc76 already running elsewhere
+08:27:04:   1.65s \u2192 13ff85ad-1792-4026-860f-b366e146c3a3:run_prospecting_job(campaign={'name': 'Final Test 1780320420', 'sectors': ['Seguros'], 'cities': ['…) delayed=1.65s
+INFO:arq.worker:  1.65s \u2192 13ff85ad-1792-4026-860f-b366e146c3a3:run_prospecting_job(campaign={'name': 'Final Test 1780320420', 'sectors': ['Seguros'], 'cities': ['…) delayed=1.65s
+INFO:hive_adapter:[HiveAdapter] Starting LLM run user=6a1aec6e89dbf2987cef054e industria=empresas ciudad=Colombia max=50
+WARNING:framework.graph.executor:\u26a0 paused_at=None is not a valid node, falling back to entry point
+INFO:framework.graph.executor:\U0001f680 Starting execution: B2B Prospecting
+INFO:framework.graph.executor:   Goal: Find and analyze B2B companies for outreach
+INFO:framework.graph.executor:   Entry node: director
+INFO:framework.graph.executor:
+\u25b6 Step 1: Director de Prospección (event_loop)
+INFO:framework.graph.executor:   Inputs: []
+INFO:framework.graph.executor:   Outputs: ['summary']
+INFO:framework.graph.executor:   Executing...
+INFO:framework.graph.event_loop_node:[director] Tools available (5): ['discover_companies', 'analyze_company', 'report_campaign_complete', 'set_output', 'escalate'] | client_facing=False | judge=None
+INFO:framework.graph.event_loop_node:[director] iter=0: running LLM turn (msgs=1)
+08:27:06: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:08: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:framework.graph.event_loop_node:[director] LLM response: text='(empty)' tool_calls=['discover_companies'] stop=tool_calls model=gpt-4o-mini-2024-07-18
+INFO:framework.graph.event_loop_node:[director] tool_call: discover_companies({"industria": "empresas", "ciudad": "Colombia", "max_r": 50})
+C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (1.26.20) or chardet (7.4.3)/charset_normalizer (3.4.4) doesn't match a supported version!
+  warnings.warn(
+INFO:hive_tools:[discover_companies] user=6a1aec6e89dbf2987cef054e industria=empresas ciudad=Colombia max=50
+INFO:landa.company_voice:company_voice: no client_profile found, creating empty voice for user 6a1aec6e89dbf2987cef054e
+INFO:prospector:[discover_companies] source_priority='serper' serper_key=SET bright_data_key=SET
+08:27:10: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Serper] query='empresas empresas Colombia sitio web' \u2192 10 organic hits
+08:27:11: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Serper] query='"empresas" Colombia empresa contacto' \u2192 10 organic hits
+08:27:12: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Serper] query='empresas Colombia "quienes somos" OR "nuestros servicios"' \u2192 10 organic hits
+INFO:prospector:[Serper] total=21 for industria='empresas' ciudad='Colombia'
+08:27:13: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:14: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:16: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:17: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:18: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:20: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:21: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:22: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:24: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:25: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:26: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:28: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:29: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:30: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:31: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:32: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:34: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:35: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:36: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:38: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Google Maps] status=200 api_status=REQUEST_DENIED places=0
+08:27:39: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:40: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:prospector:[Discovery] Sources=SERPER Results={'serper': 21} enriched=11 \u2192 11 únicos (saltados_historial=0, saltados_baja_calidad=10)
+08:27:41: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:42: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:44: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:45: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:46: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:47: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:48: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:49: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:framework.graph.event_loop_node:[director] LLM response: text='(empty)' tool_calls=['analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company'] stop=tool_calls model=gpt-4o-mini-2024-07-18
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.informacolombia.com/", "title": "INFORMA: Informaci\u00f3n de empresas actualizada y confiable", "address": "Cl. 72A #5 - 83 Oficina 201, Bogot\u00e1, Cundinamarca"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://es.scribd.com/document/427836170/Base", "title": "Contactos de Empresas en Colombia | PDF - Scribd", "address": "Cra. 13, Pereira, Risaralda"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.postobon.com/la-compania/quienes-somos", "title": "Qui\u00e8nes somos - Postob\u00f3n", "address": "Cl. 17a #75, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.esenttia.co/quienes-somos/", "title": "Qui\u00e8nes somos - Esenttia S.A.", "address": "8FGX X3, Mamonal, Cartagena de Indias, Bol\u00edvar"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.grupoexito.com.co/es/quienes-somos", "title": "Qui\u00e8nes somos | Grupo \u00c9xito", "address": "Av 68 #79d-11, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://empresa.corona.co/quienes-somos/", "title": "Qui\u00e8nes somos - Corona - Corporativo", "address": "Ac. 26 #8685, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://prestigio.com.co/quienes-somos/", "title": "Quienes Somos - Prestigio", "address": "Carrera 43 A N\u00b0 19 A - 87, Cra. 43A #19A-87, Medell\u00edn, Antioquia"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://interaseo.com.co/quienes-somos/", "title": "\u00bfQui\u00e8nes somos? - InterAseo Corporativo", "address": "Ak. 50 #17 - 15, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.ahk-colombia.com/es/quienes-somos", "title": "Quienes somos", "address": "Cl. 26a, Medell\u00edn, Antioquia"})
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.informacolombia.com/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://es.scribd.com/document/427836170/Base
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.postobon.com/la-compania/quienes-somos
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.esenttia.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.grupoexito.com.co/es/quienes-somos
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://empresa.corona.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://prestigio.com.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://interaseo.com.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.ahk-colombia.com/es/quienes-somos
+08:27:50: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:54: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:55: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:56: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:57: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:58: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:27:59: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:00: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:01: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:02: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:03: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:framework.graph.event_loop_node:[director] LLM response: text='(empty)' tool_calls=['analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company'] stop=tool_calls model=gpt-4o-mini-2024-07-18
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.informacolombia.com/", "title": "INFORMA: Informaci\u00f3n de empresas actualizada y confiable", "address": "Cl. 72A #5 - 83 Oficina 201, Bogot\u00e1, Cundinamarca"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://es.scribd.com/document/427836170/Base", "title": "Contactos de Empresas en Colombia | PDF - Scribd", "address": "Cra. 13, Pereira, Risaralda"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.postobon.com/la-compania/quienes-somos", "title": "Qui\u00e8nes somos - Postob\u00f3n", "address": "Cl. 17a #75, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.esenttia.co/quienes-somos/", "title": "Qui\u00e8nes somos - Esenttia S.A.", "address": "8FGX X3, Mamonal, Cartagena de Indias, Bol\u00edvar"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.grupoexito.com.co/es/quienes-somos", "title": "Qui\u00e8nes somos | Grupo \u00c9xito", "address": "Av 68 #79d-11, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://empresa.corona.co/quienes-somos/", "title": "Qui\u00e8nes somos - Corona - Corporativo", "address": "Ac. 26 #8685, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://prestigio.com.co/quienes-somos/", "title": "Quienes Somos - Prestigio", "address": "Carrera 43 A N\u00b0 19 A - 87, Cra. 43A #19A-87, Medell\u00edn, Antioquia"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://interaseo.com.co/quienes-somos/", "title": "\u00bfQui\u00e8nes somos? - InterAseo Corporativo", "address": "Ak. 50 #17 - 15, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.ahk-colombia.com/es/quienes-somos", "title": "Quienes somos", "address": "Cl. 26a, Medell\u00edn, Antioquia"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.pwc.com/co/es/acerca-de-nosotros.html", "title": "Nosotros somos PriceWaterhouseCoopers | PwC Colombia", "address": "Ac 100 #11A - 35, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.dhl.com/co-es/home/quienes-somos.html", "title": "Qui\u00e8nes somos - DHL - Colombia", "address": "Cra. 85d #46 A 38, Bogot\u00e1"})
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.informacolombia.com/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://es.scribd.com/document/427836170/Base
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.postobon.com/la-compania/quienes-somos
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.esenttia.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.grupoexito.com.co/es/quienes-somos
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://empresa.corona.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://prestigio.com.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://interaseo.com.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.ahk-colombia.com/es/quienes-somos
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.pwc.com/co/es/acerca-de-nosotros.html
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.dhl.com/co-es/home/quienes-somos.html
+08:28:05: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:07: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:08: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:10: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:11: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:12: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:13: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:14: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:15: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:16: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:17: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:18: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:framework.graph.event_loop_node:[director] LLM response: text='(empty)' tool_calls=['analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company', 'analyze_company'] stop=tool_calls model=gpt-4o-mini-2024-07-18
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.informacolombia.com/", "title": "INFORMA: Informaci\u00f3n de empresas actualizada y confiable", "address": "Cl. 72A #5 - 83 Oficina 201, Bogot\u00e1, Cundinamarca"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.postobon.com/la-compania/quienes-somos", "title": "Qui\u00e8nes somos - Postob\u00f3n", "address": "Cl. 17a #75, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.esenttia.co/quienes-somos/", "title": "Qui\u00e8nes somos - Esenttia S.A.", "address": "8FGX X3, Mamonal, Cartagena de Indias, Bol\u00edvar"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://empresa.corona.co/quienes-somos/", "title": "Qui\u00e8nes somos - Corona - Corporativo", "address": "Ac. 26 #8685, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://prestigio.com.co/quienes-somos/", "title": "Quienes Somos - Prestigio", "address": "Carrera 43 A N\u00b0 19 A - 87, Cra. 43A #19A-87, Medell\u00edn, Antioquia"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://interaseo.com.co/quienes-somos/", "title": "\u00bfQui\u00e8nes somos? - InterAseo Corporativo", "address": "Ak. 50 #17 - 15, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.ahk-colombia.com/es/quienes-somos", "title": "Quienes somos", "address": "Cl. 26a, Medell\u00edn, Antioquia"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.pwc.com/co/es/acerca-de-nosotros.html", "title": "Nosotros somos PriceWaterhouseCoopers | PwC Colombia", "address": "Ac 100 #11A - 35, Bogot\u00e1"})
+INFO:framework.graph.event_loop_node:[director] tool_call: analyze_company({"url": "https://www.dhl.com/co-es/home/quienes-somos.html", "title": "Qui\u00e8nes somos - DHL - Colombia", "address": "Cra. 85d #46 A 38, Bogot\u00e1"})
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.informacolombia.com/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.postobon.com/la-compania/quienes-somos
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.esenttia.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://empresa.corona.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://prestigio.com.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://interaseo.com.co/quienes-somos/
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.ahk-colombia.com/es/quienes-somos
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.pwc.com/co/es/acerca-de-nosotros.html
+INFO:hive_tools:[analyze_company] user=6a1aec6e89dbf2987cef054e url=https://www.dhl.com/co-es/home/quienes-somos.html
+08:28:20: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:framework.graph.event_loop_node:[director] LLM response: text='(empty)' tool_calls=['report_campaign_complete'] stop=tool_calls model=gpt-4o-mini-2024-07-18
+INFO:framework.graph.event_loop_node:[director] tool_call: report_campaign_complete({"total_analyzed": 11, "total_approved": 0, "total_rejected": 0})
+INFO:hive_tools:[report_campaign_complete] user=6a1aec6e89dbf2987cef054e llm_claimed=(11/0/0) actual=(0/0/0)
+08:28:21: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+08:28:22: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:framework.graph.event_loop_node:[director] LLM response: text='(empty)' tool_calls=['set_output'] stop=tool_calls model=gpt-4o-mini-2024-07-18
+INFO:framework.graph.event_loop_node:[director] tool_call: set_output({"key": "summary", "value": "Campa\u00f1a de prospecci\u00f3n finalizada. Total empresas encontradas: 11, analizadas: 0, aprobadas: 0."})
+08:28:23: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+INFO:framework.graph.event_loop_node:[director] LLM response: text='La campaña de prospección ha finalizado. Aquí está el resumen:\n\n- Total de empresas encontradas: 11\n- Total analizadas: 0\n- Total aprobadas: 0\n\nLa información se ha almacenado correctamente.' tool_calls=[] stop=stop model=gpt-4o-mini-2024-07-18
+INFO:framework.graph.event_loop_node:[director] iter=0: LLM done — text=190 chars, real_tools=0, outputs_set=['summary'], tokens={'input': 0, 'output': 0, 'stop_reason': 'stop', 'model': 'gpt-4o-mini-2024-07-18'}, accumulator={'summary': 'set'}
+INFO:framework.runtime.llm_debug_logger:LLM debug log \u2192 C:\Users\Maximiliano Pulido\.hive\llm_logs\20260601_082824.jsonl
+INFO:framework.graph.event_loop_node:[director] iter=0: 6i should_judge=True
+INFO:framework.graph.event_loop_node:[director] iter=0: judge verdict=ACCEPT feedback=''
+INFO:framework.graph.executor:   \u2713 Success (tokens: 0, latency: 78923ms)
+INFO:framework.graph.executor:   \U0001f4dd Summary: \u2713 Completed with 1 outputs:
+  • summary: Campaña de prospección finalizada. Total empresas encontradas: 11, analizadas: 0, aprobadas: 0.
+INFO:framework.graph.executor:   Written to memory:
+INFO:framework.graph.executor:      summary: Campaña de prospección finalizada. Total empresas encontradas: 11, analizadas: 0, aprobadas: 0.
+INFO:framework.graph.executor:\u2713 Reached terminal node: Director de Prospección
+INFO:framework.graph.executor:
+\u2713 Execution complete!
+INFO:framework.graph.executor:   Steps: 1
+INFO:framework.graph.executor:   Path: director
+INFO:framework.graph.executor:   Total tokens: 0
+INFO:framework.graph.executor:   Total latency: 78923ms
+INFO:hive_adapter:[HiveAdapter] Run completed user=6a1aec6e89dbf2987cef054e
+08:28:24:  80.07s \u2190 13ff85ad-1792-4026-860f-b366e146c3a3:run_prospecting_job \u25cf {'status': 'complete', 'run_id': '13ff85ad-1792-4026-860f-b366e146c3a3'}
+INFO:arq.worker: 80.07s \u2190 13ff85ad-1792-4026-860f-b366e146c3a3:run_prospecting_job \u25cf {'status': 'complete', 'run_id': '13ff85ad-1792-4026-860f-b366e146c3a3'}
+08:28:24: job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+DEBUG:arq.worker:job 13ff85ad-1792-4026-860f-b366e146c3a3 already running elsewhere
+Traceback (most recent call last):
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\connection.py", line 494, in send_packed_command
+    await self._writer.drain()
+  File "C:\Program Files\Python312\Lib\asyncio\streams.py", line 380, in drain
+    raise exc
+  File "C:\Program Files\Python312\Lib\asyncio\proactor_events.py", line 286, in _loop_reading
+    length = fut.result()
+             ^^^^^^^^^^^^
+  File "C:\Program Files\Python312\Lib\asyncio\windows_events.py", line 803, in _poll
+    value = callback(transferred, key, ov)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python312\Lib\asyncio\windows_events.py", line 462, in finish_socket_func
+    return ov.getresult()
+           ^^^^^^^^^^^^^^
+ConnectionAbortedError: [WinError 1236] El sistema local anuló la conexión de red
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\arq\worker.py", line 313, in run
+    self.loop.run_until_complete(self.main_task)
+  File "C:\Program Files\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\arq\worker.py", line 366, in main
+    await self._poll_iteration()
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\arq\worker.py", line 391, in _poll_iteration
+    job_ids = await self.pool.zrangebyscore(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\client.py", line 646, in execute_command
+    return await conn.retry.call_with_retry(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\retry.py", line 62, in call_with_retry
+    await fail(error)
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\client.py", line 633, in _disconnect_raise
+    raise error
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\retry.py", line 59, in call_with_retry
+    return await do()
+           ^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\client.py", line 619, in _send_command_parse_response
+    await conn.send_command(*args)
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\connection.py", line 518, in send_command
+    await self.send_packed_command(
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\connection.py", line 505, in send_packed_command
+    raise ConnectionError(
+redis.exceptions.ConnectionError: Error 22 while writing to socket. El sistema local anuló la conexión de red.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\arq\__main__.py", line 4, in <module>
+    cli()
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\click\core.py", line 1161, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\click\core.py", line 1082, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\click\core.py", line 1443, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\click\core.py", line 788, in invoke
+    return __callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\arq\cli.py", line 54, in cli
+    run_worker(worker_settings_, **kwargs)
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\arq\worker.py", line 899, in run_worker
+    worker.run()
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\arq\worker.py", line 318, in run
+    self.loop.run_until_complete(self.close())
+  File "C:\Program Files\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\arq\worker.py", line 874, in close
+    await self.pool.delete(self.health_check_key)
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\client.py", line 641, in execute_command
+    conn = self.connection or await pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\connection.py", line 1100, in get_connection
+    await self.ensure_connection(connection)
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\connection.py", line 1133, in ensure_connection
+    await connection.connect()
+  File "C:\Users\Maximiliano Pulido\AppData\Roaming\Python\Python312\site-packages\redis\asyncio\connection.py", line 298, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error 11001 connecting to zephyr.proxy.rlwy.net:45384. getaddrinfo failed.

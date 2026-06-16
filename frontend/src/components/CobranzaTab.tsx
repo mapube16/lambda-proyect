@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../lib/apiFetch';
+import { DebtorsSoftSegurosTab } from './DebtorsSoftSegurosTab';
 
 // ─── Inject keyframes once ─────────────────────────────────────────────────────
 if (typeof document !== 'undefined' && !document.getElementById('cobr-styles')) {
   const s = document.createElement('style');
   s.id = 'cobr-styles';
   s.textContent = `
-    @keyframes cobr-pulse { 0%,100%{opacity:1;box-shadow:0 0 6px #ffd866} 50%{opacity:0.4;box-shadow:0 0 2px #ffd866} }
+    @keyframes cobr-pulse { 0%,100%{opacity:1;box-shadow:0 0 6px #4F46E5} 50%{opacity:0.4;box-shadow:0 0 2px #4F46E5} }
     @keyframes cobr-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     @keyframes cobr-fade-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
   `;
@@ -15,36 +16,62 @@ if (typeof document !== 'undefined' && !document.getElementById('cobr-styles')) 
 
 // ─── Tokens (same as ClientDashboard) ──────────────────────────────────────────
 const C = {
-  bg:        '#0d0d18',
-  s0:        '#12121d',
-  s1:        '#1b1a26',
-  s2:        '#22212e',
-  s3:        '#2c2b3a',
-  s4:        '#343440',
-  text:      '#e3e0f1',
-  muted:     '#8a8a9a',
-  faint:     'rgba(227,224,241,0.3)',
-  cyan:      '#78dce8',
-  cyanBg:    'rgba(120,220,232,0.08)',
-  cyanBdr:   'rgba(120,220,232,0.2)',
-  green:     '#a9dc76',
-  greenBg:   'rgba(169,220,118,0.08)',
-  pink:      '#ff6188',
-  pinkBg:    'rgba(255,97,136,0.08)',
-  orange:    '#fc9867',
-  orangeBg:  'rgba(252,152,103,0.08)',
-  purple:    '#ab9df2',
-  purpleBg:  'rgba(171,157,242,0.08)',
-  yellow:    '#ffd866',
-  yellowBg:  'rgba(255,216,102,0.08)',
-  SG:        "'Space Grotesk', system-ui, sans-serif",
-  IN:        "'Inter', system-ui, sans-serif",
+  bg:        '#F6F6FB',
+  s0:        '#FFFFFF',
+  s1:        '#FFFFFF',
+  s2:        '#FAFAFC',
+  s3:        '#F2F2F8',
+  s4:        '#E3E3EC',
+  text:      '#34343F',
+  muted:     '#6B6B7A',
+  faint:     '#9696A6',
+  cyan:      '#0EA5E9',
+  cyanBg:    'rgba(14,165,233,0.08)',
+  cyanBdr:   'rgba(14,165,233,0.22)',
+  green:     '#15A56A',
+  greenBg:   '#E6F6EE',
+  pink:      '#E03E4C',
+  pinkBg:    '#FCE9EA',
+  orange:    '#D97A06',
+  orangeBg:  '#FCF1E0',
+  purple:    '#4F46E5',
+  purpleBg:  '#EEEDFC',
+  yellow:    '#D97A06',
+  yellowBg:  '#FCF1E0',
+  SG:        "'Plus Jakarta Sans', system-ui, sans-serif",
+  IN:        "'Plus Jakarta Sans', system-ui, sans-serif",
 };
 
 const lbl = (color = C.muted, size = 10): React.CSSProperties => ({
   fontFamily: C.SG, fontSize: size, fontWeight: 600,
   textTransform: 'uppercase', letterSpacing: '0.12em', color,
 });
+
+// ─── SOFTSEGUROS section (collapsible) ─────────────────────────────────────────
+function SoftSegurosSection() {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+          background: C.s0, border: `1px solid rgba(14,165,233,0.18)`,
+          padding: '10px 14px', cursor: 'pointer', color: C.cyan,
+          fontFamily: C.SG, fontWeight: 600, fontSize: 12, letterSpacing: '0.08em',
+        }}
+      >
+        <span style={{ fontSize: 10, transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▶</span>
+        DEUDORES SOFTSEGUROS
+      </button>
+      {expanded && (
+        <div style={{ marginTop: 8 }}>
+          <DebtorsSoftSegurosTab />
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface CallRecord {
@@ -64,7 +91,7 @@ interface Debtor {
   monto: number;
   vencimiento: string;
   estado: 'pendiente' | 'llamando' | 'contactado' | 'promesa_de_pago' | 'sin_contacto' |
-          'pagado' | 'fallido' | 'escalado' | 'agotado' | 'pausado';
+          'pagado' | 'fallido' | 'escalado' | 'agotado' | 'pausado' | 'reagendado' | 'disputa';
   intentos: number;
   max_intentos: number;
   historial_llamadas: CallRecord[];
@@ -89,6 +116,8 @@ function getEstadoConfig(estado: Debtor['estado']): { color: string; bg: string;
     case 'escalado':         return { color: C.orange,  bg: C.orangeBg,  label: 'ESCALADO' };
     case 'agotado':          return { color: C.muted,   bg: 'transparent', label: 'AGOTADO' };
     case 'pausado':          return { color: C.purple,  bg: C.purpleBg,  label: 'PAUSADO' };
+    case 'reagendado':       return { color: C.cyan,    bg: C.cyanBg,    label: 'REAGENDADO' };
+    case 'disputa':          return { color: C.pink,    bg: C.pinkBg,    label: 'DISPUTA' };
     default:                 return { color: C.muted,   bg: 'transparent', label: String(estado).toUpperCase() };
   }
 }
@@ -140,8 +169,8 @@ function CobranzaToast({ toast, onDismiss }: { toast: CobrToast; onDismiss: (id:
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '11px 16px', minWidth: 260,
-      background: C.s3, border: `1px solid ${toast.ok ? 'rgba(169,220,118,0.25)' : 'rgba(255,97,136,0.25)'}`,
-      boxShadow: '0 8px 32px rgba(0,0,0,0.45)', pointerEvents: 'all',
+      background: C.s3, border: `1px solid ${toast.ok ? 'rgba(21,165,106,0.25)' : 'rgba(224,62,76,0.25)'}`,
+      boxShadow: '0 4px 16px rgba(20,20,40,0.10)', pointerEvents: 'all',
       opacity: visible ? 1 : 0, transform: visible ? 'translateX(0)' : 'translateX(12px)',
       transition: 'opacity 0.2s, transform 0.2s',
     }}>
@@ -363,13 +392,13 @@ function DebtorModal({
       {/* Overlay */}
       <div
         onClick={onClose}
-        style={{ position: 'absolute', inset: 0, background: 'rgba(13,13,24,0.92)', backdropFilter: 'blur(4px)' }}
+        style={{ position: 'absolute', inset: 0, background: 'rgba(50,50,90,0.45)', backdropFilter: 'blur(4px)' }}
       />
       {/* Modal container */}
       <div style={{
         position: 'relative', zIndex: 1,
         width: '100%', maxWidth: 960, maxHeight: '90vh',
-        background: C.s1, border: `1px solid rgba(120,220,232,0.12)`,
+        background: C.s1, border: `1px solid rgba(14,165,233,0.22)`,
         display: 'flex', flexDirection: 'column',
         animation: 'cobr-fade-in 0.2s ease',
         overflow: 'hidden',
@@ -377,7 +406,7 @@ function DebtorModal({
         {/* Header */}
         <div style={{
           padding: '20px 28px', background: C.s0,
-          borderBottom: `1px solid rgba(255,255,255,0.05)`,
+          borderBottom: `1px solid #ECECF3`,
           display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16,
           flexWrap: 'wrap',
         }}>
@@ -396,7 +425,7 @@ function DebtorModal({
                         onChange={e => setEditFields(p => ({ ...p, [key]: e.target.value }))}
                         style={{
                           width: '100%', boxSizing: 'border-box', background: C.s2,
-                          border: `1px solid rgba(252,152,103,0.4)`, color: C.text,
+                          border: `1px solid rgba(217,122,6,0.35)`, color: C.text,
                           fontFamily: C.SG, fontSize: 13, padding: '6px 10px', outline: 'none',
                         }}
                       />
@@ -416,7 +445,7 @@ function DebtorModal({
                         onChange={e => setEditFields(p => ({ ...p, [key]: e.target.value }))}
                         style={{
                           width: '100%', boxSizing: 'border-box', background: C.s2,
-                          border: `1px solid rgba(252,152,103,0.4)`, color: C.text,
+                          border: `1px solid rgba(217,122,6,0.35)`, color: C.text,
                           fontFamily: C.SG, fontSize: 13, padding: '6px 10px', outline: 'none',
                         }}
                       />
@@ -452,7 +481,7 @@ function DebtorModal({
                 <button
                   onClick={() => setEditMode(false)}
                   style={{
-                    padding: '9px 14px', border: `1px solid rgba(255,255,255,0.1)`, cursor: 'pointer',
+                    padding: '9px 14px', border: `1px solid #E3E3EC`, cursor: 'pointer',
                     background: 'transparent', color: C.muted, fontFamily: C.SG, fontSize: 11, fontWeight: 600,
                   }}
                 >Cancelar</button>
@@ -482,7 +511,7 @@ function DebtorModal({
             <button
               onClick={onClose}
               style={{
-                width: 36, height: 36, border: `1px solid rgba(255,255,255,0.1)`,
+                width: 36, height: 36, border: `1px solid #E3E3EC`,
                 background: 'transparent', color: C.muted, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
               }}
@@ -495,7 +524,7 @@ function DebtorModal({
 
           {/* Left panel */}
           <div style={{
-            borderRight: `1px solid rgba(255,255,255,0.05)`,
+            borderRight: `1px solid #ECECF3`,
             overflowY: 'auto', padding: '20px 20px',
             display: 'flex', flexDirection: 'column', gap: 20,
           }}>
@@ -532,7 +561,7 @@ function DebtorModal({
                   {/* Timeline line */}
                   <div style={{
                     position: 'absolute', left: 7, top: 0, bottom: 0,
-                    width: 1, background: 'rgba(255,255,255,0.06)',
+                    width: 1, background: '#ECECF3',
                   }} />
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {debtor.historial_llamadas.map((call) => (
@@ -541,7 +570,7 @@ function DebtorModal({
                         <div style={{
                           position: 'absolute', left: -16, top: 3,
                           width: 8, height: 8, background: C.s3,
-                          border: `1px solid rgba(255,255,255,0.2)`,
+                          border: `1px solid #D0D0DC`,
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
                           <div style={{ width: 3, height: 3, background: C.cyan }} />
@@ -602,7 +631,7 @@ function DebtorModal({
                 placeholder="Agregar nota..."
                 style={{
                   width: '100%', resize: 'vertical', background: C.s2,
-                  border: `1px solid rgba(255,255,255,0.07)`, color: C.text,
+                  border: `1px solid #ECECF3`, color: C.text,
                   fontFamily: C.IN, fontSize: 12, padding: '8px 10px', outline: 'none',
                   boxSizing: 'border-box',
                 }}
@@ -632,7 +661,7 @@ function DebtorModal({
                   onClick={onClick}
                   disabled={acting}
                   style={{
-                    padding: '10px 8px', border: `1px solid rgba(255,255,255,0.08)`,
+                    padding: '10px 8px', border: `1px solid #E3E3EC`,
                     background: 'transparent', cursor: acting ? 'not-allowed' : 'pointer',
                     ...lbl(color, 9), opacity: acting ? 0.5 : 1,
                     transition: 'background 0.15s',
@@ -651,7 +680,7 @@ function DebtorModal({
             overflowY: 'auto', padding: '20px 24px',
             display: 'flex', flexDirection: 'column', gap: 16,
           }}>
-            <div style={{ ...lbl(C.muted, 9), borderBottom: `1px solid rgba(255,255,255,0.05)`, paddingBottom: 12 }}>
+            <div style={{ ...lbl(C.muted, 9), borderBottom: `1px solid #ECECF3`, paddingBottom: 12 }}>
               NEURAL_TRANSCRIPTION_STREAM
             </div>
             {debtor.historial_llamadas.length === 0 ? (
@@ -664,7 +693,7 @@ function DebtorModal({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <div style={{
                     padding: '10px 14px', background: C.s2,
-                    borderLeft: `2px solid rgba(120,220,232,0.3)`,
+                    borderLeft: `2px solid rgba(14,165,233,0.30)`,
                     display: 'flex', justifyContent: 'space-between',
                   }}>
                     <span style={{ fontFamily: C.SG, fontSize: 11, color: C.text }}>
@@ -692,7 +721,7 @@ function DebtorModal({
                           >
                             <div style={{
                               width: 28, height: 28, flexShrink: 0, background: isAgent ? C.cyanBg : C.s2,
-                              border: `1px solid ${isAgent ? C.cyanBdr : 'rgba(255,255,255,0.08)'}`,
+                              border: `1px solid ${isAgent ? C.cyanBdr : '#E3E3EC'}`,
                               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
                             }}>
                               {isAgent ? '🤖' : '👤'}
@@ -729,7 +758,7 @@ function DebtorModal({
                       <div style={{
                         padding: '12px 14px', background: C.s2,
                         fontFamily: C.IN, fontSize: 12, color: C.muted, lineHeight: 1.6,
-                        borderLeft: `2px solid rgba(255,255,255,0.08)`,
+                        borderLeft: `2px solid #E3E3EC`,
                       }}>
                         {lastCall.resultado === 'no-answer' && 'El deudor no contestó la llamada.'}
                         {lastCall.resultado === 'busy' && 'La línea estaba ocupada.'}
@@ -756,7 +785,7 @@ function DebtorModal({
         <div style={{
           position: 'absolute', inset: 0, zIndex: 400,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(13,13,24,0.85)', backdropFilter: 'blur(4px)',
+          background: 'rgba(50,50,90,0.40)', backdropFilter: 'blur(4px)',
         }}>
           <div style={{
             background: C.s1, border: `1px solid ${C.orange}`,
@@ -805,7 +834,7 @@ function DebtorModal({
         <div style={{
           position: 'absolute', bottom: 32, left: '50%', transform: 'translateX(-50%)',
           zIndex: 300, background: C.s3, padding: '10px 20px',
-          border: `1px solid rgba(120,220,232,0.2)`, fontFamily: C.SG, fontSize: 12, color: C.text,
+          border: `1px solid rgba(14,165,233,0.22)`, fontFamily: C.SG, fontSize: 12, color: C.text,
           animation: 'cobr-fade-in 0.2s ease',
         }}>
           {toastMsg}
@@ -871,21 +900,21 @@ function DebtorCreateModal({
 
   const inputStyle: React.CSSProperties = {
     width: '100%', boxSizing: 'border-box', background: C.s2,
-    border: `1px solid rgba(255,255,255,0.1)`, color: C.text,
+    border: `1px solid #E3E3EC`, color: C.text,
     fontFamily: C.IN, fontSize: 13, padding: '9px 12px', outline: 'none',
   };
-  const focusStyle = `border-color: rgba(252,152,103,0.5)`;
+  const focusStyle = `border-color: rgba(217,122,6,0.45)`;
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(13,13,24,0.92)', backdropFilter: 'blur(4px)' }} />
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(50,50,90,0.45)', backdropFilter: 'blur(4px)' }} />
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 480,
-        background: C.s1, border: `1px solid rgba(252,152,103,0.2)`,
+        background: C.s1, border: `1px solid rgba(217,122,6,0.22)`,
         animation: 'cobr-fade-in 0.2s ease',
       }}>
         {/* Header */}
-        <div style={{ padding: '18px 24px', borderBottom: `1px solid rgba(255,255,255,0.05)`, background: C.s0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ padding: '18px 24px', borderBottom: `1px solid #ECECF3`, background: C.s0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={lbl(C.orange, 9)}>NUEVO DEUDOR</div>
             <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 16, color: C.text, marginTop: 4 }}>Agregar manualmente</div>
@@ -930,7 +959,7 @@ function DebtorCreateModal({
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button onClick={onClose} style={{ padding: '9px 16px', background: 'transparent', border: `1px solid rgba(255,255,255,0.1)`, color: C.muted, fontFamily: C.SG, fontSize: 11, cursor: 'pointer' }}>
+            <button onClick={onClose} style={{ padding: '9px 16px', background: 'transparent', border: `1px solid #E3E3EC`, color: C.muted, fontFamily: C.SG, fontSize: 11, cursor: 'pointer' }}>
               Cancelar
             </button>
             <button
@@ -956,6 +985,8 @@ const FILTERS: { value: EstadoFilter; label: string }[] = [
   { value: 'promesa_de_pago',   label: 'PROMESA' },
   { value: 'pagado',            label: 'PAGADO' },
   { value: 'sin_contacto',      label: 'SIN CONTACTO' },
+  { value: 'reagendado',        label: 'REAGENDADO' },
+  { value: 'disputa',           label: 'DISPUTA' },
   { value: 'escalado',          label: 'ESCALADO' },
   { value: 'agotado',           label: 'AGOTADO' },
   { value: 'pausado',           label: 'PAUSADO' },
@@ -1085,7 +1116,7 @@ function CobranzaOnboarding({ onDone }: { onDone: () => void }) {
               rows={6}
               style={{
                 width: '100%', boxSizing: 'border-box',
-                background: C.s2, border: `1px solid ${descripcion ? 'rgba(252,152,103,0.4)' : C.faint}`,
+                background: C.s2, border: `1px solid ${descripcion ? 'rgba(217,122,6,0.35)' : C.faint}`,
                 borderRadius: 8, color: C.text, fontFamily: C.IN, fontSize: 13,
                 padding: '14px 16px', resize: 'vertical', outline: 'none',
                 transition: 'border-color 0.15s', lineHeight: 1.6,
@@ -1185,7 +1216,7 @@ function CobranzaOnboarding({ onDone }: { onDone: () => void }) {
               </p>
               <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvOnboarding} />
               {csvResult ? (
-                <div style={{ background: C.greenBg, border: `1px solid rgba(169,220,118,0.3)`, borderRadius: 7, padding: '12px 16px', color: C.green, fontFamily: C.SG, fontWeight: 600, fontSize: 13 }}>
+                <div style={{ background: C.greenBg, border: `1px solid rgba(21,165,106,0.30)`, borderRadius: 7, padding: '12px 16px', color: C.green, fontFamily: C.SG, fontWeight: 600, fontSize: 13 }}>
                   {csvResult.created} deudores importados correctamente
                 </div>
               ) : (
@@ -1239,6 +1270,9 @@ export function CobranzaTab() {
   const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [loading, setLoading] = useState(true);
   const [estadoFilter, setEstadoFilter] = useState<EstadoFilter>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const PAGE_SIZE = 50;
   const [selectedDebtor, setSelectedDebtor] = useState<Debtor | null>(null);
   const [toasts, setToasts] = useState<CobrToast[]>([]);
   const [uploadingCsv, setUploadingCsv] = useState<false | 'create' | 'update'>(false);
@@ -1266,16 +1300,50 @@ export function CobranzaTab() {
   const fetchDebtors = useCallback(async () => {
     setLoading(true);
     try {
-      const params = estadoFilter ? `?estado=${estadoFilter}` : '';
-      const r = await apiFetch(`/api/cobranza/debtors${params}`);
-      if (!r.ok) { setDebtors([]); return; }
+      const qs = new URLSearchParams();
+      if (estadoFilter) qs.set('estado', estadoFilter);
+      qs.set('page', String(page));
+      qs.set('page_size', String(PAGE_SIZE));
+      const r = await apiFetch(`/api/cobranza/debtors?${qs.toString()}`);
+      if (!r.ok) { setDebtors([]); setTotal(0); return; }
       const data = await r.json();
-      setDebtors(Array.isArray(data) ? data : []);
-    } catch { setDebtors([]); }
+      // Endpoint is now paginated: { items, total, page, page_size }.
+      // Tolerate the old array shape just in case.
+      if (Array.isArray(data)) {
+        setDebtors(data);
+        setTotal(data.length);
+      } else {
+        setDebtors(Array.isArray(data.items) ? data.items : []);
+        setTotal(Number(data.total ?? 0));
+      }
+    } catch { setDebtors([]); setTotal(0); }
     finally { setLoading(false); }
-  }, [estadoFilter]);
+  }, [estadoFilter, page]);
 
   useEffect(() => { fetchDebtors(); }, [fetchDebtors]);
+
+  // Reset to page 1 whenever the estado filter changes.
+  useEffect(() => { setPage(1); }, [estadoFilter]);
+
+  // ── Today's activity KPIs + funnel (whole-cartera, not the current page) ─────
+  const [todayKpis, setTodayKpis] = useState<{
+    llamando_ahora: number;
+    contactados_hoy: number;
+    promesas_hoy: { count: number; monto: number };
+    pagado_hoy: { count: number; monto: number };
+    sin_contacto: number;
+  } | null>(null);
+  const fetchTodaySummary = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/cobranza/today-summary');
+      if (r.ok) setTodayKpis(await r.json());
+    } catch { /* keep prev */ }
+  }, []);
+  useEffect(() => {
+    fetchTodaySummary();
+    const id = window.setInterval(fetchTodaySummary, 15000); // refresh every 15s
+    return () => window.clearInterval(id);
+  }, [fetchTodaySummary]);
 
   // ── Real-time WS updates ───────────────────────────────────────────────────
   const fetchDebtorById = useCallback(async (debtor_id: string) => {
@@ -1426,12 +1494,13 @@ export function CobranzaTab() {
   };
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  const totalMonto  = debtors.reduce((s, d) => s + d.monto, 0);
+  // Fallback "llamando" count from the current page (used until today-summary loads).
   const llamandoNow = debtors.filter(d => d.estado === 'llamando').length;
-  const promesas    = debtors.filter(d => d.estado === 'promesa_de_pago').length;
 
   // ── Filtered list ──────────────────────────────────────────────────────────
-  const visible = estadoFilter ? debtors.filter(d => d.estado === estadoFilter) : debtors;
+  // Filtering + pagination are server-side now; `debtors` is already the page.
+  const visible = debtors;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   // ── Show onboarding if strategy not yet configured ────────────────────────
   if (configured === null) return (
@@ -1440,7 +1509,12 @@ export function CobranzaTab() {
     </div>
   );
   if (!configured) return (
-    <CobranzaOnboarding onDone={() => { setConfigured(true); fetchDebtors(); }} />
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'auto' }}>
+      <div style={{ padding: '26px 28px 0' }}>
+        <SoftSegurosSection />
+      </div>
+      <CobranzaOnboarding onDone={() => { setConfigured(true); fetchDebtors(); }} />
+    </div>
   );
 
   return (
@@ -1448,6 +1522,9 @@ export function CobranzaTab() {
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
+
+        {/* SOFTSEGUROS deudores (synced from the broker's SOFTSEGUROS account) */}
+        <SoftSegurosSection />
 
         {/* Page heading */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22 }}>
@@ -1468,7 +1545,7 @@ export function CobranzaTab() {
               onClick={() => setShowCreateModal(true)}
               title="Agregar deudor manualmente"
               style={{
-                height: 32, padding: '0 14px', border: `1px solid rgba(169,220,118,0.3)`,
+                height: 32, padding: '0 14px', border: `1px solid rgba(21,165,106,0.30)`,
                 background: C.greenBg, color: C.green,
                 cursor: 'pointer', fontSize: 12,
                 fontFamily: C.SG, fontWeight: 600, letterSpacing: '0.05em',
@@ -1497,7 +1574,7 @@ export function CobranzaTab() {
               disabled={!!uploadingCsv}
               title="Actualizar deudores existentes por teléfono"
               style={{
-                height: 32, padding: '0 12px', border: `1px solid rgba(171,157,242,0.3)`,
+                height: 32, padding: '0 12px', border: `1px solid rgba(79,70,229,0.25)`,
                 background: uploadingCsv === 'update' ? C.s2 : C.purpleBg,
                 color: uploadingCsv === 'update' ? C.muted : C.purple,
                 cursor: uploadingCsv ? 'not-allowed' : 'pointer', fontSize: 12,
@@ -1520,21 +1597,28 @@ export function CobranzaTab() {
           </div>
         </div>
 
-        {/* Stats row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 22 }}>
+        {/* Actividad de HOY — el panel operativo del bot */}
+        <div style={{ ...lbl(C.muted, 9), marginBottom: 8 }}>ACTIVIDAD DE HOY</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 22 }}>
           {[
-            { label: 'CARTERA TOTAL', value: formatCOP(totalMonto), color: C.cyan },
-            { label: 'EN LLAMADA AHORA', value: String(llamandoNow), color: C.yellow },
-            { label: 'PROMESAS ACTIVAS', value: String(promesas), color: C.green },
-          ].map(({ label, value, color }) => (
+            { label: 'LLAMANDO AHORA', value: String(todayKpis?.llamando_ahora ?? llamandoNow), sub: todayKpis?.llamando_ahora ? 'en vivo' : '', color: C.yellow, pulse: (todayKpis?.llamando_ahora ?? 0) > 0 },
+            { label: 'CONTACTADOS HOY', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.cyan, pulse: false },
+            { label: 'PROMESAS HOY', value: String(todayKpis?.promesas_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.promesas_hoy.monto) : '', color: C.green, pulse: false },
+            { label: 'PAGADO HOY', value: String(todayKpis?.pagado_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.pagado_hoy.monto) : '', color: C.green, pulse: false },
+            { label: 'SIN CONTACTO', value: String(todayKpis?.sin_contacto ?? '—'), sub: 'requiere atención', color: C.orange, pulse: false },
+          ].map(({ label, value, sub, color, pulse }) => (
             <div key={label} style={{
-              background: C.s1, padding: '14px 18px',
+              background: C.s1, padding: '12px 14px',
               borderBottom: `2px solid ${color}40`,
             }}>
-              <div style={lbl(C.muted, 9)}>{label}</div>
-              <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 22, color, marginTop: 6 }}>
+              <div style={{ ...lbl(C.muted, 8.5), display: 'flex', alignItems: 'center', gap: 5 }}>
+                {pulse && <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, animation: 'cobr-pulse 1.2s ease-in-out infinite' }} />}
+                {label}
+              </div>
+              <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 24, color, marginTop: 5, lineHeight: 1.05 }}>
                 {value}
               </div>
+              {sub && <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted, marginTop: 2 }}>{sub}</div>}
             </div>
           ))}
         </div>
@@ -1549,7 +1633,7 @@ export function CobranzaTab() {
                 key={label}
                 onClick={() => setEstadoFilter(value)}
                 style={{
-                  padding: '5px 14px', border: `1px solid ${active ? cfg.color : 'rgba(255,255,255,0.07)'}`,
+                  padding: '5px 14px', border: `1px solid ${active ? cfg.color : '#ECECF3'}`,
                   background: active ? cfg.bg : 'transparent',
                   cursor: 'pointer', ...lbl(active ? cfg.color : C.muted, 9),
                   transition: 'all 0.15s',
@@ -1616,6 +1700,28 @@ export function CobranzaTab() {
             </div>
           </div>
         )}
+
+        {/* Pagination */}
+        {total > PAGE_SIZE && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, fontFamily: C.IN, fontSize: 12, color: C.muted, gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} de {total.toLocaleString('es-CO')}
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                style={{ padding: '6px 12px', border: `1px solid rgba(255,255,255,0.1)`, background: 'transparent', color: page === 1 ? C.faint : C.muted, cursor: page === 1 ? 'not-allowed' : 'pointer', fontFamily: C.SG, fontWeight: 600, fontSize: 11.5 }}
+              >← Anterior</button>
+              <span style={{ padding: '6px 10px', fontFamily: C.SG, fontSize: 12, color: C.text }}>{page} / {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                style={{ padding: '6px 12px', border: `1px solid rgba(255,255,255,0.1)`, background: 'transparent', color: page >= totalPages ? C.faint : C.muted, cursor: page >= totalPages ? 'not-allowed' : 'pointer', fontFamily: C.SG, fontWeight: 600, fontSize: 11.5 }}
+              >Siguiente →</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Detail modal */}
@@ -1645,7 +1751,7 @@ export function CobranzaTab() {
         <div style={{
           position: 'fixed', inset: 0, zIndex: 500,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(13,13,24,0.85)', backdropFilter: 'blur(4px)',
+          background: 'rgba(50,50,90,0.40)', backdropFilter: 'blur(4px)',
         }}>
           <div style={{
             background: C.s1, border: `1px solid ${C.orange}`,
@@ -1728,7 +1834,7 @@ function DebtorRow({
         gridTemplateColumns: '2fr 1fr 1.2fr 1fr 1.2fr auto',
         padding: '12px 16px', gap: 12, alignItems: 'center',
         background: hover ? C.s2 : 'transparent',
-        borderBottom: `1px solid rgba(255,255,255,0.04)`,
+        borderBottom: `1px solid #ECECF3`,
         transition: 'background 0.15s', cursor: 'pointer',
       }}
       onClick={onView}
@@ -1784,7 +1890,7 @@ function DebtorRow({
             title={title}
             onClick={onClick}
             style={{
-              width: 26, height: 26, border: `1px solid rgba(255,255,255,0.08)`,
+              width: 26, height: 26, border: `1px solid #E3E3EC`,
               background: 'transparent', cursor: 'pointer', color: C.muted, fontSize: 12,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'all 0.15s',

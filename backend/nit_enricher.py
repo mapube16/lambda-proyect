@@ -14,6 +14,7 @@ Cache en memoria (TTL 24h) — la primera búsqueda enriquece, las siguientes so
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
 import logging

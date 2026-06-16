@@ -8,15 +8,15 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8002',
+        target: 'http://localhost:8000',
         changeOrigin: true
       },
       '/auth': {
-        target: 'http://localhost:8002',
+        target: 'http://localhost:8000',
         changeOrigin: true
       },
       '/ws': {
-        target: 'ws://localhost:8002',
+        target: 'ws://localhost:8000',
         ws: true
       }
     }

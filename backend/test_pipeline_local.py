@@ -7,10 +7,17 @@ Uso:
   python test_pipeline_local.py
 """
 import asyncio
+import io
 import json
 import logging
 import os
 import sys
+
+# Force UTF-8 output on Windows (avoids charmap errors with ✓/✗ in tool results)
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'buffer'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from dotenv import load_dotenv
 load_dotenv()

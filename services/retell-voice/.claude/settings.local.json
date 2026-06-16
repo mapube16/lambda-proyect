@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(gsd:new-project)",
+      "Bash(node *)",
+      "Bash(python3 write_summary.py)",
+      "Bash(python3 *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
