@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { apiFetch } from '../lib/apiFetch';
 import { DebtorsSoftSegurosTab } from './DebtorsSoftSegurosTab';
 
@@ -1282,11 +1282,11 @@ export function CobranzaTab() {
   const csvUpdateRef = useRef<HTMLInputElement>(null);
 
   // ── Toast helpers ──────────────────────────────────────────────────────────
-  const dismissToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
-  const addToast = (toast: CobrToast, duration = 3500) => {
+  const dismissToast = useCallback((id: string) => setToasts(prev => prev.filter(t => t.id !== id)), []);
+  const addToast = useCallback((toast: CobrToast, duration = 3500) => {
     setToasts(prev => [...prev.filter(t => t.id !== toast.id), toast]);
     setTimeout(() => dismissToast(toast.id), duration);
-  };
+  }, [dismissToast]);
 
   // ── Check if onboarding is done ───────────────────────────────────────────
   useEffect(() => {
@@ -1341,8 +1341,19 @@ export function CobranzaTab() {
   }, []);
   useEffect(() => {
     fetchTodaySummary();
-    const id = window.setInterval(fetchTodaySummary, 15000); // refresh every 15s
-    return () => window.clearInterval(id);
+    // Only poll while the tab is actually visible — no point hitting the API
+    // every 15s in a backgrounded tab. Refetch immediately on re-focus so the
+    // user never sees stale numbers when they come back.
+    let id: number | null = null;
+    const start = () => { if (id === null) id = window.setInterval(fetchTodaySummary, 15000); };
+    const stop = () => { if (id !== null) { window.clearInterval(id); id = null; } };
+    const onVisibility = () => {
+      if (document.hidden) stop();
+      else { fetchTodaySummary(); start(); }
+    };
+    if (!document.hidden) start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchTodaySummary]);
 
   // ── Real-time WS updates ───────────────────────────────────────────────────
@@ -1388,7 +1399,7 @@ export function CobranzaTab() {
   }, [fetchDebtorById]);
 
   // ── Quick actions ──────────────────────────────────────────────────────────
-  const quickAction = async (debtorId: string, path: string, update: Partial<Debtor>) => {
+  const quickAction = useCallback(async (debtorId: string, path: string, update: Partial<Debtor>) => {
     try {
       const r = await apiFetch(`/api/cobranza/debtors/${debtorId}/${path}`, {
         method: 'POST',
@@ -1402,7 +1413,7 @@ export function CobranzaTab() {
     } catch {
       addToast({ id: `err-${Date.now()}`, message: 'Error de conexión', ok: false });
     }
-  };
+  }, [addToast]);
 
   const handleLlamarAhora = async (debtorId: string) => {
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -1421,6 +1432,10 @@ export function CobranzaTab() {
       addToast({ id: `err-${Date.now()}`, message: 'Error de conexión', ok: false });
     }
   };
+  // Keep a ref to the latest handleLlamarAhora so the stable row adapter
+  // (onRowLlamar) can call it without taking it as a dependency.
+  const handleLlamarAhoraRef = useRef(handleLlamarAhora);
+  handleLlamarAhoraRef.current = handleLlamarAhora;
 
   const handleForceLlamar = async () => {
     if (!ley2300Confirm) return;
@@ -1441,17 +1456,22 @@ export function CobranzaTab() {
     }
   };
 
-  const handleMarcarPagado = (debtorId: string) =>
+  const handleMarcarPagado = useCallback((debtorId: string) =>
     quickAction(debtorId, 'pagar', { estado: 'pagado' }).then(() =>
       addToast({ id: `paid-${debtorId}`, message: 'Marcado como pagado', ok: true })
-    );
+    ), [quickAction, addToast]);
 
-  const handlePausar = (d: Debtor) => {
+  const handlePausar = useCallback((d: Debtor) => {
     const isPausado = d.estado === 'pausado';
     quickAction(d._id, isPausado ? 'reactivar' : 'pausar', {
       estado: isPausado ? 'pendiente' : 'pausado',
     });
-  };
+  }, [quickAction]);
+
+  // Stable row adapters: DebtorRow passes the whole debtor; these extract the
+  // id and stay referentially stable so memo(DebtorRow) actually skips renders.
+  const onRowLlamar = useCallback((d: Debtor) => { void handleLlamarAhoraRef.current(d._id); }, []);
+  const onRowPagar = useCallback((d: Debtor) => { void handleMarcarPagado(d._id); }, [handleMarcarPagado]);
 
   // ── Modal action handler ───────────────────────────────────────────────────
   const handleModalAction = (id: string, updates: Partial<Debtor>) => {
@@ -1691,10 +1711,10 @@ export function CobranzaTab() {
                 <DebtorRow
                   key={d._id}
                   debtor={d}
-                  onView={() => setSelectedDebtor(d)}
-                  onLlamar={() => handleLlamarAhora(d._id)}
-                  onPagar={() => handleMarcarPagado(d._id)}
-                  onPausar={() => handlePausar(d)}
+                  onView={setSelectedDebtor}
+                  onLlamar={onRowLlamar}
+                  onPagar={onRowPagar}
+                  onPausar={handlePausar}
                 />
               ))}
             </div>
@@ -1809,7 +1829,7 @@ export function CobranzaTab() {
 }
 
 // ─── Debtor row ───────────────────────────────────────────────────────────────
-function DebtorRow({
+const DebtorRow = memo(function DebtorRow({
   debtor,
   onView,
   onLlamar,
@@ -1817,10 +1837,12 @@ function DebtorRow({
   onPausar,
 }: {
   debtor: Debtor;
-  onView: () => void;
-  onLlamar: () => void;
-  onPagar: () => void;
-  onPausar: () => void;
+  // Handlers take the debtor so the parent can pass stable (useCallback)
+  // references — no fresh inline arrow per row, so memo actually holds.
+  onView: (d: Debtor) => void;
+  onLlamar: (d: Debtor) => void;
+  onPagar: (d: Debtor) => void;
+  onPausar: (d: Debtor) => void;
 }) {
   const [hover, setHover] = useState(false);
   const lastCall = debtor.historial_llamadas[debtor.historial_llamadas.length - 1];
@@ -1837,7 +1859,7 @@ function DebtorRow({
         borderBottom: `1px solid #ECECF3`,
         transition: 'background 0.15s', cursor: 'pointer',
       }}
-      onClick={onView}
+      onClick={() => onView(debtor)}
     >
       {/* Nombre */}
       <div>
@@ -1880,10 +1902,10 @@ function DebtorRow({
         style={{ display: 'flex', gap: 4 }}
       >
         {[
-          { title: 'Llamar ahora', icon: '📞', onClick: onLlamar },
-          { title: 'Marcar pagado', icon: '✓', onClick: onPagar },
-          { title: debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar', icon: debtor.estado === 'pausado' ? '▷' : '⏸', onClick: onPausar },
-          { title: 'Ver detalle', icon: '↗', onClick: onView },
+          { title: 'Llamar ahora', icon: '📞', onClick: () => onLlamar(debtor) },
+          { title: 'Marcar pagado', icon: '✓', onClick: () => onPagar(debtor) },
+          { title: debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar', icon: debtor.estado === 'pausado' ? '▷' : '⏸', onClick: () => onPausar(debtor) },
+          { title: 'Ver detalle', icon: '↗', onClick: () => onView(debtor) },
         ].map(({ title, icon, onClick }) => (
           <button
             key={title}
@@ -1912,6 +1934,6 @@ function DebtorRow({
       </div>
     </div>
   );
-}
+});
 
 export default CobranzaTab;

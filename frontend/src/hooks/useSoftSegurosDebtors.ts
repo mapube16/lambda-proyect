@@ -100,6 +100,8 @@ const DEFAULT_FILTERS: SoftSegurosImportFilters = {
 };
 
 const POLL_MS = 3000;
+const MAX_CONSECUTIVE_ERRORS = 3;   // ~9s of failures → stop the zombie poll
+const MAX_POLL_MS = 10 * 60 * 1000; // 10 min hard ceiling for a single sync
 
 export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
   const [setup, setSetup] = useState<SoftSegurosSetupState>({
@@ -172,12 +174,29 @@ export function useSoftSegurosDebtors(): UseSoftSegurosDebtorsResult {
   // NOTE: debtor LISTS are owned by useSoftSegurosDebtorsView now — this hook
   // only tracks setup + sync status, so we no longer fetch lists here (that was
   // a redundant 2×200-row fetch on every poll tick).
+  //
+  // Safety stops so the interval can never become a zombie poller (which is what
+  // saturated the network tab with sync-status calls in idle):
+  //   • stop after MAX_CONSECUTIVE_ERRORS failed/null responses in a row
+  //   • stop after MAX_POLL_MS wall-clock (a real sync never runs this long)
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
+    const startedAt = Date.now();
+    let consecutiveErrors = 0;
+    const stop = () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
     pollRef.current = window.setInterval(async () => {
       const st = await fetchSyncStatus();
-      if (st && !st.is_syncing_now) {
-        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (st === null) {
+        // Transient network error — give up after a few tries instead of
+        // polling forever.
+        if (++consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) stop();
+        return;
+      }
+      consecutiveErrors = 0;
+      if (!st.is_syncing_now || Date.now() - startedAt > MAX_POLL_MS) {
+        stop();
         await fetchSetup();
       }
     }, POLL_MS);
