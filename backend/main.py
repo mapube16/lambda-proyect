@@ -99,22 +99,6 @@ app = FastAPI(title="Lambda Office", version="1.0.0", lifespan=lifespan)
 _MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "2000000"))
 _EXEMPT_BODY_LIMIT_PATHS = ("/api/staff/clients/",)
 
-# Fast OPTIONS response (CORS preflight) — respond instantly without heavy middleware
-@app.middleware("http")
-async def fast_options_handler(request: Request, call_next):
-    if request.method == "OPTIONS":
-        return Response(
-            status_code=200,
-            headers={
-                "Access-Control-Allow-Origin": request.headers.get("Origin", "*"),
-                "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Max-Age": "86400",
-            }
-        )
-    return await call_next(request)
-
 @app.middleware("http")
 async def limit_request_body(request: Request, call_next):
     content_length = request.headers.get("content-length")
@@ -130,6 +114,26 @@ async def limit_request_body(request: Request, call_next):
     return await call_next(request)
 
 
+# Declared after limit_request_body so it executes first (outermost @middleware).
+# Responds to CORS preflights before auth dependencies can reject them.
+@app.middleware("http")
+async def fast_options_handler(request: Request, call_next):
+    if request.method == "OPTIONS":
+        origin = request.headers.get("Origin", "")
+        if origin in ALLOWED_ORIGINS:
+            return Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Max-Age": "86400",
+                },
+            )
+    return await call_next(request)
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.error("[unhandled] %s %s: %s", request.method, request.url.path, exc, exc_info=True)
@@ -141,7 +145,7 @@ ALLOWED_ORIGINS = list(set([
     os.getenv("FRONTEND_URL", "http://localhost:5173"),
 ]))
 
-app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "Authorization", "ngrok-skip-browser-warning"])
 app.add_middleware(SecurityHeadersMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────────────

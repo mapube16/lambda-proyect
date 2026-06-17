@@ -45,7 +45,7 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
   const [includeProximos, setIncludeProximos] = useState(true);
   const [statePendiente, setStatePendiente] = useState(true);    // estado_cartera "Pendiente por pagar"
   const [stateSinPagos, setStateSinPagos] = useState(false);     // estado_cartera "Sin pagos Asignados"
-  const [maxAgeMonths, setMaxAgeMonths] = useState<number | null>(12); // 6 | 12 | 24 | null=sin límite
+  const [maxAgeMonths, setMaxAgeMonths] = useState<number | null>(3); // 1 | 2 | 3 | 6 | 12 | null=sin límite
   const [includeCancelled, setIncludeCancelled] = useState(false); // cancelled/no-renewed pólizas
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -398,9 +398,11 @@ export function SoftSegurosSetup({ hook, onComplete }: Props) {
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {([
-                { label: 'Últimos 6 meses', value: 6 },
-                { label: 'Últimos 12 meses', value: 12 },
-                { label: 'Últimos 24 meses', value: 24 },
+                { label: '1 mes', value: 1 },
+                { label: '2 meses', value: 2 },
+                { label: '3 meses', value: 3 },
+                { label: '6 meses', value: 6 },
+                { label: '12 meses', value: 12 },
                 { label: 'Sin límite', value: null },
               ] as { label: string; value: number | null }[]).map(opt => {
                 const selected = maxAgeMonths === opt.value;

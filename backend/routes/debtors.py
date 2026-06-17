@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 
 from auth import get_current_user
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/api/debtors", tags=["debtors"])
 # SOFTSEGUROS integration per client (sets company_voice.softseguros_enabled=True).
 # Mirrors the cobranza_enabled pattern in main.py.
 
-async def require_softseguros_enabled(current_user: dict = Depends(get_current_user)) -> dict:
+async def require_softseguros_enabled(request: Request, current_user: dict = Depends(get_current_user)) -> dict:
     """Reject with 403 unless this user's company_voice has softseguros_enabled=True."""
     user_id = str(current_user["user_id"])
     db = get_db()

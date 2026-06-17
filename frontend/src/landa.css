@@ -136,3 +136,5 @@ html, body { margin: 0; padding: 0; }
 .lc .row-enter { animation: lc-fade .3s ease both; }
 @keyframes lc-fade { from { opacity: 0; transform: translateY(-4px); } }
 @keyframes lc-spin { to { transform: rotate(360deg); } }
+@keyframes landa-pulse { 0%,100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; } 70% { box-shadow: 0 0 0 5px transparent; } }
+@keyframes landa-spin { to { transform: rotate(360deg); } }
