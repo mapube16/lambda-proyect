@@ -57,7 +57,7 @@ class CallResult:
     def flush_bot_buffer(self):
         """Flush accumulated bot tokens into a single transcript entry."""
         if self._bot_buffer.strip():
-            self.transcript.append((self._bot_buffer_ts, "Camila", self._bot_buffer.strip()))
+            self.transcript.append((self._bot_buffer_ts, "ARIA", self._bot_buffer.strip()))
             self._bot_buffer = ""
 
     @property
@@ -126,13 +126,44 @@ async def run_bot(
 
     logger.info("[VOICE] run_bot called: call_sid=%s, debtor=%s, user_id=%s", call_sid, debtor_name, user_id)
 
-    # ── Hot-reload: tenant config from Redis cache (5-min TTL) ──────────
-    tenant_config: dict = {}
-    if user_id:
+    # ── Latency instrumentation: log ms between each startup stage so we can see
+    # EXACTLY what's slow between WS-connect and first audio. _t0 = run_bot entry.
+    _t0 = time.perf_counter()
+    def _lap(stage: str):
+        logger.info("[LATENCY] %s: +%.0f ms (call %s)", stage, (time.perf_counter() - _t0) * 1000, call_sid)
+
+    # ── Preload tenant config + RAG precheck IN PARALLEL (latency) ──────
+    # These two reads (Redis tenant_config + Mongo rag_documents count) are
+    # independent and were the measured ~2s of dead air before the bot could
+    # greet (run_bot -> "Starting pipeline"). Running them concurrently collapses
+    # that to a single round-trip. The RAG precheck lets search_knowledge skip
+    # Pinecone (~5-7s) when the tenant has no documents.
+    import asyncio as _asyncio
+
+    async def _load_tenant_config():
+        if not user_id:
+            return {}
         try:
-            tenant_config = await get_tenant_config(user_id)
+            return await get_tenant_config(user_id)
         except Exception as _cfg_err:
             logger.warning("[VOICE] Could not load tenant_config for %s: %s", user_id, _cfg_err)
+            return {}
+
+    async def _load_rag_flag():
+        if not user_id:
+            return False
+        try:
+            from database import get_db
+            _db = get_db()
+            return (await _db.rag_documents.count_documents({"user_id": user_id}, limit=1)) > 0
+        except Exception as _rag_err:
+            logger.warning("[VOICE] rag_documents precheck failed for %s: %s", user_id, _rag_err)
+            return True  # fail-open: don't block real KB lookups
+
+    tenant_config, tenant_has_rag_docs = await _asyncio.gather(
+        _load_tenant_config(), _load_rag_flag()
+    )
+    _lap("config+rag loaded")
 
     # Guard: voice module disabled → close socket before pipeline starts
     if not tenant_config.get("modules", {}).get("voice", True):
@@ -140,32 +171,23 @@ async def run_bot(
         await websocket.close(1008, "Voice module disabled")
         return CallResult()
 
-    # ── RAG short-circuit precheck (latency) ────────────────────────────
-    # search_knowledge costs ~5-7s (OpenAI embed + Pinecone). If the tenant has
-    # NO documents ingested, that round-trip is pure dead air for every call.
-    # One cheap indexed count here lets the handler skip Pinecone entirely.
-    tenant_has_rag_docs = False
-    if user_id:
-        try:
-            from database import get_db
-            _db = get_db()
-            tenant_has_rag_docs = (
-                await _db.rag_documents.count_documents({"user_id": user_id}, limit=1)
-            ) > 0
-        except Exception as _rag_err:
-            logger.warning("[VOICE] rag_documents precheck failed for %s: %s", user_id, _rag_err)
-            tenant_has_rag_docs = True  # fail-open: don't block real KB lookups
-
-    # ── Camila system prompt ─────────────────────────────────────────────
+    # ── ARIA system prompt ───────────────────────────────────────────────
     tono = estrategia.get("tono", "amable")
 
-    # Format monto naturally for speech (no diminutives — "pesos", not "pesitos")
-    if monto >= 1_000_000:
-        monto_natural = f"{monto / 1_000_000:.0f} millones de pesos" if monto % 1_000_000 == 0 else f"{monto / 1_000_000:.1f} millones de pesos".rstrip('0').rstrip('.')
-    elif monto >= 1_000:
-        monto_natural = f"{monto / 1_000:.0f} mil pesos" if monto % 1_000 == 0 else f"{monto / 1_000:.1f} mil pesos".rstrip('0').rstrip('.')
-    else:
-        monto_natural = f"{monto:.0f} pesos"
+    # First name for the in-prompt example molde (the spoken greeting computes
+    # its own `first_name` later; this is just for the prompt's example frase).
+    first_name_for_prompt = (
+        debtor_name.split()[0]
+        if debtor_name and debtor_name != "senor o senora"
+        else ""
+    )
+
+    # Format monto naturally for speech. The old "{monto/1000:.1f} mil" math
+    # produced absurd "962.0 mil pesos" for 962036. Spell the whole integer in
+    # Spanish words so Gemini reads it correctly ("novecientos sesenta y dos mil
+    # pesos") — no diminutives, no decimals.
+    from cobranza.es_numbers import pesos_en_palabras
+    monto_natural = pesos_en_palabras(monto)
 
     # Format vencimiento naturally
     if hasattr(vencimiento, 'strftime'):
@@ -195,6 +217,14 @@ async def run_bot(
     _policy_lines = []
     if _tipo_poliza:
         _policy_lines.append(f"- Tipo de poliza: {_tipo_poliza}" + (f" (ramo: {_ramo})" if _ramo and _ramo != _tipo_poliza else ""))
+    if debtor.get("aseguradora_nombre"):
+        _policy_lines.append(f"- Compania aseguradora: {debtor.get('aseguradora_nombre')}")
+    if debtor.get("objeto_asegurado"):
+        _policy_lines.append(f"- Riesgo asegurado (placa/inmueble/objeto): {debtor.get('objeto_asegurado')}")
+    if debtor.get("forma_pago_texto"):
+        _policy_lines.append(f"- Modalidad de pago: {debtor.get('forma_pago_texto')}")
+    if debtor.get("numero_de_cuotas"):
+        _policy_lines.append(f"- Numero de cuotas: {debtor.get('numero_de_cuotas')}")
     if debtor.get("numero_poliza"):
         _policy_lines.append(f"- Numero de poliza: {debtor.get('numero_poliza')}")
     if debtor.get("estado_cartera"):
@@ -215,117 +245,44 @@ async def run_bot(
         _policy_lines.append(f"- Asesor asignado: {debtor.get('vendedores_nombre')}")
     _policy_block = ("\n".join(_policy_lines) + "\n") if _policy_lines else ""
 
-    system_prompt = (
-        f"Eres Camila, asesora de cobranza de De Pe Ge Seguros. Colombiana, de Armenia. "
-        f"Tienes 28 anios, llevas 4 anios en la empresa. Eres una persona real, no un robot. "
-        f"Tu tono es {tono}, cercano, como si hablaras con un vecino. "
-        f"\n\n"
-        f"PERSONALIDAD Y VOZ:\n"
-        f"- Hablas en espaniol colombiano natural. Usas 'usted' pero de forma cercana, no rigida.\n"
-        f"- Frases CORTAS. Maximo 1-2 oraciones por turno. Como en una conversacion real por telefono.\n"
-        f"- Muletillas naturales: 'aja', 'listo', 'mire', 'claro', 'si senor', 'que pena con usted', 'no, tranquilo'.\n"
-        f"- Pausas naturales: '...', 'mmm', 'a ver'. NO hables como un guion leido.\n"
-        f"- Numeros naturales: 'quinientos mil pesos', 'un millon doscientos', NO '500,000 pesos'.\n"
-        f"- Respuestas cortas cuando el otro habla: 'aja', 'si claro', 'entiendo', 'listo'. Escucha mas de lo que hablas.\n"
-        f"- NUNCA repitas el mismo argumento dos veces con las mismas palabras.\n"
-        f"- NADA de diminutivos. Di 'pesos' (no 'pesitos'), 'saldo' (no 'saldito'), "
-        f"'un momento' (no 'un segundito'), 'espere' (no 'esperecito'). Habla en terminos normales, profesionales pero calidos.\n"
-        f"- AL SALUDAR Y AL DIRIGIRTE AL CLIENTE usa siempre 'senor' (ej: 'senor Carlos', 'buenas tardes senor'). "
-        f"NUNCA uses 'don', 'dona', 'caballero' ni 'amigo'.\n"
-        f"\n\n"
-        f"DATOS DE ESTA LLAMADA (datos REALES y exactos de ESTE deudor — usalos directo, "
-        f"NO necesitas consultar ninguna herramienta para responder sobre su poliza, "
-        f"saldo o fechas; ya los tienes aqui):\n"
+    # ── 3-layer prompt assembly (multi-tenant) ──────────────────────────────
+    # LAYER 1 (engine) lives in prompt_builder; LAYER 2 (persona) comes from the
+    # tenant config in Mongo (voice_persona), falling back to a generic default;
+    # LAYER 3 (runtime) is THIS debtor's data, built here as runtime_block.
+    from cobranza.prompt_builder import (
+        resolve_persona, render_greeting, assemble_system_prompt,
+    )
+
+    runtime_block = (
+        "DATOS DE ESTA LLAMADA (datos REALES y exactos de ESTE deudor — usalos directo, "
+        "NO necesitas consultar ninguna herramienta para responder sobre su poliza, "
+        "saldo o fechas; ya los tienes aqui):\n"
         f"- Nombre: {debtor_name}\n"
         f"- Deuda pendiente: {monto_natural}\n"
         f"- Vencimiento: {vencimiento_str}\n"
         f"{_policy_block}"
-        f"\n"
-        f"COMO HABLAR DE LA POLIZA: cuando el deudor pregunte por su poliza, PRIMERO "
-        f"dile DE QUE TIPO es para que entienda de que se trata (ej: 'es su seguro de "
-        f"Vida' o 'su poliza de Autos'), y SOLO DESPUES, si viene al caso o lo pide, "
-        f"mencionas el numero de poliza. Nunca arranques soltando el numero.\n"
-        f"\n\n"
-        f"FLUJO DE LA CONVERSACION:\n"
-        f"Siempre te debes presentar como Camila, asesora de cobranza de De Pe Ge Seguros. "
-        f"1. Tu primer mensaje ya fue enviado (un saludo corto confirmando identidad). Espera la respuesta.\n"
-        f"   Si responde 'si', 'soy yo', 'con el habla', o directamente PREGUNTA por su deuda "
-        f"('cuanto debo', 'que paso con mi poliza') → la identidad queda confirmada. Responde de una "
-        f"con los datos de 'DATOS DE ESTA LLAMADA', SIN llamar verify_identity ni ninguna otra herramienta.\n"
-        f"2. Si confirma que es el/ella: presenta el motivo con tacto. NO sueltes el monto de una. "
-        f"   Ejemplo: 'Mire, le cuento, lo llamo porque tiene un saldo pendiente con nosotros...'\n"
-        f"3. Menciona el monto solo si el deudor pregunta o despues de que acepte escuchar.\n"
-        f"4. Ofrece opciones: pago completo, acuerdo de pago, o que lo llamen despues.\n"
-        f"5. Si acepta algo: confirma y agradece. 'Listo, perfecto, entonces quedamos asi.'\n"
-        f"6. Despidete corto y llama end_call.\n"
-        f"\n\n"
-        f"MANEJO DE OBJECIONES (muy importante):\n"
-        f"- 'No tengo plata' → 'Entiendo, y por eso mismo lo llamo, para mirar como le podemos ayudar. "
-        f"Podemos hacer un acuerdo de pago a cuotas, que le queda mas comodo?'\n"
-        f"- 'Ya pague' / 'ya lo cancele' / 'pague ayer' → PRIMERO llama la funcion "
-        f"notify_payment_claim (para avisar al equipo de De Pe Ge que revise el "
-        f"comprobante), y LUEGO di: 'Ah, listo, que pena. El equipo va a revisar el "
-        f"comprobante y le confirmamos. Gracias por avisar.' NUNCA confirmes tu el "
-        f"pago — eso lo valida el equipo.\n"
-        f"- 'No me interesa' / 'No quiero' → Intenta UNA sola vez con empatia: "
-        f"'Entiendo, pero mire que si dejamos pasar mas tiempo su poliza se puede ver "
-        f"afectada, y lo que queremos es ayudarlo a mantener su cobertura. "
-        f"Le conviene que lo miremos ahora.' Si insiste, respeta su decision.\n"
-        f"- 'Quien es usted?' / desconfianza → 'Claro, con toda razon. Soy Camila de De Pe Ge Seguros. "
-        f"Si quiere puede verificar llamando al numero que aparece en su poliza.'\n"
-        f"- Groserías o enojo → NO te alteres. Baja el tono: 'Entiendo que es una situacion incomoda, "
-        f"no es mi intencion molestarlo. Si prefiere lo llamamos en otro momento.'\n"
-        f"\n\n"
-        f"CONSULTAR INFORMACION:\n"
-        f"- Para LO SUYO (su poliza, su saldo, sus fechas, lo pagado): los datos REALES ya "
-        f"estan ARRIBA en 'DATOS DE ESTA LLAMADA'. Respondele DIRECTO de ahi, sin llamar "
-        f"ninguna herramienta. NUNCA inventes un monto o fecha; si un dato puntual no aparece "
-        f"arriba, recien ahi puedes usar get_policy_info para consultarlo.\n"
-        f"- search_knowledge → informacion GENERAL de como funciona la empresa y los seguros "
-        f"(condiciones, coberturas en general, deducibles, procedimientos, preguntas frecuentes). "
-        f"Usala cuando pregunte COMO funcionan las cosas: 'que cubre el seguro', 'como es el deducible', "
-        f"'que pasa si no pago', 'como hago un reclamo'. Si no encuentra nada, dilo con honestidad "
-        f"y ofrece que un asesor lo contacte; NO inventes.\n"
-        f"REGLA DE ORO: SUS numeros → ya los tienes arriba, responde directo. "
-        f"COMO funciona algo → search_knowledge.\n"
-        f"\n"
-        f"REGLA ANTI-INVENTO (CRITICA): NUNCA actues sobre algo que el deudor NO dijo claramente. "
-        f"Si no escuchaste bien, si hubo silencio, o si el audio fue confuso, NO asumas ni completes "
-        f"la frase: pregunta '¿Disculpe, no le escuche bien, me puede repetir?'. JAMAS llames a una "
-        f"funcion (escalate, end_call, etc.) basandote en algo que crees que dijo pero no estas seguro. "
-        f"Solo llama escalate si el deudor PIDIO EXPLICITAMENTE un asesor/humano. Ante la duda, pregunta.\n"
-        f"\n\n"
-        f"CUANDO COLGAR — usa la funcion end_call (OBLIGATORIO):\n"
-        f"Tienes una funcion llamada 'end_call'. DEBES usarla para terminar la llamada.\n"
-        f"Despues de decir tu despedida, SIEMPRE llama a end_call. Situaciones:\n"
-        f"- El deudor dice 'no me llame mas', 'no me vuelva a llamar', 'dejeme en paz', "
-        f"o cualquier variante → di tu despedida y llama end_call.\n"
-        f"- El deudor se despide o dice 'chao', 'adios', 'gracias' → despidete y llama end_call.\n"
-        f"- El deudor pide hablar con un humano/asesor/persona → llama escalate, confirma que un "
-        f"asesor lo contactara pronto, despidete, y llama end_call. NUNCA te quedes en silencio "
-        f"despues de prometer el contacto.\n"
-        f"- Ya lograste el objetivo (promesa de pago o acuerdo) → confirma, despidete y llama end_call.\n"
-        f"- El deudor esta grosero y no quiere hablar → despidete corto y llama end_call.\n"
-        f"- Maximo 3-4 minutos de llamada. Si no avanzas, ofrece llamar otro dia, despidete y llama end_call.\n"
-        f"- NUNCA sigas hablando despues de despedirte. Despedida → end_call, siempre.\n"
-        f"\n\n"
-        f"PROHIBIDO:\n"
-        f"- Amenazar, presionar agresivamente, o mentir.\n"
-        f"- Compartir datos con terceros. Si contesta alguien que no es el deudor, NO menciones la deuda.\n"
-        f"- Llamar fuera de horario (8am-5pm).\n"
-        f"- Sonar como robot o leer un guion. Eres una persona real teniendo una conversacion."
+        "\n"
     )
 
-    # ── Hot-reload override: use tenant voice_system_prompt if configured ─
-    # string.replace() only — NO template engine (locked decision Phase 25)
-    tenant_prompt = tenant_config.get("voice_system_prompt", "")
-    if tenant_prompt:
-        # Cap to 2000 chars (T-25-06 threat mitigation — written with Pydantic max_length at 25-05)
-        brand_name = tenant_config.get("brand_name", "nuestra empresa")
-        system_prompt = tenant_prompt[:2000]
-        system_prompt = system_prompt.replace("{brand_name}", brand_name)
-        system_prompt = system_prompt.replace("{debtor_name}", debtor.get("nombre", ""))
-        logger.info("[VOICE] Using tenant voice_system_prompt for user %s", user_id)
+    persona = resolve_persona(tenant_config)
+    # tono persisted at the top level of estrategia still wins if the persona
+    # didn't set one (back-compat with existing cobranza_config.estrategia.tono).
+    if not (tenant_config.get("voice_persona") or {}).get("tono"):
+        persona["tono"] = tono
+
+    system_prompt = assemble_system_prompt(
+        persona,
+        runtime_block=runtime_block,
+        first_name=first_name_for_prompt,
+        ramo=_tipo_poliza or _ramo or "seguros",
+        monto_natural=monto_natural,
+        aseguradora=debtor.get("aseguradora_nombre") or "",
+    )
+    logger.info(
+        "[VOICE] Assembled 3-layer prompt for user %s (persona=%s, %d chars)",
+        user_id, persona.get("agent_name"), len(system_prompt),
+    )
+    _lap("prompt assembled")
 
     # ── Transport: Twilio WebSocket ────────────────────────────────────
     # Silero VAD here handles user-speech interruptions. Gemini's OWN native
@@ -359,6 +316,8 @@ async def run_bot(
             ),
         ),
     )
+
+    _lap("transport created")
 
     # ── Tool schemas for Gemini function calling (Pipecat FunctionSchema) ──
     from pipecat.adapters.schemas.function_schema import FunctionSchema
@@ -526,8 +485,10 @@ async def run_bot(
         GeminiVADParams,
         GeminiModalities,
     )
+    _lap("tools schema built")
     from pipecat.transcriptions.language import Language
-    from google.genai.types import StartSensitivity, EndSensitivity
+    from google.genai.types import StartSensitivity, EndSensitivity, ThinkingConfig
+    _lap("genai.types imported")
     # Per-tenant VAD start-sensitivity. This SDK only exposes HIGH / LOW (no
     # MEDIUM). We default HIGH: LOW reacts to less-confident onsets and was what
     # produced phantom/hallucinated turns. Proactivity instead comes from the
@@ -553,7 +514,7 @@ async def run_bot(
         # LLMContextAggregatorPair. So it should both transcribe and complete
         # function calls correctly now.
         model="models/gemini-3.1-flash-live-preview",
-        # Camila is a woman → feminine Gemini Live voice. Prebuilt feminine
+        # ARIA is a woman → feminine Gemini Live voice. Prebuilt feminine
         # voices: Aoede (warm/natural), Leda (bright/youthful), Kore, Zephyr.
         # Per-tenant override from MongoDB (no hardcoded tenant data); default
         # Aoede when the tenant hasn't set one.
@@ -572,6 +533,12 @@ async def run_bot(
             # only text — the pipeline emits "bot speaking" events but ZERO
             # audio frames, so the caller hears nothing.
             modalities=GeminiModalities.AUDIO,
+            # Disable "thinking" (thinking_budget=0): the model otherwise spends
+            # extra inference deliberating BEFORE emitting the first audio, which
+            # adds dead air to the opening greeting (~2.7s measured answer->speak).
+            # Cobranza is scripted/reactive, not a reasoning task — no thinking
+            # needed. This shaves the first-token latency.
+            thinking=ThinkingConfig(thinking_budget=0),
             # Gemini's native VAD MUST stay ON — it's what detects end-of-turn
             # and triggers the response. Disabling it entirely meant Gemini
             # received the caller's audio but never knew the turn ended, so it
@@ -608,26 +575,18 @@ async def run_bot(
             ),
         ),
     )
+    _lap("LLM service created")
 
     # ── First greeting (spoken as TTS, not LLM-generated) ─────────────
     # Always address the client as "senor" + first name (per client request),
     # never "don"/"dona"/"caballero". No diminutives anywhere.
-    import random
+    # The agent introduces herself as the virtual assistant FROM THE FIRST
+    # SECOND, then confirms identity in the same breath (hybrid opener). The
+    # greeting text comes from the tenant's persona (Layer 2), so it's
+    # per-client and editable without a deploy. The policy detail comes only
+    # AFTER the debtor confirms (handled by the prompt flow).
     first_name = debtor_name.split()[0] if debtor_name and debtor_name != "senor o senora" else ""
-    if first_name:
-        greetings = [
-            f"Aló... buenas tardes. ¿Hablo con el señor {first_name}?",
-            f"Buenas tardes... ¿señor {first_name}?",
-            f"Aló, buenas tardes. ¿Será que hablo con el señor {first_name}?",
-            f"Buenas tardes... ¿estoy hablando con el señor {first_name}?",
-        ]
-    else:
-        greetings = [
-            "Aló... buenas tardes, señor. ¿Con quién tengo el gusto?",
-            "Buenas tardes, señor... ¿con quién hablo?",
-            "Aló, buenas tardes, señor. ¿Quién me contesta?",
-        ]
-    first_message = random.choice(greetings)
+    first_message = render_greeting(persona, first_name)
 
     # ── LLM Context ─────────────────────────────────────────────────────
     # Seed the greeting into the INITIAL context so Gemini speaks it the moment
@@ -637,14 +596,30 @@ async def run_bot(
     # it, so the frame queued silently (observed: "speaking greeting" logged but
     # no audio). Letting Gemini generate the greeting is the only path that
     # actually produces sound on this transport.
+    # ── Force the EXACT greeting (no paraphrase) ─────────────────────────────
+    # Gemini Live paraphrased the greeting when it was only a trailing
+    # instruction buried under a 7000-char prompt full of example "buenas
+    # tardes" lines. Fix: put the literal opener FIRST and LAST (a hard frame at
+    # the very top of the system message + a final reminder), and make the user
+    # turn explicitly order it. The opener must be the model's first words,
+    # verbatim, including the ARIA self-introduction.
+    greeting_hard = (
+        f"=== REGLA #1, POR ENCIMA DE TODO LO DEMAS ===\n"
+        f"Tu PRIMERA frase hablada al conectar la llamada DEBE SER, palabra por "
+        f"palabra, sin cambiar ni una letra, sin reemplazarla por otro saludo:\n"
+        f"\"{first_message}\"\n"
+        f"NO digas 'buenas tardes' a secas, NO omitas tu nombre ARIA, NO omitas "
+        f"que eres la asistente virtual. Di la frase COMPLETA tal cual. Recien "
+        f"despues de decirla, sigue el resto de tus instrucciones.\n"
+        f"=== FIN REGLA #1 ===\n\n"
+    )
     greeting_instruction = (
-        f"\n\nIMPORTANTE — APERTURA DE LA LLAMADA: La llamada acaba de conectar. "
-        f"Tu PRIMER mensaje debe ser EXACTAMENTE este saludo y nada mas, sin "
-        f"esperar a que la otra persona hable: \"{first_message}\""
+        f"\n\nRECORDATORIO FINAL: tu primera linea hablada es EXACTAMENTE "
+        f"\"{first_message}\" — palabra por palabra, con tu nombre y que eres asistente virtual."
     )
     messages = [
-        {"role": "system", "content": system_prompt + greeting_instruction},
-        {"role": "user", "content": "[La llamada acaba de conectar — saluda ahora.]"},
+        {"role": "system", "content": greeting_hard + system_prompt + greeting_instruction},
+        {"role": "user", "content": f"[La persona contesto. Di AHORA, exactamente: \"{first_message}\"]"},
     ]
     context = LLMContext(messages)
 
@@ -967,6 +942,7 @@ async def run_bot(
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, client):
+        _lap("on_client_connected -> seeding context")
         logger.info("[VOICE] EVENT: on_client_connected — seeding context to greet")
         # The greeting is NOT a TTSSpeakFrame (silent with Gemini Live — there's
         # no separate TTS service to render it). It's seeded into the INITIAL
@@ -998,6 +974,7 @@ async def run_bot(
     watchdog = _asyncio.create_task(_call_watchdog())
 
     # ── Run ───────────────────────────────────────────────────────────────
+    _lap("pipeline built, about to run")
     logger.info("[VOICE] Starting pipeline for call %s...", call_sid)
     try:
         runner = PipelineRunner()

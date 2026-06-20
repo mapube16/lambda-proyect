@@ -337,6 +337,103 @@ export async function getLearningPatterns() {
   return apiCall(`/api/learning/patterns`);
 }
 
+// ============ STAFF / ADMIN ============
+// Global operation stats. { global: {...}, per_client: [...] }
+export async function staffGetStats() {
+  return apiCall(`/api/staff/stats`);
+}
+
+// Agentes activos por cliente. { pipeline_registry, per_client_active }
+export async function staffGetActiveAgents() {
+  return apiCall(`/api/staff/agents/active`);
+}
+
+// Lista de clientes (usuarios role=client). [{ id, email, role, ... }]
+export async function staffGetClients() {
+  return apiCall(`/api/staff/clients`);
+}
+
+// Detalle de un cliente: summary + runs + cobranza_enabled + onboarding.
+export async function staffGetClientDetail(clientId: string) {
+  return apiCall(`/api/staff/clients/${clientId}`);
+}
+
+export async function staffGetClientLeads(clientId: string) {
+  return apiCall(`/api/staff/clients/${clientId}/leads`);
+}
+
+export async function staffGetClientCampaigns(clientId: string) {
+  return apiCall(`/api/staff/clients/${clientId}/campaigns`);
+}
+
+export async function staffGetClientLearning(clientId: string) {
+  return apiCall(`/api/staff/clients/${clientId}/learning`);
+}
+
+// Fuentes de descubrimiento habilitadas para el cliente.
+// fuentes válidas backend: google_maps, secop_adjudicados, secop_licitaciones
+export async function staffUpdateClientSources(clientId: string, fuentes: string[], notificationChannel = "web") {
+  return apiCall(`/api/staff/clients/${clientId}/sources`, {
+    method: "POST",
+    body: JSON.stringify({ fuentes_habilitadas: fuentes, notification_channel: notificationChannel }),
+  });
+}
+
+export async function staffEnableCobranza(clientId: string) {
+  return apiCall(`/api/staff/clients/${clientId}/cobranza/enable`, { method: "POST" });
+}
+
+export async function staffDisableCobranza(clientId: string) {
+  return apiCall(`/api/staff/clients/${clientId}/cobranza/disable`, { method: "POST" });
+}
+
+// Provision a full client in one call: account + voice persona + flags + creds.
+export interface ProvisionTenantPayload {
+  email: string;
+  password: string;
+  full_name?: string;
+  company_name?: string;
+  phone?: string;
+  country?: string;
+  voice_persona?: {
+    agent_name?: string;
+    company_name?: string;
+    company_brand?: string;
+    tono?: string;
+    greeting_template?: string;
+    pitch_template?: string;
+    business_rules?: string;
+    objection_handling?: string;
+    forbidden?: string;
+  };
+  enable_cobranza?: boolean;
+  enable_voice?: boolean;
+  softseguros_username?: string;
+  softseguros_password?: string;
+}
+
+export async function staffProvisionTenant(payload: ProvisionTenantPayload) {
+  return apiCall(`/api/staff/tenants/provision`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// Guarda el perfil propuesto por el wizard de onboarding del cliente.
+export async function staffSaveClientProfile(clientId: string, data: { business_summary?: string; personality_prompt?: string; campaign?: any; agents?: any[] }) {
+  return apiCall(`/api/staff/clients/${clientId}/profile`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function staffSendWelcome(clientId: string, data: { password: string; agents: any[]; campaign: any; business_summary?: string; login_url?: string }) {
+  return apiCall(`/api/staff/clients/${clientId}/send-welcome`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 // ============ Helper ============
 export function setToken(token: string) {
   ACCESS_TOKEN = token;

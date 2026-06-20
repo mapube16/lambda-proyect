@@ -172,8 +172,12 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
         if call_mapping:
             user_id = call_mapping["user_id"]
             debtor_id = call_mapping["debtor_id"]
-            debtor = await get_debtor_by_id(db, user_id, debtor_id)
-            config_doc = await db.cobranza_config.find_one({"user_id": user_id})
+            # Parallelize the two Atlas round-trips — they're independent. Run in
+            # series this added ~one extra RTT of dead air before ARIA could greet.
+            debtor, config_doc = await asyncio.gather(
+                get_debtor_by_id(db, user_id, debtor_id),
+                db.cobranza_config.find_one({"user_id": user_id}),
+            )
             estrategia = (config_doc or {}).get("estrategia", {})
         else:
             logger.warning("[WS] No call mapping for %s — rejecting", call_sid)
@@ -352,15 +356,16 @@ async def initiate_call_v2(
         to_number = debtor.get("telefono")
         twilio_client = Client(twilio_sid, twilio_token)
 
-        # AMD trade-off: machine_detection="Enable" blocks the webhook until
-        # Twilio decides human-vs-machine, then we hang up on "machine". It
-        # protects against the 280s zombie-voicemail call — but it FALSE-POSITIVES
-        # on a slow human "Aló" + pause, classifying a real person as
-        # machine_start and hanging up before the bot ever connects (observed on
-        # CA9b483c: real pickup dropped as machine_start). For manual testing set
-        # VOICE_AMD_ENABLED=false to connect every answer straight to the bot;
-        # the 240s watchdog still caps any voicemail that slips through.
-        amd_enabled = os.getenv("VOICE_AMD_ENABLED", "true").lower() in ("1", "true", "yes")
+        # AMD trade-off: machine_detection makes Twilio WAIT to classify
+        # human-vs-machine BEFORE connecting our webhook — that wait is pure dead
+        # air the caller perceives before ARIA can greet (the dominant chunk of
+        # opening latency). It also FALSE-POSITIVES on a slow human "Aló" + pause,
+        # hanging up real people (observed on CA9b483c). So AMD is now OFF by
+        # default: every answer connects straight to the bot with NO detection
+        # delay. The 240s watchdog still caps any voicemail that slips through.
+        # Re-enable per-deployment with VOICE_AMD_ENABLED=true if voicemail spam
+        # becomes a cost problem.
+        amd_enabled = os.getenv("VOICE_AMD_ENABLED", "false").lower() in ("1", "true", "yes")
         create_kwargs = dict(
             to=to_number,
             from_=from_number,

@@ -38,9 +38,39 @@ const C = {
   purpleBg:  '#EEEDFC',
   yellow:    '#D97A06',
   yellowBg:  '#FCF1E0',
+  teal:      '#1FA89E',
+  tealBg:    'rgba(31,168,158,0.08)',
+  tealBdr:   'rgba(31,168,158,0.30)',
+  border:    '#ECECF3',
+  border2:   '#E3E3EC',
+  ink:       '#16161D',
   SG:        "'Plus Jakarta Sans', system-ui, sans-serif",
   IN:        "'Plus Jakarta Sans', system-ui, sans-serif",
 };
+
+// NIT → nombre comercial de aseguradoras colombianas. El backend solo guarda el
+// NIT (aseguradora_nit); este mapa lo traduce al nombre que el usuario reconoce.
+// Si el NIT no está aquí, se muestra el NIT tal cual.
+const ASEGURADORA_POR_NIT: Record<string, string> = {
+  '860002184': 'SURA',
+  '890903407': 'SURA',
+  '860026182': 'Allianz',
+  '860002180': 'Bolívar',
+  '860009578': 'Seguros del Estado',
+  '860002400': 'Mapfre',
+  '860002503': 'La Previsora',
+  '860037013': 'Liberty Seguros',
+  '860524654': 'AXA Colpatria',
+  '860002514': 'Colmena',
+  '800240882': 'Equidad Seguros',
+  '860028415': 'Mundial Seguros',
+  '860009999': 'Solidaria',
+};
+function nombreAseguradora(nit?: string): string | undefined {
+  if (!nit) return undefined;
+  const clean = String(nit).replace(/[^\d]/g, '');
+  return ASEGURADORA_POR_NIT[clean] || nit;
+}
 
 const lbl = (color = C.muted, size = 10): React.CSSProperties => ({
   fontFamily: C.SG, fontSize: size, fontWeight: 600,
@@ -99,6 +129,13 @@ interface Debtor {
   fecha_promesa?: string;
   notas?: string;
   escalado?: boolean;
+  // SoftSeguros-owned fields (present only when source === 'softseguros').
+  source?: 'manual' | 'softseguros';
+  numero_poliza?: string;
+  ramo_nombre?: string;
+  cliente_documento?: string;
+  aseguradora_nit?: string;
+  last_synced?: string;
 }
 
 type EstadoFilter = Debtor['estado'] | null;
@@ -398,15 +435,16 @@ function DebtorModal({
       <div style={{
         position: 'relative', zIndex: 1,
         width: '100%', maxWidth: 960, maxHeight: '90vh',
-        background: C.s1, border: `1px solid rgba(14,165,233,0.22)`,
+        background: C.s1, border: `1px solid ${C.border}`, borderRadius: 22,
+        boxShadow: '0 20px 60px rgba(0,0,0,.3)',
         display: 'flex', flexDirection: 'column',
         animation: 'cobr-fade-in 0.2s ease',
         overflow: 'hidden',
       }}>
         {/* Header */}
         <div style={{
-          padding: '20px 28px', background: C.s0,
-          borderBottom: `1px solid #ECECF3`,
+          padding: '22px 24px', background: C.s0,
+          borderBottom: `1px solid ${C.border}`,
           display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16,
           flexWrap: 'wrap',
         }}>
@@ -456,7 +494,7 @@ function DebtorModal({
             ) : (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                  <h2 style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 22, color: C.text, letterSpacing: '-0.02em' }}>
+                  <h2 style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 20, color: C.ink, letterSpacing: '-0.02em' }}>
                     {debtor.nombre}
                   </h2>
                   <EstadoBadge estado={debtor.estado} />
@@ -470,8 +508,8 @@ function DebtorModal({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             {!editMode && (
               <div style={{ textAlign: 'right' }}>
-                <div style={lbl(C.muted, 9)}>Monto</div>
-                <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 22, color: estadoCfg.color }}>
+                <div style={lbl(C.faint, 10)}>Monto</div>
+                <div style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 22, color: estadoCfg.color }}>
                   {formatCOP(debtor.monto)}
                 </div>
               </div>
@@ -480,41 +518,30 @@ function DebtorModal({
               <>
                 <button
                   onClick={() => setEditMode(false)}
-                  style={{
-                    padding: '9px 14px', border: `1px solid #E3E3EC`, cursor: 'pointer',
-                    background: 'transparent', color: C.muted, fontFamily: C.SG, fontSize: 11, fontWeight: 600,
-                  }}
+                  className="btn btn-ghost"
+                  style={{ fontFamily: C.SG }}
                 >Cancelar</button>
                 <button
                   onClick={handleSaveEdits}
                   disabled={saving}
-                  style={{
-                    padding: '9px 18px', border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
-                    background: C.orange, color: C.bg, ...lbl('#000', 11), opacity: saving ? 0.6 : 1,
-                  }}
+                  className="btn btn-primary"
+                  style={{ fontFamily: C.SG, opacity: saving ? 0.6 : 1 }}
                 >{saving ? 'Guardando…' : 'Guardar cambios'}</button>
               </>
             ) : (
               <button
                 onClick={() => handleLlamarAhora()}
                 disabled={acting}
-                style={{
-                  padding: '9px 18px', border: 'none', cursor: acting ? 'not-allowed' : 'pointer',
-                  background: C.cyan, color: C.bg,
-                  ...lbl('#000', 11), display: 'flex', alignItems: 'center', gap: 6,
-                  opacity: acting ? 0.6 : 1,
-                }}
+                className="btn btn-primary"
+                style={{ fontFamily: C.SG, opacity: acting ? 0.6 : 1 }}
               >
-                📞 LLAMAR
+                📞 Llamar
               </button>
             )}
             <button
               onClick={onClose}
-              style={{
-                width: 36, height: 36, border: `1px solid #E3E3EC`,
-                background: 'transparent', color: C.muted, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
-              }}
+              className="btn btn-ghost btn-icon"
+              style={{ fontFamily: C.SG, fontSize: 16, width: 36, height: 36 }}
             >✕</button>
           </div>
         </div>
@@ -528,6 +555,31 @@ function DebtorModal({
             overflowY: 'auto', padding: '20px 20px',
             display: 'flex', flexDirection: 'column', gap: 20,
           }}>
+
+            {/* SoftSeguros póliza panel (real fields only) */}
+            {debtor.source === 'softseguros' && (
+              <div style={{ padding: 14, background: C.tealBg, border: `1px solid ${C.tealBdr}`, borderRadius: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 11 }}>
+                  <span style={{ color: C.teal, display: 'inline-flex', fontSize: 13 }}>🔗</span>
+                  <span style={{ ...lbl(C.teal, 9.5) }}>Póliza · SoftSeguros</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                  {([
+                    ['Nº póliza', debtor.numero_poliza],
+                    ['Ramo', debtor.ramo_nombre],
+                    ['Aseguradora', nombreAseguradora(debtor.aseguradora_nit)],
+                    ['Documento', debtor.cliente_documento],
+                  ] as [string, string | undefined][])
+                    .filter(([, v]) => !!v)
+                    .map(([k, v]) => (
+                      <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+                        <span style={{ fontFamily: C.IN, fontSize: 12, color: C.faint, flexShrink: 0 }}>{k}</span>
+                        <span style={{ fontFamily: C.SG, fontSize: 12.5, fontWeight: 700, color: C.ink, textAlign: 'right' }}>{v}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
 
             {/* Promise info */}
             {(debtor.estado === 'promesa_de_pago' || debtor.monto_prometido) && (
@@ -551,7 +603,7 @@ function DebtorModal({
 
             {/* Historial de llamadas */}
             <div>
-              <div style={{ ...lbl(C.muted, 9), marginBottom: 12 }}>INTERACTION_LOG_MATRIX</div>
+              <div style={{ ...lbl(C.faint, 10), marginBottom: 12 }}>Historial de llamadas</div>
               {debtor.historial_llamadas.length === 0 ? (
                 <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, fontStyle: 'italic' }}>
                   Sin llamadas registradas
@@ -623,7 +675,7 @@ function DebtorModal({
 
             {/* Notas */}
             <div>
-              <div style={{ ...lbl(C.muted, 9), marginBottom: 8 }}>NOTAS</div>
+              <div style={{ ...lbl(C.faint, 10), marginBottom: 8 }}>Notas</div>
               <textarea
                 value={notas}
                 onChange={e => setNotas(e.target.value)}
@@ -631,40 +683,38 @@ function DebtorModal({
                 placeholder="Agregar nota..."
                 style={{
                   width: '100%', resize: 'vertical', background: C.s2,
-                  border: `1px solid #ECECF3`, color: C.text,
-                  fontFamily: C.IN, fontSize: 12, padding: '8px 10px', outline: 'none',
+                  border: `1px solid ${C.border2}`, borderRadius: 10, color: C.text,
+                  fontFamily: C.IN, fontSize: 12, padding: '10px 12px', outline: 'none',
                   boxSizing: 'border-box',
                 }}
               />
               <button
                 onClick={handleSaveNotas}
                 disabled={saving}
-                style={{
-                  marginTop: 6, padding: '6px 14px', border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
-                  background: C.s3, color: C.text, ...lbl(C.text, 10), opacity: saving ? 0.6 : 1,
-                }}
+                className="btn btn-soft"
+                style={{ marginTop: 8, fontFamily: C.SG, fontSize: 12.5, opacity: saving ? 0.6 : 1 }}
               >
-                {saving ? 'Guardando...' : 'GUARDAR NOTA'}
+                {saving ? 'Guardando...' : 'Guardar nota'}
               </button>
             </div>
 
             {/* Action grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               {[
-                { label: 'EDITAR', onClick: () => setEditMode(true), color: C.orange },
-                { label: 'MARCAR PAGADO', onClick: handlePagar, color: C.green },
-                { label: debtor.estado === 'pausado' ? 'REACTIVAR' : 'PAUSAR', onClick: handlePausar, color: C.purple },
-                { label: 'ELIMINAR', onClick: handleEliminar, color: C.pink },
+                { label: 'Editar', onClick: () => setEditMode(true), color: C.orange },
+                { label: 'Marcar pagado', onClick: handlePagar, color: C.green },
+                { label: debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar', onClick: handlePausar, color: C.purple },
+                { label: 'Eliminar', onClick: handleEliminar, color: C.pink },
               ].map(({ label, onClick, color }) => (
                 <button
                   key={label}
                   onClick={onClick}
                   disabled={acting}
                   style={{
-                    padding: '10px 8px', border: `1px solid #E3E3EC`,
+                    padding: '10px 8px', border: `1px solid ${C.border2}`, borderRadius: 10,
                     background: 'transparent', cursor: acting ? 'not-allowed' : 'pointer',
-                    ...lbl(color, 9), opacity: acting ? 0.5 : 1,
-                    transition: 'background 0.15s',
+                    fontFamily: C.SG, fontWeight: 700, fontSize: 12, color,
+                    opacity: acting ? 0.5 : 1, transition: 'background 0.15s',
                   }}
                   onMouseEnter={e => { if (!acting) (e.currentTarget as HTMLElement).style.background = C.s3; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
@@ -680,8 +730,8 @@ function DebtorModal({
             overflowY: 'auto', padding: '20px 24px',
             display: 'flex', flexDirection: 'column', gap: 16,
           }}>
-            <div style={{ ...lbl(C.muted, 9), borderBottom: `1px solid #ECECF3`, paddingBottom: 12 }}>
-              NEURAL_TRANSCRIPTION_STREAM
+            <div style={{ ...lbl(C.faint, 10), borderBottom: `1px solid ${C.border}`, paddingBottom: 12 }}>
+              Transcripción última llamada
             </div>
             {debtor.historial_llamadas.length === 0 ? (
               <div style={{ fontFamily: C.IN, fontSize: 13, color: C.muted, fontStyle: 'italic', textAlign: 'center', marginTop: 40 }}>
@@ -1356,6 +1406,56 @@ export function CobranzaTab() {
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchTodaySummary]);
 
+  // ── Whole-cartera counts per estado (KPIs) ─────────────────────────────────
+  const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number } | null>(null);
+  const fetchFunnel = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/cobranza/funnel');
+      if (r.ok) setFunnel(await r.json());
+    } catch { /* keep prev */ }
+  }, []);
+  useEffect(() => { fetchFunnel(); }, [fetchFunnel]);
+
+  // ── SoftSeguros sync status (header pill) ──────────────────────────────────
+  const [syncStatus, setSyncStatus] = useState<{ last_sync_at: string | null; is_syncing_now: boolean } | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const fetchSyncStatus = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/debtors/sync-status');
+      if (r.ok) {
+        const d = await r.json();
+        setSyncStatus({ last_sync_at: d.last_sync_at ?? null, is_syncing_now: !!d.is_syncing_now });
+      }
+    } catch { /* keep prev */ }
+  }, []);
+  useEffect(() => { fetchSyncStatus(); }, [fetchSyncStatus]);
+
+  const handleSyncNow = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const r = await apiFetch('/api/debtors/sync-now', { method: 'POST' });
+      if (r.ok) {
+        addToast({ id: `sync-${Date.now()}`, message: 'Sincronización iniciada', ok: true });
+        await fetchSyncStatus();
+        await fetchDebtors();
+        await fetchFunnel();
+      } else {
+        const data = await r.json().catch(() => ({}));
+        addToast({ id: `sync-err-${Date.now()}`, message: (data as { detail?: string }).detail || `Error ${r.status}`, ok: false });
+      }
+    } catch {
+      addToast({ id: `sync-err-${Date.now()}`, message: 'Error de conexión', ok: false });
+    } finally {
+      setSyncing(false);
+    }
+  }, [addToast, fetchSyncStatus, fetchDebtors]);
+
+  const fmtSyncTime = (iso: string | null): string => {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }); }
+    catch { return '—'; }
+  };
+
   // ── Real-time WS updates ───────────────────────────────────────────────────
   const fetchDebtorById = useCallback(async (debtor_id: string) => {
     try {
@@ -1517,6 +1617,16 @@ export function CobranzaTab() {
   // Fallback "llamando" count from the current page (used until today-summary loads).
   const llamandoNow = debtors.filter(d => d.estado === 'llamando').length;
 
+  // Whole-cartera KPIs from /funnel (counts) — fall back to the loaded page.
+  const fc = funnel?.counts ?? {};
+  const carteraCount = funnel?.total ?? total ?? debtors.length;
+  const contactados = (fc.contactado ?? 0) + (fc.promesa_de_pago ?? 0) + (fc.pagado ?? 0);
+  const promesasActivas = fc.promesa_de_pago ?? 0;
+  const pagados = fc.pagado ?? 0;
+  // No endpoint returns the cartera-wide monto sum for the mixed (manual + SS)
+  // cartera, so this reflects the debtors currently loaded on screen.
+  const carteraMontoPage = debtors.reduce((s, d) => s + (d.monto || 0), 0);
+
   // ── Filtered list ──────────────────────────────────────────────────────────
   // Filtering + pagination are server-side now; `debtors` is already the page.
   const visible = debtors;
@@ -1546,96 +1656,100 @@ export function CobranzaTab() {
         {/* SOFTSEGUROS deudores (synced from the broker's SOFTSEGUROS account) */}
         <SoftSegurosSection />
 
-        {/* Page heading */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22 }}>
+        {/* hidden inputs */}
+        <input ref={csvInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('create')} />
+        <input ref={csvUpdateRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('update')} />
+
+        {/* Page heading (Panel) */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
-            <h1 style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 28, letterSpacing: '-0.03em', color: C.text }}>
-              Cobranza
+            <h1 style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 26, letterSpacing: '-0.02em', color: C.ink, margin: 0 }}>
+              Cobranza de Voz
             </h1>
-            <p style={{ fontFamily: C.IN, fontSize: 13, color: C.muted, marginTop: 5 }}>
-              Campaña de cobro automatizada con IA — control total de cada deudor.
+            <p style={{ fontFamily: C.IN, fontSize: 14.5, color: C.muted, margin: '6px 0 0' }}>
+              Agente IA activo · Ley 2300 — máx. 1 contacto por día
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {/* hidden inputs */}
-            <input ref={csvInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('create')} />
-            <input ref={csvUpdateRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('update')} />
-            {/* Nuevo deudor */}
-            <button
-              onClick={() => setShowCreateModal(true)}
-              title="Agregar deudor manualmente"
-              style={{
-                height: 32, padding: '0 14px', border: `1px solid rgba(21,165,106,0.30)`,
-                background: C.greenBg, color: C.green,
-                cursor: 'pointer', fontSize: 12,
-                fontFamily: C.SG, fontWeight: 600, letterSpacing: '0.05em',
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}
-            >+ Nuevo</button>
-            {/* Agregar CSV */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {/* SoftSeguros sync pill — only when there is a sync to show */}
+            {syncStatus?.last_sync_at && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderRadius: 999, background: C.tealBg, border: `1px solid ${C.tealBdr}` }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.teal, flexShrink: 0, ...(syncStatus.is_syncing_now ? { animation: 'cobr-pulse 1.5s infinite' } : {}) }} />
+                <span style={{ fontFamily: C.SG, fontSize: 12, fontWeight: 700, color: C.teal }}>SoftSeguros</span>
+                <span style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted }}>· sinc. {fmtSyncTime(syncStatus.last_sync_at)}</span>
+                <button onClick={handleSyncNow} disabled={syncing || syncStatus.is_syncing_now} title="Sincronizar ahora" style={{ display: 'inline-flex', alignItems: 'center', border: 'none', background: 'transparent', color: C.teal, cursor: (syncing || syncStatus.is_syncing_now) ? 'default' : 'pointer', padding: 0, marginLeft: 2, opacity: (syncing || syncStatus.is_syncing_now) ? 0.5 : 1 }}>
+                  <span style={{ display: 'inline-flex', animation: (syncing || syncStatus.is_syncing_now) ? 'cobr-spin 0.8s linear infinite' : 'none', fontSize: 14 }}>↻</span>
+                </button>
+              </div>
+            )}
+            {/* Secondary CSV tools */}
             <button
               onClick={() => csvInputRef.current?.click()}
               disabled={!!uploadingCsv}
               title="Agregar nuevos deudores desde CSV"
-              style={{
-                height: 32, padding: '0 12px', border: `1px solid ${C.cyanBdr}`,
-                background: uploadingCsv === 'create' ? C.s2 : C.cyanBg,
-                color: uploadingCsv === 'create' ? C.muted : C.cyan,
-                cursor: uploadingCsv ? 'not-allowed' : 'pointer', fontSize: 12,
-                fontFamily: C.SG, fontWeight: 600, letterSpacing: '0.05em',
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}
+              className="btn btn-ghost"
+              style={{ fontFamily: C.SG, opacity: uploadingCsv ? 0.6 : 1 }}
             >
-              {uploadingCsv === 'create' ? '…' : '↑ Agregar CSV'}
+              {uploadingCsv === 'create' ? '…' : '↑ CSV'}
             </button>
-            {/* Actualizar CSV */}
             <button
               onClick={() => csvUpdateRef.current?.click()}
               disabled={!!uploadingCsv}
               title="Actualizar deudores existentes por teléfono"
-              style={{
-                height: 32, padding: '0 12px', border: `1px solid rgba(79,70,229,0.25)`,
-                background: uploadingCsv === 'update' ? C.s2 : C.purpleBg,
-                color: uploadingCsv === 'update' ? C.muted : C.purple,
-                cursor: uploadingCsv ? 'not-allowed' : 'pointer', fontSize: 12,
-                fontFamily: C.SG, fontWeight: 600, letterSpacing: '0.05em',
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}
+              className="btn btn-ghost"
+              style={{ fontFamily: C.SG, opacity: uploadingCsv ? 0.6 : 1 }}
             >
-              {uploadingCsv === 'update' ? '…' : '↕ Actualizar CSV'}
+              {uploadingCsv === 'update' ? '…' : '↕ CSV'}
             </button>
             <button
-              onClick={fetchDebtors}
-              title="Refrescar lista"
-              style={{
-                width: 32, height: 32, border: 'none', background: C.s1, color: C.muted,
-                cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.s3; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = C.s1; }}
+              onClick={() => { fetchDebtors(); fetchFunnel(); fetchTodaySummary(); }}
+              title="Refrescar"
+              className="btn btn-ghost btn-icon"
+              style={{ fontFamily: C.SG }}
             >↺</button>
+            {/* Agregar deudor (primary) */}
+            <button
+              onClick={() => setShowCreateModal(true)}
+              title="Agregar deudor manualmente"
+              className="btn btn-primary"
+              style={{ fontFamily: C.SG }}
+            >+ Agregar deudor</button>
           </div>
         </div>
 
-        {/* Actividad de HOY — el panel operativo del bot */}
-        <div style={{ ...lbl(C.muted, 9), marginBottom: 8 }}>ACTIVIDAD DE HOY</div>
+        {/* KPIs (Panel) */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
+          {[
+            { label: 'Cartera total', value: formatCOP(carteraMontoPage), color: C.purple, big: false },
+            { label: 'Contactados', value: `${contactados}/${carteraCount}`, color: C.green, big: true },
+            { label: 'Promesas activas', value: String(promesasActivas), color: C.orange, big: true },
+            { label: 'Pagados', value: String(pagados), color: C.green, big: true },
+          ].map(({ label, value, color, big }) => (
+            <div key={label} className="card" style={{ padding: '16px 18px' }}>
+              <div style={lbl(C.faint, 11)}>{label}</div>
+              <div style={{ fontFamily: C.SG, fontWeight: 800, fontSize: big ? 28 : 18, color, marginTop: 8, lineHeight: 1.05 }}>
+                {value}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Actividad de hoy (backend today-summary) — secondary strip */}
+        <div style={{ ...lbl(C.faint, 10), marginBottom: 8 }}>ACTIVIDAD DE HOY</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 22 }}>
           {[
-            { label: 'LLAMANDO AHORA', value: String(todayKpis?.llamando_ahora ?? llamandoNow), sub: todayKpis?.llamando_ahora ? 'en vivo' : '', color: C.yellow, pulse: (todayKpis?.llamando_ahora ?? 0) > 0 },
-            { label: 'CONTACTADOS HOY', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.cyan, pulse: false },
-            { label: 'PROMESAS HOY', value: String(todayKpis?.promesas_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.promesas_hoy.monto) : '', color: C.green, pulse: false },
-            { label: 'PAGADO HOY', value: String(todayKpis?.pagado_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.pagado_hoy.monto) : '', color: C.green, pulse: false },
-            { label: 'SIN CONTACTO', value: String(todayKpis?.sin_contacto ?? '—'), sub: 'requiere atención', color: C.orange, pulse: false },
+            { label: 'Llamando ahora', value: String(todayKpis?.llamando_ahora ?? llamandoNow), sub: todayKpis?.llamando_ahora ? 'en vivo' : '', color: C.yellow, pulse: (todayKpis?.llamando_ahora ?? 0) > 0 },
+            { label: 'Contactados hoy', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.cyan, pulse: false },
+            { label: 'Promesas hoy', value: String(todayKpis?.promesas_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.promesas_hoy.monto) : '', color: C.green, pulse: false },
+            { label: 'Pagado hoy', value: String(todayKpis?.pagado_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.pagado_hoy.monto) : '', color: C.green, pulse: false },
+            { label: 'Sin contacto', value: String(todayKpis?.sin_contacto ?? '—'), sub: 'requiere atención', color: C.orange, pulse: false },
           ].map(({ label, value, sub, color, pulse }) => (
-            <div key={label} style={{
-              background: C.s1, padding: '12px 14px',
-              borderBottom: `2px solid ${color}40`,
-            }}>
-              <div style={{ ...lbl(C.muted, 8.5), display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div key={label} className="card" style={{ padding: '12px 14px' }}>
+              <div style={{ ...lbl(C.faint, 9), display: 'flex', alignItems: 'center', gap: 5 }}>
                 {pulse && <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, animation: 'cobr-pulse 1.2s ease-in-out infinite' }} />}
                 {label}
               </div>
-              <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 24, color, marginTop: 5, lineHeight: 1.05 }}>
+              <div style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 22, color, marginTop: 5, lineHeight: 1.05 }}>
                 {value}
               </div>
               {sub && <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted, marginTop: 2 }}>{sub}</div>}
@@ -1643,23 +1757,27 @@ export function CobranzaTab() {
           ))}
         </div>
 
-        {/* Filter pills */}
+        {/* Filter pills (Panel) */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 18 }}>
           {FILTERS.map(({ value, label }) => {
             const active = estadoFilter === value;
-            const cfg = value ? getEstadoConfig(value) : { color: C.cyan, bg: C.cyanBg };
+            const count = value ? (funnel?.counts?.[value] ?? null) : (funnel?.total ?? null);
             return (
               <button
                 key={label}
                 onClick={() => setEstadoFilter(value)}
                 style={{
-                  padding: '5px 14px', border: `1px solid ${active ? cfg.color : '#ECECF3'}`,
-                  background: active ? cfg.bg : 'transparent',
-                  cursor: 'pointer', ...lbl(active ? cfg.color : C.muted, 9),
-                  transition: 'all 0.15s',
+                  padding: '6px 14px', borderRadius: 999,
+                  border: `1px solid ${active ? C.purple : C.border2}`,
+                  background: active ? C.purple : C.s2,
+                  color: active ? '#fff' : C.text,
+                  fontFamily: C.SG, fontWeight: active ? 700 : 500, fontSize: 12.5,
+                  textTransform: 'capitalize', cursor: 'pointer', transition: 'all 0.15s',
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
                 }}
               >
-                {label}
+                {label.charAt(0) + label.slice(1).toLowerCase()}
+                {count !== null && <span style={{ opacity: 0.7 }}>({count})</span>}
               </button>
             );
           })}
@@ -1680,9 +1798,9 @@ export function CobranzaTab() {
             ))}
           </div>
         ) : visible.length === 0 ? (
-          <div style={{ background: C.s1, padding: '52px 28px', textAlign: 'center' }}>
+          <div className="card" style={{ padding: '52px 28px', textAlign: 'center' }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
-            <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 6 }}>
+            <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 6 }}>
               {estadoFilter ? `Sin deudores en estado "${estadoFilter}"` : 'No hay deudores en la campaña'}
             </div>
             <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, lineHeight: 1.6 }}>
@@ -1692,16 +1810,16 @@ export function CobranzaTab() {
             </div>
           </div>
         ) : (
-          <div style={{ background: C.s0 }}>
+          <div className="card" style={{ overflow: 'hidden' }}>
             {/* Table header */}
             <div style={{
               display: 'grid',
-              gridTemplateColumns: '2fr 1fr 1.2fr 1fr 1.2fr auto',
-              padding: '10px 16px',
-              background: C.s2, gap: 12,
+              gridTemplateColumns: '2fr 1.2fr 1.2fr 1fr 1fr 100px',
+              padding: '10px 20px',
+              background: C.s2, gap: 12, borderBottom: `1px solid ${C.border}`,
             }}>
-              {['NOMBRE', 'MONTO', 'VENCIMIENTO', 'ESTADO', 'ÚLTIMO INTENTO', 'ACCIONES'].map(h => (
-                <div key={h} style={lbl(C.muted, 9)}>{h}</div>
+              {['DEUDOR', 'MONTO', 'VENCIMIENTO', 'ESTADO', 'INTENTOS', 'ACCIÓN'].map(h => (
+                <div key={h} style={lbl(C.faint, 10.5)}>{h}</div>
               ))}
             </div>
 
@@ -1845,7 +1963,7 @@ const DebtorRow = memo(function DebtorRow({
   onPausar: (d: Debtor) => void;
 }) {
   const [hover, setHover] = useState(false);
-  const lastCall = debtor.historial_llamadas[debtor.historial_llamadas.length - 1];
+  const isSS = debtor.source === 'softseguros';
 
   return (
     <div
@@ -1853,31 +1971,37 @@ const DebtorRow = memo(function DebtorRow({
       onMouseLeave={() => setHover(false)}
       style={{
         display: 'grid',
-        gridTemplateColumns: '2fr 1fr 1.2fr 1fr 1.2fr auto',
-        padding: '12px 16px', gap: 12, alignItems: 'center',
+        gridTemplateColumns: '2fr 1.2fr 1.2fr 1fr 1fr 100px',
+        padding: '14px 20px', gap: 12, alignItems: 'center',
         background: hover ? C.s2 : 'transparent',
-        borderBottom: `1px solid #ECECF3`,
+        borderBottom: `1px solid ${C.border}`,
         transition: 'background 0.15s', cursor: 'pointer',
       }}
       onClick={() => onView(debtor)}
     >
-      {/* Nombre */}
-      <div>
-        <div style={{ fontFamily: C.SG, fontWeight: 600, fontSize: 13, color: C.text }}>
+      {/* Deudor */}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 13.5, color: C.ink }}>
           {debtor.nombre}
         </div>
-        <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted, marginTop: 2 }}>
-          {debtor.telefono}
+        <div style={{ fontFamily: C.IN, fontSize: 12, color: C.faint, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span>{debtor.telefono}</span>
+          {isSS && debtor.ramo_nombre && (
+            <span style={{ fontFamily: C.SG, fontSize: 10, fontWeight: 700, color: C.teal, background: C.tealBg, borderRadius: 5, padding: '1px 6px' }}>
+              {debtor.ramo_nombre}
+            </span>
+          )}
+          {isSS && debtor.numero_poliza && <span>· {debtor.numero_poliza}</span>}
         </div>
       </div>
 
       {/* Monto */}
-      <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 13, color: C.text }}>
+      <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 14, color: C.ink }}>
         {formatCOP(debtor.monto)}
       </div>
 
       {/* Vencimiento */}
-      <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted }}>
+      <div style={{ fontFamily: C.IN, fontSize: 13, color: C.text }}>
         {formatDate(debtor.vencimiento)}
       </div>
 
@@ -1886,51 +2010,35 @@ const DebtorRow = memo(function DebtorRow({
         <EstadoBadge estado={debtor.estado} />
       </div>
 
-      {/* Último intento */}
-      <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted }}>
-        {lastCall ? formatDate(lastCall.fecha) : '—'}
-        {debtor.intentos > 0 && (
-          <span style={{ ...lbl(C.muted, 9), marginLeft: 6 }}>
-            ({debtor.intentos}/{debtor.max_intentos})
-          </span>
-        )}
+      {/* Intentos */}
+      <div style={{ fontFamily: C.IN, fontSize: 13, color: C.muted }}>
+        {debtor.intentos}/{debtor.max_intentos}
       </div>
 
-      {/* Acciones */}
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{ display: 'flex', gap: 4 }}
-      >
-        {[
-          { title: 'Llamar ahora', icon: '📞', onClick: () => onLlamar(debtor) },
-          { title: 'Marcar pagado', icon: '✓', onClick: () => onPagar(debtor) },
-          { title: debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar', icon: debtor.estado === 'pausado' ? '▷' : '⏸', onClick: () => onPausar(debtor) },
-          { title: 'Ver detalle', icon: '↗', onClick: () => onView(debtor) },
-        ].map(({ title, icon, onClick }) => (
-          <button
-            key={title}
-            title={title}
-            onClick={onClick}
-            style={{
-              width: 26, height: 26, border: `1px solid #E3E3EC`,
-              background: 'transparent', cursor: 'pointer', color: C.muted, fontSize: 12,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => {
-              const el = e.currentTarget as HTMLElement;
-              el.style.background = C.s3;
-              el.style.color = C.text;
-            }}
-            onMouseLeave={e => {
-              const el = e.currentTarget as HTMLElement;
-              el.style.background = 'transparent';
-              el.style.color = C.muted;
-            }}
-          >
-            {icon}
-          </button>
-        ))}
+      {/* Acción — Llamar primary; pagar/pausar surface on hover */}
+      <div onClick={e => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4 }}>
+        {hover && (
+          <>
+            <button
+              title="Marcar pagado"
+              onClick={() => onPagar(debtor)}
+              style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${C.border2}`, background: 'transparent', cursor: 'pointer', color: C.green, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >✓</button>
+            <button
+              title={debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar'}
+              onClick={() => onPausar(debtor)}
+              style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${C.border2}`, background: 'transparent', cursor: 'pointer', color: C.purple, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >{debtor.estado === 'pausado' ? '▷' : '⏸'}</button>
+          </>
+        )}
+        <button
+          className="btn btn-soft"
+          title="Llamar ahora"
+          onClick={() => onLlamar(debtor)}
+          style={{ fontFamily: C.SG, fontSize: 12, padding: '6px 10px' }}
+        >
+          📞 Llamar
+        </button>
       </div>
     </div>
   );

@@ -231,6 +231,21 @@ def register_cobranza_jobs(scheduler) -> None:
     Args:
         scheduler: AsyncIOScheduler instance from landa.scheduler
     """
+    # ── KILL-SWITCH (default OFF for safety) ─────────────────────────────────
+    # These jobs place REAL outbound calls to REAL debtors. They must NEVER fire
+    # just because the app booted — a deploy would start dialing people. So the
+    # automated calling campaign only registers when COBRANZA_AUTOCALL_ENABLED is
+    # explicitly truthy. Default = disabled: the app runs, manual test calls via
+    # /call/initiate-v2 still work, but the scheduler dials no one.
+    autocall_enabled = os.getenv("COBRANZA_AUTOCALL_ENABLED", "false").lower() in ("1", "true", "yes")
+    if not autocall_enabled:
+        logger.warning(
+            "[register_cobranza_jobs] COBRANZA_AUTOCALL_ENABLED is not set — "
+            "automated calling jobs NOT registered (no debtor will be auto-called). "
+            "Set COBRANZA_AUTOCALL_ENABLED=true to enable the campaign."
+        )
+        return
+
     scheduler.add_job(
         pre_vencimiento_job,
         "interval",
@@ -252,7 +267,7 @@ def register_cobranza_jobs(scheduler) -> None:
         id="cobr_rescue_llamando",
         replace_existing=True,
     )
-    logger.info(
-        "[register_cobranza_jobs] Registered: cobr_pre_vencimiento (60m), "
-        "cobr_post_vencimiento (60m), cobr_rescue_llamando (10m)"
+    logger.warning(
+        "[register_cobranza_jobs] AUTOCALL ENABLED — Registered: cobr_pre_vencimiento (60m), "
+        "cobr_post_vencimiento (60m), cobr_rescue_llamando (10m). Real debtors WILL be called."
     )

@@ -167,8 +167,18 @@ def _poliza_to_debtor_doc(p: dict, bucket: str) -> dict:
         "cliente_email": p.get("cliente_email"),
         "cliente_celular": p.get("cliente_celular"),
         "aseguradora_nit": p.get("aseguradora_nit"),
+        # Insurer NAME (e.g. "PREVISORA") — the agent needs this to answer
+        # "¿con qué compañía es mi póliza?". The API exposes it as
+        # ramo_aseguradora_nombre; only the NIT was being stored before.
+        "aseguradora_nombre": p.get("ramo_aseguradora_nombre"),
         "ramo_nombre": p.get("ramo_nombre"),
         "ramo_global_nombre": p.get("ramo_global_nombre"),
+        # Payment modality (Financiado / Contado / etc.) and the insured object
+        # ("riesgo": plate for a car, address for a home) + total installments.
+        "forma_pago_texto": p.get("forma_pago_texto"),
+        "objeto_asegurado": p.get("codio_objeto_asegurado") or p.get("datos_objeto_asegurado"),
+        "valor_asegurado_riesgo": p.get("valor_asegurado_riesgo"),
+        "numero_de_cuotas": p.get("numero_de_cuotas"),
         "vendedores_nombre": p.get("vendedores_nombre"),
         "estado_poliza_nombre": p.get("estado_poliza_nombre"),
         "estado_cartera": p.get("estado_cartera"),

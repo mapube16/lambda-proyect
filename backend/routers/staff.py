@@ -275,3 +275,119 @@ async def staff_disable_cobranza(client_id: str, _staff=Depends(require_staff)):
     now = datetime.now(timezone.utc)
     await db.company_voice.update_one({"user_id": client_id}, {"$set": {"cobranza_enabled": False, "updated_at": now}})
     return {"ok": True, "client_id": client_id, "cobranza_enabled": False}
+
+
+# ── Tenant provisioning (one POST = one fully-configured client) ────────────────
+
+class VoicePersonaModel(BaseModel):
+    """Layer 2 of the 3-layer voice prompt. All free-text, NO 2000-char cap."""
+    agent_name: Optional[str] = None
+    company_name: Optional[str] = None
+    company_brand: Optional[str] = None
+    tono: Optional[str] = None
+    greeting_template: Optional[str] = None
+    greeting_template_no_name: Optional[str] = None
+    pitch_template: Optional[str] = None
+    business_rules: Optional[str] = None
+    objection_handling: Optional[str] = None
+    forbidden: Optional[str] = None
+
+
+class ProvisionTenantRequest(BaseModel):
+    # Account
+    email: str
+    password: str
+    full_name: Optional[str] = None
+    company_name: Optional[str] = None
+    phone: Optional[str] = None
+    country: Optional[str] = "CO"
+    # Voice agent identity (Layer 2)
+    voice_persona: VoicePersonaModel = Field(default_factory=VoicePersonaModel)
+    # Feature flags
+    enable_cobranza: bool = True
+    enable_voice: bool = True
+    # Optional SoftSeguros credentials (encrypted at rest)
+    softseguros_username: Optional[str] = None
+    softseguros_password: Optional[str] = None
+
+
+@router.post("/api/staff/tenants/provision", status_code=201)
+async def staff_provision_tenant(
+    request: ProvisionTenantRequest,
+    _staff=Depends(require_staff),
+):
+    """
+    Provision a complete client in a SINGLE request: creates the user account,
+    sets its voice persona (Layer 2 of the voice prompt), enables modules, and
+    optionally stores SoftSeguros credentials. Staff-only.
+
+    Idempotent on email: if the user already exists, it is reused (persona/flags
+    are still applied), so re-running the same curl updates config rather than
+    erroring.
+    """
+    from auth import hash_password
+    from database import get_user_by_email, create_user
+    from cobranza.tenant_config import set_voice_persona, toggle_module
+
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    email = request.email.strip().lower()
+
+    # ── Account: reuse if present, else create ───────────────────────────────
+    existing = await get_user_by_email(email)
+    if existing:
+        user_id = str(existing["id"])
+        created = False
+    else:
+        user = await create_user(
+            email=email,
+            hashed_password=hash_password(request.password),
+            role="client",
+            full_name=request.full_name,
+            company_name=request.company_name,
+            phone=request.phone,
+            country=request.country,
+        )
+        user_id = str(user["id"])
+        created = True
+
+    # ── Layer 2 persona ──────────────────────────────────────────────────────
+    persona = request.voice_persona.model_dump(exclude_none=True)
+    if persona:
+        await set_voice_persona(user_id, persona)
+
+    # ── Module flags ─────────────────────────────────────────────────────────
+    await toggle_module(user_id, "voice", request.enable_voice)
+    if request.enable_cobranza:
+        await db.company_voice.update_one(
+            {"user_id": user_id},
+            {"$set": {"cobranza_enabled": True, "cobranza_enabled_at": now, "updated_at": now},
+             "$setOnInsert": {"user_id": user_id, "created_at": now}},
+            upsert=True,
+        )
+
+    # ── Optional SoftSeguros credentials ─────────────────────────────────────
+    softseguros_configured = False
+    if request.softseguros_username and request.softseguros_password:
+        try:
+            from softseguros import credentials as _ss_credentials
+            await _ss_credentials.save_credentials(
+                db, user_id, request.softseguros_username, request.softseguros_password,
+            )
+            softseguros_configured = True
+        except Exception as exc:
+            logger.error("[provision] softseguros creds failed for %s: %s", user_id, exc)
+
+    logger.info("[provision] tenant %s (created=%s) email=%s persona=%s cobranza=%s",
+                user_id, created, email, persona.get("agent_name"), request.enable_cobranza)
+
+    return {
+        "ok": True,
+        "created": created,
+        "user_id": user_id,
+        "email": email,
+        "cobranza_enabled": request.enable_cobranza,
+        "voice_enabled": request.enable_voice,
+        "persona_set": bool(persona),
+        "softseguros_configured": softseguros_configured,
+    }

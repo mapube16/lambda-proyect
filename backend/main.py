@@ -81,6 +81,45 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 — scheduler must never block app startup
         logging.exception("Failed to start SOFTSEGUROS scheduler")
 
+    # ── Kill the 1.5s-per-call voice latency (SSL context caching) ───────────
+    # ROOT CAUSE (profiled): constructing GeminiLiveLLMService costs ~1.5s EVERY
+    # call — not a one-time import. google.genai's client __init__ builds 3 SSL
+    # contexts (httpx + websocket + aiohttp), and ssl load_verify_locations
+    # (reading the CA bundle from disk) is ~0.6s × 3. The CA bundle is identical
+    # every time, so we cache ssl.create_default_context by args. Effect (measured):
+    # first construct ~600ms, every subsequent construct ~2ms.
+    try:
+        import ssl as _ssl
+        _orig_ssl_ctx = _ssl.create_default_context
+        _ssl_ctx_cache: dict = {}
+
+        def _cached_ssl_ctx(*args, **kwargs):
+            key = (args, tuple(sorted(kwargs.items())) if kwargs else ())
+            ctx = _ssl_ctx_cache.get(key)
+            if ctx is None:
+                ctx = _orig_ssl_ctx(*args, **kwargs)
+                _ssl_ctx_cache[key] = ctx
+            return ctx
+
+        _ssl.create_default_context = _cached_ssl_ctx  # type: ignore[assignment]
+        logging.info("SSL default-context cache installed (voice latency fix).")
+    except Exception:  # noqa: BLE001 — never block boot
+        logging.exception("SSL context cache install failed (non-fatal)")
+
+    # ── Warm up the Gemini Live voice SDK (latency) ──────────────────────────
+    # Pay the first (uncached) SSL-context build here at boot, so the first real
+    # call already hits the warm ~2ms path instead of ~600ms.
+    try:
+        import os as _os
+        from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService as _GLS
+        import google.genai.types as _ggt  # noqa: F401 — force the heavy import now
+        from pipecat.adapters.schemas.tools_schema import ToolsSchema as _TS  # noqa: F401
+        _warm = _GLS(api_key=_os.getenv("GOOGLE_API_KEY") or "warmup", model="models/gemini-3.1-flash-live-preview")
+        del _warm
+        logging.info("Gemini Live voice SDK warmed up.")
+    except Exception:  # noqa: BLE001 — warmup is best-effort, never block boot
+        logging.exception("Gemini Live warmup failed (non-fatal)")
+
     logging.info("Lambda Office started!")
     yield
     if state.arq_pool is not None:

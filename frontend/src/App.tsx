@@ -4,6 +4,7 @@ import './landa.css';
 import * as api from './api';
 import { DebtorsSoftSegurosTab } from './components/DebtorsSoftSegurosTab';
 import { CobranzaTab } from './components/CobranzaTab';
+import { AdminPanel } from './components/AdminPanel';
 
 // Context for shared email status (used by multiple views)
 const EmailStatusContext = createContext<{ connected: boolean } | null>(null);
@@ -1228,49 +1229,71 @@ function Sidebar({ view, setView, user, onLogout }: any) {
   const planLabel = quota?.plan ? `Plan ${String(quota.plan).charAt(0).toUpperCase() + String(quota.plan).slice(1)}` : 'Plan';
   const fmt = (n: number) => (n ?? 0).toLocaleString('es-CO');
 
+  // Dark sidebar — idéntico al panel staff (AdminPanel.tsx).
+  const SB_BG = '#1A1A2E';
+  const SB_ACTIVE = 'rgba(59,170,152,0.18)';
+  const SB_ACTIVE_C = '#3BAA98';
+  const SB_TEXT = 'rgba(255,255,255,0.50)';
+  const SB_BORDER = 'rgba(255,255,255,0.07)';
+
   return (
-    <aside style={{ width: 248, flex: 'none', background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '6px 8px 18px' }}>
-        <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, var(--primary), #7C74F0)', display: 'grid', placeItems: 'center', boxShadow: '0 4px 12px -4px rgba(79,70,229,.6)' }}>
-          <div style={{ width: 13, height: 13, borderRadius: 4, background: '#fff' }} />
-        </div>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 17, color: 'var(--ink)', letterSpacing: '-0.02em' }}>Landa</div>
-          <div style={{ fontSize: 11, color: 'var(--text-faint)', fontWeight: 600 }}>Prospección B2B</div>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {navItems.map(([key, ic, label]) => (
-          <div key={key} onClick={() => setView(key)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 12px', borderRadius: 10, color: view === key ? 'var(--primary-700)' : 'var(--text-muted)', fontWeight: view === key ? 700 : 600, fontSize: 14, cursor: 'pointer', background: view === key ? 'var(--primary-soft)' : 'transparent', transition: 'all .12s' }}>
-            <span style={{ display: 'flex' }}><Icon name={ic} size={19} /></span>
-            <span>{label}</span>
+    <aside style={{ width: 248, flex: 'none', background: SB_BG, borderRight: `1px solid ${SB_BORDER}`, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      {/* Logo — mismo escudo Landλ del staff */}
+      <div style={{ padding: '22px 18px 18px', borderBottom: `1px solid ${SB_BORDER}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+          <svg width="34" height="32" viewBox="0 0 52 50" fill="none">
+            <path d="M37 18 h5.5 a6.5 6.5 0 0 1 6.5 6.5 v2 a6.5 6.5 0 0 1 -6.5 6.5 h-5.5" stroke="#3BAA98" strokeWidth="3.2" strokeLinecap="round" />
+            <rect x="6" y="9" width="31" height="33" rx="4.5" fill={SB_BG} stroke="#3BAA98" strokeWidth="3.2" />
+            <ellipse cx="21.5" cy="10.5" rx="14" ry="3" fill={SB_BG} stroke="#3BAA98" strokeWidth="2.4" />
+            <line x1="11.5" y1="17" x2="11.5" y2="34" stroke="#2FC7A8" strokeWidth="1.8" strokeLinecap="round" />
+            <g stroke="#2FC7A8" strokeWidth="3.4" strokeLinecap="square" fill="none">
+              <path d="M20 18 L29 35" /><path d="M23.5 25 L17 35" /><path d="M16.5 18 L21 18" />
+            </g>
+          </svg>
+          <div>
+            <div style={{ color: '#fff', fontWeight: 800, fontSize: 18, letterSpacing: '-0.01em', lineHeight: 1 }}>Land<span style={{ color: '#3BAA98' }}>λ</span></div>
+            <div style={{ color: 'rgba(255,255,255,0.32)', fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', marginTop: 3 }}>Prospección B2B</div>
           </div>
-        ))}
+        </div>
       </div>
 
-      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 14, padding: 14 }}>
+      {/* Nav */}
+      <div style={{ flex: 1, padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto' }}>
+        {navItems.map(([key, ic, label]) => {
+          const active = view === key;
+          return (
+            <button key={key} onClick={() => setView(key)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: active ? SB_ACTIVE : 'transparent', color: active ? SB_ACTIVE_C : SB_TEXT, fontFamily: 'inherit', fontWeight: active ? 700 : 500, fontSize: 14, width: '100%', textAlign: 'left', transition: 'all .12s' }}>
+              <Icon name={ic} size={17} stroke={active ? 2 : 1.6} />
+              <span>{label}</span>
+            </button>
+          );
+        })}
+
+        <div style={{ marginTop: 16, padding: '2px 0 8px', borderTop: `1px solid ${SB_BORDER}` }} />
+
+        {/* Widget de plan / créditos */}
+        <div style={{ padding: '12px 13px', borderRadius: 10, background: 'rgba(255,255,255,0.05)', border: `1px solid ${SB_BORDER}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span className="label">{planLabel}</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>{usagePct}%</span>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.13em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.28)' }}>{planLabel}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: SB_ACTIVE_C }}>{usagePct}%</span>
           </div>
-          <div style={{ height: 7, background: '#E9E9F1', borderRadius: 999, overflow: 'hidden' }}>
-            <div style={{ width: usagePct + '%', height: '100%', background: 'var(--primary)', borderRadius: 999 }} />
+          <div style={{ height: 6, background: 'rgba(255,255,255,0.10)', borderRadius: 999, overflow: 'hidden' }}>
+            <div style={{ width: usagePct + '%', height: '100%', background: SB_ACTIVE_C, borderRadius: 999 }} />
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.40)', marginTop: 8 }}>
             {quota ? `${fmt(quota.credits_remaining)} / ${fmt(quota.credits_total)} créditos` : 'Cargando créditos…'}
           </div>
         </div>
+      </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, borderRadius: 12 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#F59E0B,#EF6C5A)', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 800, fontSize: 14, flex: 'none' }}>{userInitials}</div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--ink)', textTransform: 'capitalize' }}>{userName}{user?.role === 'staff' && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--primary)', marginLeft: 6, textTransform: 'uppercase' }}>staff</span>}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || '—'}</div>
-          </div>
-          <button onClick={onLogout} title="Cerrar sesión" style={{ display: 'flex', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 4 }}><Icon name="arrow" size={16} /></button>
+      {/* User */}
+      <div style={{ padding: '14px 16px', borderTop: `1px solid ${SB_BORDER}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg,#3BAA98,#4F46E5)', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 800, fontSize: 13, flex: 'none' }}>{userInitials}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: '#fff', fontSize: 13, fontWeight: 700, textTransform: 'capitalize', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{userName}{user?.role === 'staff' && <span style={{ fontSize: 10, fontWeight: 700, color: SB_ACTIVE_C, marginLeft: 6, textTransform: 'uppercase' }}>staff</span>}</div>
+          <div style={{ color: 'rgba(255,255,255,0.32)', fontSize: 11, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || '—'}</div>
         </div>
+        <button onClick={onLogout} title="Cerrar sesión" style={{ display: 'flex', background: 'transparent', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.35)', padding: 4, flex: 'none' }}><Icon name="arrow" size={16} /></button>
       </div>
     </aside>
   );
@@ -1697,6 +1720,8 @@ export function App() {
   });
 
   if (!user) return <Login onLogin={(u) => { setUser(u); setView('inicio'); }} />;
+  // Staff/admin users get the dedicated admin console instead of the client app.
+  if (user.role === 'staff') return <AdminPanel onExit={handleLogout} />;
   if (showOnboarding) return <ViewOnboarding onComplete={() => finishOnboarding(true)} onSkip={() => finishOnboarding(false)} />;
 
   return (

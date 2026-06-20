@@ -97,6 +97,50 @@ async def toggle_module(user_id: str, module: str, enabled: bool) -> None:
     await _invalidate(user_id)
 
 
+# ── voice_persona (Layer 2 of the 3-layer voice prompt) ─────────────────────────
+
+# The keys a persona may define. Free-text, NO 2000-char cap (the old
+# voice_system_prompt cap truncated 69% of real personas — see [[voice-prompt-layering]]).
+VOICE_PERSONA_KEYS = (
+    "agent_name",
+    "company_name",
+    "company_brand",
+    "tono",
+    "greeting_template",
+    "greeting_template_no_name",
+    "pitch_template",
+    "business_rules",
+    "objection_handling",
+    "forbidden",
+)
+
+
+async def set_voice_persona(user_id: str, persona: dict) -> None:
+    """
+    Upsert the tenant's voice_persona sub-document (Layer 2). Only known keys are
+    persisted. Empty/None values are ignored so a partial update doesn't blank
+    out existing fields. CACHE-01: invalidates Redis after write.
+    """
+    clean = {
+        f"voice_persona.{k}": persona[k]
+        for k in VOICE_PERSONA_KEYS
+        if persona.get(k) not in (None, "")
+    }
+    if not clean:
+        return
+    db = get_db()
+    now = _utcnow()
+    await db.tenant_configs.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {**clean, "user_id": user_id, "updated_at": now},
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+    await _invalidate(user_id)
+
+
 # ── agent_instances ────────────────────────────────────────────────────────────
 
 async def upsert_agent_instance(user_id: str, fields: dict) -> None:
