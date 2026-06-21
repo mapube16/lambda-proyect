@@ -17,6 +17,8 @@ import time
 from dataclasses import dataclass, field
 
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     EndFrame,
     LLMContextFrame,
     TranscriptionFrame,
@@ -74,15 +76,25 @@ class CallResult:
 
 
 class TranscriptCollector(FrameProcessor):
-    """Lightweight processor that captures transcription and TTS text frames."""
+    """Captures transcription + TTS text frames, and tracks bot speech state so
+    end_call can wait for the FAREWELL to finish instead of a blind fixed sleep."""
 
     def __init__(self, call_result: CallResult, **kwargs):
         super().__init__(**kwargs)
         self._result = call_result
+        # Bot speech tracking (used by end_call to time the hangup precisely).
+        self.bot_speaking = False
+        self.last_bot_audio_ts = 0.0
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame) and frame.text:
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self.bot_speaking = True
+            self.last_bot_audio_ts = time.time()
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self.bot_speaking = False
+            self.last_bot_audio_ts = time.time()
+        elif isinstance(frame, TranscriptionFrame) and frame.text:
             # User spoke — flush any pending bot text first
             self._result.flush_bot_buffer()
             self._result.transcript.append((time.time(), "Deudor", frame.text))
@@ -91,6 +103,7 @@ class TranscriptCollector(FrameProcessor):
             if not self._result._bot_buffer:
                 self._result._bot_buffer_ts = time.time()
             self._result._bot_buffer += frame.text
+            self.last_bot_audio_ts = time.time()
         await self.push_frame(frame, direction)
 
 
@@ -690,22 +703,37 @@ async def run_bot(
     orchestrator = CobranzaOrchestrator(user_id=user_id, tenant_config=tenant_config) if user_id else None
 
     async def _handle_end_call(params):
-        """end_call: play the farewell, then tear the pipeline down hard.
+        """end_call: let the farewell finish playing, THEN tear down hard.
 
-        We deliberately do NOT queue an EndFrame here. Gemini Live defers
-        EndFrame handling "until the bot turn is finished" and, after a tool
-        call, often never emits turn_complete — so the EndFrame sat for the full
-        30s deferral timeout, holding the line open ~50s after the goodbye
-        (observed on CA759d6036: end_call at 11:46:42, cleanup at 11:47:32).
-        task.cancel() stops the pipeline immediately, which drops the WS and
-        hangs up the Twilio call without waiting on a turn that won't complete.
+        We deliberately do NOT queue an EndFrame: Gemini Live defers EndFrame
+        "until the bot turn is finished" and, after a tool call, often never
+        emits turn_complete — so the EndFrame sat for the full 30s deferral
+        timeout, holding the line open ~50s after the goodbye (CA759d6036).
+        task.cancel() drops the WS immediately and hangs up Twilio.
+
+        The OLD code slept a blind 4.0s before cancelling, which was wrong both
+        ways: a short "chao" left ~3s of dead air, and a longer farewell got cut
+        off mid-sentence (caller heard the hangup before ARIA finished). Instead
+        we wait for the farewell to ACTUALLY finish: poll bot_collector until the
+        bot has stopped speaking AND ~0.8s of silence has passed (so we don't cut
+        the last word), capped at 8s so a stuck turn can never hang the line.
         """
         reason = params.arguments.get("reason", "conversacion finalizada")
         logger.info("[VOICE] end_call invoked: reason=%s", reason)
         await params.result_callback({"status": "ending", "reason": reason})
-        # Allow farewell TTS to play before disconnect, then hard-cancel.
-        await asyncio.sleep(4.0)
-        logger.info("[VOICE] end_call: cancelling pipeline (hard hangup)")
+
+        SILENCE_AFTER_FAREWELL = 0.8   # gap after last bot audio = farewell done
+        MAX_WAIT = 8.0                 # hard cap so we never hang forever
+        POLL = 0.15
+        deadline = time.time() + MAX_WAIT
+        # Give the farewell a beat to actually START before we judge silence.
+        await asyncio.sleep(0.6)
+        while time.time() < deadline:
+            quiet_for = time.time() - (bot_collector.last_bot_audio_ts or 0)
+            if not bot_collector.bot_speaking and quiet_for >= SILENCE_AFTER_FAREWELL:
+                break
+            await asyncio.sleep(POLL)
+        logger.info("[VOICE] end_call: farewell done, cancelling pipeline (hard hangup)")
         await task.cancel()
 
     async def _handle_update_debtor(params):
