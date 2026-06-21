@@ -290,6 +290,8 @@ async def run_bot(
         ramo=_tipo_poliza or _ramo or "seguros",
         monto_natural=monto_natural,
         aseguradora=debtor.get("aseguradora_nombre") or "",
+        riesgo=str(debtor.get("objeto_asegurado") or "").strip(),
+        modalidad=str(debtor.get("forma_pago_texto") or "").strip(),
     )
     logger.info(
         "[VOICE] Assembled 3-layer prompt for user %s (persona=%s, %d chars)",

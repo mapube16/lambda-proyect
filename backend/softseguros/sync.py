@@ -152,6 +152,29 @@ def _today() -> date:
 
 # ── póliza → debtor doc mapping ───────────────────────────────────────────────
 
+def _parse_forma_pago(raw) -> Optional[str]:
+    """SOFTSEGUROS forma_pago_texto comes as a JSON blob like
+    {"banco":"","pagare":"","cheque":"","contado":"1"} — turn it into a human
+    label ("Contado", "Financiado", "Cheque", "Pagaré") for speech. Returns None
+    when nothing is set, so the agent simply omits the modality."""
+    if not raw:
+        return None
+    # Already a clean label?
+    if isinstance(raw, str) and not raw.strip().startswith("{"):
+        return raw.strip() or None
+    import json as _json
+    try:
+        d = _json.loads(raw) if isinstance(raw, str) else (raw if isinstance(raw, dict) else {})
+    except (ValueError, TypeError):
+        return None
+    labels = {"contado": "Contado", "banco": "Financiado", "pagare": "Pagaré", "cheque": "Cheque"}
+    for key, label in labels.items():
+        v = str(d.get(key, "")).strip()
+        if v and v not in ("0", "", "false", "None"):
+            return label
+    return None
+
+
 def _poliza_to_debtor_doc(p: dict, bucket: str) -> dict:
     """Map a SOFTSEGUROS póliza dict + classification bucket → the $set payload for a debtor."""
     return {
@@ -175,7 +198,7 @@ def _poliza_to_debtor_doc(p: dict, bucket: str) -> dict:
         "ramo_global_nombre": p.get("ramo_global_nombre"),
         # Payment modality (Financiado / Contado / etc.) and the insured object
         # ("riesgo": plate for a car, address for a home) + total installments.
-        "forma_pago_texto": p.get("forma_pago_texto"),
+        "forma_pago_texto": _parse_forma_pago(p.get("forma_pago_texto")),
         "objeto_asegurado": p.get("codio_objeto_asegurado") or p.get("datos_objeto_asegurado"),
         "valor_asegurado_riesgo": p.get("valor_asegurado_riesgo"),
         "numero_de_cuotas": p.get("numero_de_cuotas"),
