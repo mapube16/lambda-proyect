@@ -659,16 +659,26 @@ async def run_bot(
         ]
     )
 
-    # Interruptions ENABLED: with start_sensitivity HIGH the spurious-interruption
-    # problem that forced this off is gone, and barge-in makes the conversation
-    # far more natural — the caller can cut the bot off and it responds immediately
-    # instead of talking over them. Per-tenant override (set
-    # tenant_config.allow_interruptions=false to disable).
+    # Interruptions ENABLED but GATED by a min-words strategy. Bare barge-in
+    # broke calls: the caller's "Aló" landed ON TOP of ARIA's opening greeting,
+    # cut Gemini Live mid-sentence, and Gemini then never recovered (observed:
+    # greeting half-said, then only the caller's "Hola... Hola..." with ARIA
+    # silent). MinWordsInterruptionStrategy requires the caller to say a real
+    # phrase (>= N words) before an interruption is honored — so short backchannel
+    # ("Aló", "sí", "hola") does NOT cut the greeting, but a genuine sentence
+    # ("espere, una pregunta") still interrupts naturally. Per-tenant override
+    # via tenant_config.interruption_min_words (0 disables the gate).
+    from pipecat.audio.interruptions.min_words_interruption_strategy import (
+        MinWordsInterruptionStrategy,
+    )
+    _min_words = int(tenant_config.get("interruption_min_words") or 3)
+    _strategies = [MinWordsInterruptionStrategy(min_words=_min_words)] if _min_words > 0 else []
     _allow_interruptions = bool(tenant_config.get("allow_interruptions", True))
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
             allow_interruptions=_allow_interruptions,
+            interruption_strategies=_strategies,
             enable_metrics=True,
             report_only_initial_ttfb=True,
         ),
