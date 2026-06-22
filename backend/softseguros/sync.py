@@ -196,9 +196,14 @@ def _poliza_to_debtor_doc(p: dict, bucket: str) -> dict:
         "aseguradora_nombre": p.get("ramo_aseguradora_nombre"),
         "ramo_nombre": p.get("ramo_nombre"),
         "ramo_global_nombre": p.get("ramo_global_nombre"),
-        # Payment modality (Financiado / Contado / etc.) and the insured object
-        # ("riesgo": plate for a car, address for a home) + total installments.
+        # Payment modality: the CLEAN field is `forma_pago` ("Contado",
+        # "Fraccionado", "Financiado", "Acuerdo de pago"). `forma_pago_texto` is a
+        # JSON blob ({}) — NOT human text; we keep its parsed form only as fallback.
+        "forma_pago": (p.get("forma_pago") or "").strip() or None,
         "forma_pago_texto": _parse_forma_pago(p.get("forma_pago_texto")),
+        # Payment MEAN ("Debito", "PSE", "Efectivo"...) — used to skip clients on
+        # automatic debit. Comes empty on most policies.
+        "medio_pago": (p.get("medio_pago") or "").strip() or None,
         "objeto_asegurado": p.get("codio_objeto_asegurado") or p.get("datos_objeto_asegurado"),
         "valor_asegurado_riesgo": p.get("valor_asegurado_riesgo"),
         "numero_de_cuotas": p.get("numero_de_cuotas"),
