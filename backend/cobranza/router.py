@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
-from auth import get_current_user
+from auth import get_current_user, require_staff
 from database import get_db, get_client_profile
 from cobranza.debtor_crud import (
     bulk_create_debtors,
@@ -87,6 +87,57 @@ async def cobranza_status(current_user: dict = Depends(get_current_user)):
     logger.info(f"[cobranza_status] user_id={user_id}, doc found: {doc is not None}, enabled: {enabled}, config found: {config_doc is not None}, configured: {configured}")
     
     return {"enabled": enabled, "configured": configured, "_debug_user_id": user_id, "_debug_doc_exists": doc is not None}
+
+
+# ── EMERGENCY KILL-SWITCH (master ON/OFF for automated dialing) ────────────────
+#
+# Hot switch with immediate effect — no redeploy, no worker restart. Flips the
+# runtime flag in Mongo and pauses/resumes the live APScheduler campaign jobs.
+# OFF  → the whole automated-calling circuit stops; nobody gets auto-dialed, and
+#        calls queued just before the flip are aborted before they dial. The API,
+#        inbound handling and manual test calls stay alive.
+# ON   → dialing resumes.
+# Staff-only: this is a system-wide control, not per-tenant.
+
+class KillSwitchPayload(BaseModel):
+    enabled: bool
+
+
+@router.get("/killswitch")
+async def get_killswitch(current_user: dict = Depends(require_staff)):
+    """Return the current state of the automated-dialing master switch."""
+    from cobranza.campaign_scheduler import is_autocall_enabled
+    enabled = await is_autocall_enabled()
+    return {"autocall_enabled": enabled}
+
+
+@router.post("/killswitch")
+async def set_killswitch(
+    payload: KillSwitchPayload,
+    current_user: dict = Depends(require_staff),
+):
+    """
+    Master ON/OFF switch for the automated cobranza calling circuit.
+
+    Body: {"enabled": false}  → STOP all automated calls immediately.
+          {"enabled": true}   → resume automated calling.
+
+    Effect is live (jobs paused/resumed in-process + Mongo flag persisted so it
+    survives restarts). In-flight queued calls are aborted before dialing.
+    """
+    from cobranza.campaign_scheduler import set_autocall_enabled
+    from landa.scheduler import scheduler
+
+    actor = str(current_user.get("user_id", "staff"))
+    new_state = await set_autocall_enabled(payload.enabled, scheduler=scheduler, actor=actor)
+    logger.warning("[killswitch] autocall set to %s by %s", new_state, actor)
+    return {
+        "autocall_enabled": new_state,
+        "message": (
+            "Discado automático REANUDADO." if new_state
+            else "Discado automático DETENIDO. Ninguna llamada saliente se realizará."
+        ),
+    }
 
 
 # ── CSV Upload ────────────────────────────────────────────────────────────────

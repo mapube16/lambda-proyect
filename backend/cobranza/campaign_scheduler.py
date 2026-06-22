@@ -23,6 +23,87 @@ from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_t
 
 logger = logging.getLogger("cobranza.campaign_scheduler")
 
+# IDs of the 3 campaign jobs — used by the runtime kill-switch to pause/resume.
+_COBRANZA_JOB_IDS = ("cobr_pre_vencimiento", "cobr_post_vencimiento", "cobr_rescue_llamando")
+
+
+# ---------------------------------------------------------------------------
+# Runtime kill-switch (master ON/OFF, hot — no redeploy)
+# ---------------------------------------------------------------------------
+#
+# The boot-time COBRANZA_AUTOCALL_ENABLED env var only decides whether jobs get
+# *registered* at startup. It cannot stop a running worker. This runtime switch
+# lives in Mongo (db.cobranza_runtime, _id="killswitch") so it:
+#   - survives restarts (the source of truth at boot, env var is only the default)
+#   - takes effect on the NEXT job tick without a redeploy
+#   - is checked at the top of every job AND inside safe_initiate_call, so calls
+#     already in flight when the switch flips OFF are aborted before dialing.
+#
+# enabled=True  → autocall ON  (jobs dial debtors)
+# enabled=False → autocall OFF (jobs run but dial no one; system stays healthy)
+
+_RUNTIME_DOC_ID = "killswitch"
+
+
+async def is_autocall_enabled() -> bool:
+    """
+    Return whether automated dialing is currently enabled.
+    Source of truth = db.cobranza_runtime/killswitch. If no doc exists yet,
+    fall back to the COBRANZA_AUTOCALL_ENABLED env var default.
+    """
+    db = get_db()
+    doc = await db.cobranza_runtime.find_one({"_id": _RUNTIME_DOC_ID})
+    if doc is not None and "enabled" in doc:
+        return bool(doc["enabled"])
+    return os.getenv("COBRANZA_AUTOCALL_ENABLED", "false").lower() in ("1", "true", "yes")
+
+
+async def set_autocall_enabled(enabled: bool, scheduler=None, actor: str = "system") -> bool:
+    """
+    Master ON/OFF switch — flips the runtime flag in Mongo AND pauses/resumes the
+    live APScheduler jobs so the change is effective immediately (no redeploy).
+
+    Args:
+        enabled:   True = resume dialing, False = stop all automated calls.
+        scheduler: live AsyncIOScheduler. If omitted, only the Mongo flag changes
+                   (jobs still honour it on their next tick via is_autocall_enabled).
+        actor:     who flipped it (for the audit trail).
+
+    Returns the new enabled state.
+    """
+    db = get_db()
+    await db.cobranza_runtime.update_one(
+        {"_id": _RUNTIME_DOC_ID},
+        {"$set": {
+            "enabled": enabled,
+            "updated_at": datetime.now(timezone.utc),
+            "updated_by": actor,
+        }},
+        upsert=True,
+    )
+
+    if scheduler is None:
+        from landa.scheduler import scheduler as scheduler  # lazy import, avoid cycle
+
+    if enabled:
+        # Resume existing jobs; (re)register if missing (e.g. booted with autocall off).
+        register_cobranza_jobs(scheduler, force=True)
+        for job_id in _COBRANZA_JOB_IDS:
+            try:
+                scheduler.resume_job(job_id)
+            except Exception:
+                pass
+        logger.warning("[killswitch] AUTOCALL ENABLED by %s — campaign jobs resumed.", actor)
+    else:
+        for job_id in _COBRANZA_JOB_IDS:
+            try:
+                scheduler.pause_job(job_id)
+            except Exception:
+                pass
+        logger.warning("[killswitch] AUTOCALL DISABLED by %s — campaign jobs paused, no debtor will be called.", actor)
+
+    return enabled
+
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -36,6 +117,19 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
     """
     db = get_db()
     try:
+        # Runtime kill-switch: a task may have been queued before the switch
+        # flipped OFF. Re-check right before dialing so in-flight calls abort.
+        if not await is_autocall_enabled():
+            logger.warning(
+                "[scheduler] Autocall OFF — aborting queued call for debtor %s; resetting to pendiente",
+                debtor["_id"],
+            )
+            await db.debtors.update_one(
+                {"_id": debtor["_id"]},
+                {"$set": {"estado": "pendiente", "updated_at": datetime.now(timezone.utc)}},
+            )
+            return
+
         from twilio.rest import Client
 
         account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -82,6 +176,9 @@ async def pre_vencimiento_job() -> None:
     Contacts debtors in estado='pendiente' whose vencimiento is within the next
     3 days (exclusive of past-due). Fires once per debtor per day (Ley 2300).
     """
+    if not await is_autocall_enabled():
+        logger.info("[pre_vencimiento_job] Autocall kill-switch OFF — skipping")
+        return
     if not is_contact_allowed_now():
         logger.debug("[pre_vencimiento_job] Outside allowed hours — skipping")
         return
@@ -122,6 +219,9 @@ async def post_vencimiento_job() -> None:
     Retries debtors in estado='pendiente' or 'sin_contacto' whose vencimiento
     has already passed. Respects max_intentos, frecuencia_dias, and Ley 2300.
     """
+    if not await is_autocall_enabled():
+        logger.info("[post_vencimiento_job] Autocall kill-switch OFF — skipping")
+        return
     if not is_contact_allowed_now():
         logger.debug("[post_vencimiento_job] Outside allowed hours — skipping")
         return
@@ -221,7 +321,7 @@ async def rescue_stuck_llamando_job() -> None:
 # Registration
 # ---------------------------------------------------------------------------
 
-def register_cobranza_jobs(scheduler) -> None:
+def register_cobranza_jobs(scheduler, force: bool = False) -> None:
     """
     Register all 3 cobranza campaign jobs on the given APScheduler instance.
 
@@ -230,6 +330,12 @@ def register_cobranza_jobs(scheduler) -> None:
 
     Args:
         scheduler: AsyncIOScheduler instance from landa.scheduler
+        force:     when True, register the jobs regardless of the boot-time env
+                   var. Used by the runtime kill-switch when it is turned ON, so
+                   a worker booted with autocall disabled can be enabled live.
+
+    Jobs are registered in a PAUSED state whenever autocall is currently OFF, so
+    even a forced/boot registration never dials until the master switch is ON.
     """
     # ── KILL-SWITCH (default OFF for safety) ─────────────────────────────────
     # These jobs place REAL outbound calls to REAL debtors. They must NEVER fire
@@ -238,11 +344,11 @@ def register_cobranza_jobs(scheduler) -> None:
     # explicitly truthy. Default = disabled: the app runs, manual test calls via
     # /call/initiate-v2 still work, but the scheduler dials no one.
     autocall_enabled = os.getenv("COBRANZA_AUTOCALL_ENABLED", "false").lower() in ("1", "true", "yes")
-    if not autocall_enabled:
+    if not autocall_enabled and not force:
         logger.warning(
             "[register_cobranza_jobs] COBRANZA_AUTOCALL_ENABLED is not set — "
             "automated calling jobs NOT registered (no debtor will be auto-called). "
-            "Set COBRANZA_AUTOCALL_ENABLED=true to enable the campaign."
+            "Set COBRANZA_AUTOCALL_ENABLED=true or flip the runtime kill-switch ON."
         )
         return
 
