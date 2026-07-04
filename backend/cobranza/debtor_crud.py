@@ -434,3 +434,72 @@ async def list_active_softseguros_poliza_ids(db, user_id: str) -> set:
     )
     docs = await cursor.to_list(length=None)
     return {d["softseguros_poliza_id"] for d in docs if d.get("softseguros_poliza_id") is not None}
+
+
+# ── CUOTA model helpers (the real cartera: one debtor == one softseguros_pago_id) ──
+# The póliza-keyed helpers above are the legacy model. The cartera endpoint
+# (list_pagospolizas_filtro_paginados) returns one row per CUOTA, so a financed
+# póliza yields N debtors. Everything below keys on softseguros_pago_id.
+# `_pago_to_debtor_doc` (sync.py) already produces only SOFTSEGUROS-owned fields,
+# so we $set the whole doc on each sync and $setOnInsert the Phase-17 invariants.
+
+def build_softseguros_pago_upsert_op(
+    user_id: str, softseguros_pago_id, doc: dict, *, pinned: bool = False,
+) -> dict:
+    """
+    Build the (filter, update) upsert spec keyed by (user_id, softseguros_pago_id).
+    On insert: seeds cobranza invariants (estado='pendiente', intentos=0, …), source,
+    and `pinned`. On update: all SOFTSEGUROS-owned fields refresh; Phase-17 call state
+    is preserved. When `pinned=True` (manual custom load) the debtor is pinned so the
+    daily sweep never deactivates it — even if it re-pins an existing doc.
+    """
+    now = _utcnow()
+    set_payload = {k: v for k, v in doc.items() if k != "softseguros_pago_id"}
+    set_payload["last_synced"] = now
+    set_payload["updated_at"] = now
+    if pinned:
+        set_payload["pinned"] = True  # manual load pins new AND existing docs
+    on_insert = {
+        "user_id": user_id,
+        "source": "softseguros",
+        "softseguros_pago_id": softseguros_pago_id,
+        "estado": "pendiente",
+        "intentos": 0,
+        "max_intentos": int(doc.get("max_intentos", 5)),
+        "historial_llamadas": [],
+        "escalado": False,
+        "vapi_call_id": None,
+        "ultimo_contacto_fecha": None,
+        "created_at": now,
+    }
+    if not pinned:
+        on_insert["pinned"] = False  # daily sync: default unpinned on insert only
+    for k in list(set_payload):
+        if k in on_insert:
+            on_insert.pop(k, None)
+    return {
+        "filter": {"user_id": user_id, "softseguros_pago_id": softseguros_pago_id},
+        "update": {"$set": set_payload, "$setOnInsert": on_insert},
+    }
+
+
+async def list_active_softseguros_pago_ids(db, user_id: str, *, include_pinned: bool = False) -> set:
+    """Active SOFTSEGUROS cuota-debtors' pago ids. Pinned ones are excluded by default
+    so the daily soft-delete sweep never touches a manually-pinned load."""
+    q = {"user_id": user_id, "source": "softseguros", "is_active": True,
+         "softseguros_pago_id": {"$exists": True}}
+    if not include_pinned:
+        q["pinned"] = {"$ne": True}
+    cursor = db.debtors.find(q, {"softseguros_pago_id": 1})
+    docs = await cursor.to_list(length=None)
+    return {d["softseguros_pago_id"] for d in docs if d.get("softseguros_pago_id") is not None}
+
+
+async def mark_debtor_paid_by_softseguros_pago_id(db, user_id: str, softseguros_pago_id) -> bool:
+    """Soft-mark a cuota-debtor as resolved (paid / fell out of the unpaid window)."""
+    result = await db.debtors.update_one(
+        {"user_id": user_id, "softseguros_pago_id": softseguros_pago_id},
+        {"$set": {"status_softseguros": "pagado", "is_active": False,
+                  "recaudado": True, "updated_at": _utcnow()}},
+    )
+    return result.matched_count > 0
