@@ -134,7 +134,19 @@ interface Debtor {
   numero_poliza?: string;
   ramo_nombre?: string;
   cliente_documento?: string;
+  cliente_celular?: string;
   aseguradora_nit?: string;
+  aseguradora_nombre?: string;   // compañía de seguros (para el speech)
+  forma_pago?: string;           // Contado / Financiado / Fraccionado / Acuerdo
+  objeto_asegurado?: string;     // riesgo asegurado (placa, dirección…)
+  fecha_pago?: string;           // vencimiento real de la cuota
+  fecha_compromiso?: string;     // fecha acordada con el cliente
+  dias_mora?: number;
+  edad_cartera?: number;
+  numero_cuota?: string | number;
+  valor_cuota?: number;
+  saldo_pendiente?: number;
+  status_softseguros?: string;   // ya_vencidos | proximos_a_vencer
   last_synced?: string;
 }
 
@@ -556,30 +568,47 @@ function DebtorModal({
             display: 'flex', flexDirection: 'column', gap: 20,
           }}>
 
-            {/* SoftSeguros póliza panel (real fields only) */}
-            {debtor.source === 'softseguros' && (
-              <div style={{ padding: 14, background: C.tealBg, border: `1px solid ${C.tealBdr}`, borderRadius: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 11 }}>
-                  <span style={{ color: C.teal, display: 'inline-flex', fontSize: 13 }}>🔗</span>
-                  <span style={{ ...lbl(C.teal, 9.5) }}>Póliza · SoftSeguros</span>
+            {/* SoftSeguros: póliza + cuota/deuda (todo lo que ARIA necesita para el speech) */}
+            {debtor.source === 'softseguros' && (() => {
+              const row = (k: string, v: string | undefined) => (v == null || v === '') ? null : (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+                  <span style={{ fontFamily: C.IN, fontSize: 12, color: C.faint, flexShrink: 0 }}>{k}</span>
+                  <span style={{ fontFamily: C.SG, fontSize: 12.5, fontWeight: 700, color: C.ink, textAlign: 'right' }}>{v}</span>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                  {([
-                    ['Nº póliza', debtor.numero_poliza],
-                    ['Ramo', debtor.ramo_nombre],
-                    ['Aseguradora', nombreAseguradora(debtor.aseguradora_nit)],
-                    ['Documento', debtor.cliente_documento],
-                  ] as [string, string | undefined][])
-                    .filter(([, v]) => !!v)
-                    .map(([k, v]) => (
-                      <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
-                        <span style={{ fontFamily: C.IN, fontSize: 12, color: C.faint, flexShrink: 0 }}>{k}</span>
-                        <span style={{ fontFamily: C.SG, fontSize: 12.5, fontWeight: 700, color: C.ink, textAlign: 'right' }}>{v}</span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
+              );
+              const cop = (n?: number) => (n != null && n > 0) ? formatCOP(n) : undefined;
+              const dt = (d?: string) => d ? formatDate(d) : undefined;
+              const mora = debtor.dias_mora ?? debtor.edad_cartera;
+              return (
+                <>
+                  <div style={{ padding: 14, background: C.tealBg, border: `1px solid ${C.tealBdr}`, borderRadius: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 11 }}>
+                      <span style={{ color: C.teal, display: 'inline-flex', fontSize: 13 }}>🔗</span>
+                      <span style={{ ...lbl(C.teal, 9.5) }}>Póliza · SoftSeguros</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                      {row('Nº póliza', debtor.numero_poliza)}
+                      {row('Ramo', debtor.ramo_nombre)}
+                      {row('Aseguradora', debtor.aseguradora_nombre || nombreAseguradora(debtor.aseguradora_nit))}
+                      {row('Riesgo asegurado', debtor.objeto_asegurado)}
+                      {row('Forma de pago', debtor.forma_pago)}
+                      {row('Documento', debtor.cliente_documento)}
+                    </div>
+                  </div>
+                  <div style={{ padding: 14, background: C.s2, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                    <div style={{ ...lbl(C.muted, 9.5), marginBottom: 11 }}>Cuota y deuda</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                      {row('Nº de cuota', debtor.numero_cuota != null ? String(debtor.numero_cuota) : undefined)}
+                      {row('Valor de la cuota', cop(debtor.valor_cuota))}
+                      {row('Saldo pendiente', cop(debtor.saldo_pendiente))}
+                      {row('Vencimiento', dt(debtor.fecha_pago || debtor.vencimiento))}
+                      {row('Compromiso de pago', dt(debtor.fecha_compromiso))}
+                      {row('Días de mora', mora != null ? (mora > 0 ? `${mora} días` : 'Al día / vence hoy') : undefined)}
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
 
             {/* Promise info */}
             {(debtor.estado === 'promesa_de_pago' || debtor.monto_prometido) && (
