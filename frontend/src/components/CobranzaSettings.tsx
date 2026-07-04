@@ -215,10 +215,14 @@ export function CobranzaSettings() {
         </div>
       </Section>
 
-      {/* Carga manual */}
-      <Section title="Carga manual (opción)" hint="Trae una ventana de cartera puntual sin cambiar tu config diaria. Estos deudores quedan fijados: el sync diario no los borra.">
+      {/* Carga manual — solo para el arranque */}
+      <Section title="Carga manual — evacuación de arranque" hint="Solo para las primeras semanas de operación.">
+        <div style={{ padding: '11px 14px', borderRadius: 9, background: C.orangeBg, color: C.orange, fontFamily: C.SG, fontSize: 12.5, lineHeight: 1.5 }}>
+          ⚠️ <strong>Esto es temporal.</strong> Sirve para evacuar la <strong>cartera vencida acumulada</strong> (mora vieja) durante los primeros días de arranque.
+          En operación normal <strong>NO lo necesitas</strong>: el sync diario mantiene la cola sola. Estos deudores quedan <em>fijados</em> (el sync diario no los borra).
+        </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
-          <Field label="Cargar cartera desde">
+          <Field label="Cargar cartera vencida desde">
             <input style={{ ...inputStyle, width: 180 }} type="date" value={manualDesde} onChange={e => setManualDesde(e.target.value)} />
           </Field>
           <button onClick={() => manualDesde && sincronizar({ fecha_desde: manualDesde, fecha_hasta: '2027-12-31' })}
