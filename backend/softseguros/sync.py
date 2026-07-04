@@ -241,16 +241,26 @@ def _build_cartera_query(c: dict) -> list:
         raise ValueError(
             "softseguros_cartera.sede es obligatorio (sin sede el endpoint da 504)"
         )
+    # tipo=cartera_por_pagar_compania es la vista de DEUDA VIVA (recaudado=False).
+    # consultar_nominas_pasadas es la vista de pagos YA cobrados — NO usar para la cola.
+    tipo = c.get("tipo", "cartera_por_pagar_compania")
     q = [
         ("sede", str(c["sede"])),
-        ("tipo", c.get("tipo", "consultar_nominas_pasadas")),
-        ("fecha_a_buscar", c.get("fecha_a_buscar", c.get("tipo", "consultar_nominas_pasadas"))),
+        ("tipo", tipo),
+        ("fecha_a_buscar", c.get("fecha_a_buscar", tipo)),
         ("order_by", c.get("order_by", "fecha_pago")),
         ("sort_by", c.get("sort_by", "asc")),
         ("dias_vencidos", str(c.get("dias_vencidos", -1))),
         ("fecha_busqueda_pagos", str(c.get("fecha_busqueda_pagos", -1))),
         ("search_in", c.get("search_in", "poliza_numero_poliza")),
     ]
+    # Date window on fecha_pago (the ONLY server-side date filter). API names them
+    # fecha_inicio/fecha_fin; config exposes them as fecha_desde/fecha_hasta.
+    # Compromiso has NO server filter — filter it locally after fetch.
+    if c.get("fecha_desde"):
+        q.append(("fecha_inicio", str(c["fecha_desde"])))
+    if c.get("fecha_hasta"):
+        q.append(("fecha_fin", str(c["fecha_hasta"])))
     for eid in c.get("estadopolizas_selected", []) or []:
         q.append(("estadopolizas_selected[]", str(eid)))
     for rid in c.get("ramos_selected", []) or []:

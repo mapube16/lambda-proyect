@@ -8,6 +8,17 @@
 > Fecha: 2026-07-03 · Cuenta: DPG Seguros (usuario de cartera). Credenciales en el gestor
 > de secretos / `softseguros_credentials` — **no** en este doc.
 
+> **⚠️ CORRECCIÓN 2026-07-04 — el `tipo` correcto para la DEUDA VIVA:**
+> `tipo=consultar_nominas_pasadas` es la vista de pagos **YA cobrados** (recaudado=True) —
+> NO sirve para la cola. La vista de **deuda viva** (recaudado=False, con días vencidos y
+> compromiso) es **`tipo=cartera_por_pagar_compania`** (`fecha_a_buscar` = igual).
+> Filtro de fecha: **`fecha_inicio`/`fecha_fin`** filtran por `fecha_pago` (único filtro de
+> fecha server-side; el compromiso NO tiene filtro propio → filtrar local). Con la ventana
+> del informe (`fecha_inicio=2026-06-15`) la cola real de DPG es **~45 cuotas** (vs 9.718 sin
+> ventana, que incluye basura de 1900/2016). Verificado en vivo 2026-07-04.
+> Nota: en la cartera actual `fecha_realizara_pago` (compromiso) == `fecha_pago` porque nadie
+> ha renegociado aún; el compromiso empezará a diferir cuando ARIA registre "pago el viernes".
+
 ---
 
 ## El endpoint
