@@ -1692,9 +1692,6 @@ export function CobranzaTab() {
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '26px 28px 40px' }}>
 
-        {/* SOFTSEGUROS deudores (synced from the broker's SOFTSEGUROS account) */}
-        <SoftSegurosSection />
-
         {/* hidden inputs */}
         <input ref={csvInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('create')} />
         <input ref={csvUpdateRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('update')} />
