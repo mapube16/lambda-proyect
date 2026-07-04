@@ -241,9 +241,12 @@ def _build_cartera_query(c: dict) -> list:
         raise ValueError(
             "softseguros_cartera.sede es obligatorio (sin sede el endpoint da 504)"
         )
-    # tipo=cartera_por_pagar_compania es la vista de DEUDA VIVA (recaudado=False).
-    # consultar_nominas_pasadas es la vista de pagos YA cobrados — NO usar para la cola.
-    tipo = c.get("tipo", "cartera_por_pagar_compania")
+    # tipo=cartera_por_cobrar = la vista "Por cobrar" de Softseguros (deuda viva,
+    # recaudado=False) — la MISMA que ve el equipo de cartera. La ventana de fecha
+    # (fecha_inicio/fecha_fin) filtra por la FECHA DE COMPROMISO (fecha_realizara_pago),
+    # que es el referente de gestión del informe §3. (consultar_nominas_pasadas = ya
+    # cobrados; cartera_por_pagar_compania = otra vista — NO usar para la cola.)
+    tipo = c.get("tipo", "cartera_por_cobrar")
     q = [
         ("sede", str(c["sede"])),
         ("tipo", tipo),

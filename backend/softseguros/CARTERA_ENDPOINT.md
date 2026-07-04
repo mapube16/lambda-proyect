@@ -8,16 +8,18 @@
 > Fecha: 2026-07-03 · Cuenta: DPG Seguros (usuario de cartera). Credenciales en el gestor
 > de secretos / `softseguros_credentials` — **no** en este doc.
 
-> **⚠️ CORRECCIÓN 2026-07-04 — el `tipo` correcto para la DEUDA VIVA:**
-> `tipo=consultar_nominas_pasadas` es la vista de pagos **YA cobrados** (recaudado=True) —
-> NO sirve para la cola. La vista de **deuda viva** (recaudado=False, con días vencidos y
-> compromiso) es **`tipo=cartera_por_pagar_compania`** (`fecha_a_buscar` = igual).
-> Filtro de fecha: **`fecha_inicio`/`fecha_fin`** filtran por `fecha_pago` (único filtro de
-> fecha server-side; el compromiso NO tiene filtro propio → filtrar local). Con la ventana
-> del informe (`fecha_inicio=2026-06-15`) la cola real de DPG es **~45 cuotas** (vs 9.718 sin
-> ventana, que incluye basura de 1900/2016). Verificado en vivo 2026-07-04.
-> Nota: en la cartera actual `fecha_realizara_pago` (compromiso) == `fecha_pago` porque nadie
-> ha renegociado aún; el compromiso empezará a diferir cuando ARIA registre "pago el viernes".
+> **✅ CORRECCIÓN DEFINITIVA 2026-07-04 — el `tipo` correcto es `cartera_por_cobrar`:**
+> Capturado del cURL real de la pestaña **"Por cobrar"** de Softseguros. La cola de cobranza
+> (deuda viva, recaudado=False, la MISMA que ve el equipo de cartera) es
+> **`tipo=cartera_por_cobrar`** (`fecha_a_buscar` = igual). Y CLAVE (informe §3):
+> **la ventana `fecha_inicio`/`fecha_fin` filtra por la FECHA DE COMPROMISO
+> (`fecha_realizara_pago`), NO por `fecha_pago`** — un cliente que venció en abril pero se
+> comprometió a pagar en julio ENTRA por compromiso. Con `fecha_inicio=2026-06-15` &
+> `fecha_fin≈hoy+pocos días` la cola real de DPG es **~520-580 pólizas** (= los ~500/arranque
+> del informe). Verificado en vivo 2026-07-04, count=521 exacto del cURL del usuario.
+>
+> Otros `tipo` (NO usar para la cola): `consultar_nominas_pasadas` = pagos YA cobrados;
+> `cartera_por_pagar_compania` = otra vista. La pestaña "Por cobrar" da 4839 sin ventana de fecha.
 
 ---
 
