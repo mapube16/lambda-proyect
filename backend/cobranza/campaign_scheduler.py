@@ -160,10 +160,16 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
 
         client = Client(account_sid, auth_token)
         to_number = debtor.get("telefono")
-        call = client.calls.create(
-            to=to_number, from_=from_number,
-            url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
-            **call_status_kwargs(),
+        # El SDK de Twilio es sync (HTTP bloqueante): en el event loop congela
+        # TODAS las llamadas activas ~0.5-1s por marcación. Igual que initiate-v2.
+        loop = asyncio.get_event_loop()
+        call = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: client.calls.create(
+                to=to_number, from_=from_number,
+                url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+                **call_status_kwargs(),
+            )),
+            timeout=15,
         )
         call_sid = call.sid
         logger.info("[scheduler] Twilio call %s -> %s (debtor %s)", call_sid, to_number, debtor["_id"])

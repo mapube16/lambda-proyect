@@ -1469,6 +1469,36 @@ export function CobranzaTab() {
       .catch(() => {});
   }, []);
 
+  // ── Jornada de hoy (informe §2.1: revisión previa + exclusión) ──────────────
+  type JornadaItem = {
+    _id: string; nombre: string; telefono: string; numero_poliza?: string;
+    ramo_nombre?: string; estado: string; monto?: number; dias_mora: number;
+    intento: number; hora: string; grupo: 'vence_hoy' | 'preventiva' | 'backlog';
+    dentro_cupo: boolean;
+  };
+  const [jornadaOpen, setJornadaOpen] = useState(false);
+  const [jornada, setJornada] = useState<{ fecha: string; total: number; cupo_diario: number; items: JornadaItem[] } | null>(null);
+  const [jornadaLoading, setJornadaLoading] = useState(false);
+  const fetchJornada = useCallback(async () => {
+    setJornadaLoading(true);
+    try {
+      const r = await apiFetch('/api/cobranza/jornada-hoy');
+      if (r.ok) setJornada(await r.json());
+    } catch { /* keep prev */ }
+    finally { setJornadaLoading(false); }
+  }, []);
+  useEffect(() => { if (jornadaOpen && !jornada) fetchJornada(); }, [jornadaOpen, jornada, fetchJornada]);
+  const excluirDeJornada = useCallback(async (item: JornadaItem) => {
+    try {
+      const r = await apiFetch(`/api/cobranza/debtors/${item._id}/pausar`, { method: 'POST' });
+      if (r.ok) {
+        setJornada(prev => prev ? { ...prev, total: prev.total - 1, items: prev.items.filter(i => i._id !== item._id) } : prev);
+        addToast({ id: `excl-${item._id}`, message: `${item.nombre} excluido de la jornada (pausado)`, ok: true });
+        fetchDebtors();
+      }
+    } catch { /* noop */ }
+  }, [addToast, fetchDebtors]);
+
   // ── Whole-cartera counts per estado (KPIs) ─────────────────────────────────
   const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number } | null>(null);
   const fetchFunnel = useCallback(async () => {
@@ -1823,6 +1853,76 @@ export function CobranzaTab() {
               {sub && <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted, marginTop: 2 }}>{sub}</div>}
             </div>
           ))}
+        </div>
+
+        {/* Jornada de hoy (informe §2.1) — revisión previa + exclusión */}
+        <div className="card" style={{ marginBottom: 18, overflow: 'hidden' }}>
+          <button
+            onClick={() => setJornadaOpen(o => !o)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '13px 18px', background: 'transparent', border: 'none', cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 13.5, color: C.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
+              📋 Jornada de hoy
+              {jornada && (
+                <span style={{ fontFamily: C.IN, fontWeight: 500, fontSize: 12, color: C.muted }}>
+                  {jornada.total} programados · cupo {jornada.cupo_diario}/día
+                </span>
+              )}
+            </span>
+            <span style={{ color: C.faint, fontSize: 12 }}>
+              {jornadaOpen ? '▲ ocultar' : '▼ revisar y excluir antes de la jornada'}
+            </span>
+          </button>
+          {jornadaOpen && (
+            <div style={{ borderTop: `1px solid ${C.border}`, maxHeight: 380, overflowY: 'auto' }}>
+              {jornadaLoading ? (
+                <div style={{ padding: 18, fontFamily: C.IN, fontSize: 12.5, color: C.muted }}>Calculando la jornada…</div>
+              ) : !jornada || jornada.items.length === 0 ? (
+                <div style={{ padding: 18, fontFamily: C.IN, fontSize: 12.5, color: C.muted }}>
+                  No hay llamadas programadas para hoy.
+                </div>
+              ) : (
+                jornada.items.map((it, idx) => {
+                  const grupoBadge = it.grupo === 'vence_hoy'
+                    ? { txt: 'VENCE HOY', color: C.orange, bg: C.orangeBg }
+                    : it.grupo === 'preventiva'
+                      ? { txt: 'PREVENTIVA', color: C.teal, bg: C.tealBg }
+                      : { txt: `${it.dias_mora} D MORA`, color: C.pink, bg: C.pinkBg };
+                  return (
+                    <div key={it._id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '9px 18px',
+                      borderBottom: `1px solid ${C.border}`,
+                      opacity: it.dentro_cupo ? 1 : 0.45,
+                    }}>
+                      <span style={{ fontFamily: C.SG, fontSize: 11, color: C.faint, width: 26 }}>{idx + 1}.</span>
+                      <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 10, color: grupoBadge.color, background: grupoBadge.bg, borderRadius: 5, padding: '2px 7px', whiteSpace: 'nowrap' }}>
+                        {grupoBadge.txt}
+                      </span>
+                      <span style={{ fontFamily: C.SG, fontWeight: 600, fontSize: 12.5, color: C.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {it.nombre}
+                      </span>
+                      <span style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted, whiteSpace: 'nowrap' }}>
+                        {it.telefono} · intento {it.intento} · {it.hora}
+                        {!it.dentro_cupo && ' · fuera de cupo'}
+                      </span>
+                      <button
+                        title="Excluir de la jornada (pausa el deudor; se reactiva desde la tabla)"
+                        onClick={() => excluirDeJornada(it)}
+                        style={{
+                          padding: '4px 10px', borderRadius: 7, border: `1px solid ${C.border2}`,
+                          background: 'transparent', color: C.pink, fontFamily: C.SG,
+                          fontWeight: 600, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >✕ Excluir</button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </div>
 
         {/* Filter pills (Panel) */}

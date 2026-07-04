@@ -252,6 +252,88 @@ class KillSwitchPayload(BaseModel):
     enabled: bool
 
 
+# ── Jornada de hoy (informe §2.1: revisión previa del colaborador) ─────────────
+
+@router.get("/jornada-hoy")
+async def jornada_hoy(current_user: dict = Depends(get_current_user)):
+    """
+    Llamadas PROGRAMADAS para hoy, en el orden real de marcación (prioridad del
+    informe: vencen hoy → preventivas → mayor mora). Es la lista que el
+    colaborador de cartera revisa ANTES de la jornada para excluir clientes
+    (botón pausar). Se calcula en vivo con la misma lógica del dispatcher, así
+    que refleja exactamente lo que el bot va a hacer.
+    """
+    from cobranza.sequence_engine import (
+        CALLABLE_ESTADOS, _parse_festivos, _tz,
+        compute_proximo_intento, prioridad_informe,
+    )
+    user_id = str(current_user["user_id"])
+    db = get_db()
+
+    from cobranza.config_cache import get_tenant_config
+    cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
+    timings, horarios = cfg.get("timings") or {}, cfg.get("horarios") or {}
+    volumen = cfg.get("volumen") or {}
+    tz = _tz(horarios)
+    today_local = datetime.now(timezone.utc).astimezone(tz).date()
+    extra_fest = _parse_festivos(horarios)
+
+    cursor = db.debtors.find(
+        {
+            "user_id": user_id,
+            "is_active": {"$ne": False},
+            "estado": {"$in": list(CALLABLE_ESTADOS)},
+        },
+        {
+            "nombre": 1, "telefono": 1, "numero_poliza": 1, "ramo_nombre": 1,
+            "dias_mora": 1, "edad_cartera": 1, "vencimiento": 1, "fecha_pago": 1,
+            "fecha_compromiso": 1, "fecha_reagendada": 1, "estado": 1, "monto": 1,
+            "intentos": 1, "proximo_intento_at": 1, "ultimo_contacto_fecha": 1,
+        },
+    )
+    programados = []
+    async for d in cursor:
+        at = d.get("proximo_intento_at")
+        if at is None:
+            # sin cita persistida (p.ej. planner aún no corre) → misma cuenta pura
+            verdict, at = compute_proximo_intento(d, timings, horarios, today=today_local)
+            if verdict != "cita":
+                continue
+        if at.tzinfo is None:
+            from datetime import timezone as _tzu
+            at = at.replace(tzinfo=_tzu.utc)
+        at_local = at.astimezone(tz)
+        if at_local.date() > today_local:
+            continue  # cita futura — no es de hoy
+        grupo, _ = prioridad_informe(d, today_local, extra_fest)
+        programados.append({
+            "_id": str(d["_id"]),
+            "nombre": d.get("nombre"),
+            "telefono": d.get("telefono"),
+            "numero_poliza": d.get("numero_poliza"),
+            "ramo_nombre": d.get("ramo_nombre"),
+            "estado": d.get("estado"),
+            "monto": d.get("monto"),
+            "dias_mora": d.get("dias_mora") or d.get("edad_cartera") or 0,
+            "intento": int(d.get("intentos") or 0) + 1,
+            "hora": at_local.strftime("%H:%M"),
+            "grupo": ["vence_hoy", "preventiva", "backlog"][grupo],
+            "_orden": prioridad_informe(d, today_local, extra_fest),
+        })
+
+    programados.sort(key=lambda x: x["_orden"])
+    cupo = int(volumen.get("llamadas_por_dia") or 30)
+    for i, p in enumerate(programados):
+        p.pop("_orden", None)
+        p["dentro_cupo"] = i < cupo
+    return {
+        "fecha": today_local.isoformat(),
+        "total": len(programados),
+        "cupo_diario": cupo,
+        "items": programados,
+    }
+
+
 # ── Paquete de minutos ─────────────────────────────────────────────────────────
 
 @router.get("/minutos")
