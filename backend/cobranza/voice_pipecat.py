@@ -286,7 +286,7 @@ async def run_bot(
     # Mora calculada EN VIVO (informe §3: antes de cada contacto se verifica la
     # fecha de pago para saber si ya venció y cuántos días acumula) — el dato
     # del sync puede tener 1 día de rezago.
-    from datetime import date as _date, datetime as _datetime
+    from datetime import date as _date, datetime as _datetime, time as _dt_time
     import pytz as _pytz
     _hoy_co = _datetime.now(_pytz.timezone("America/Bogota")).date()
     _venc_raw = debtor.get("fecha_pago") or debtor.get("vencimiento")
@@ -509,10 +509,33 @@ async def run_bot(
         required=["detalle"],
     )
 
+    # Reagendamiento pedido por el CLIENTE (informe §3): la cita reemplaza el
+    # siguiente intento programado y queda trazado que la pidió el cliente.
+    # La fecha de HOY va en la descripción para que Gemini resuelva "mañana" /
+    # "el viernes" a una fecha exacta.
+    reagendar_tool = FunctionSchema(
+        name="reagendar_llamada",
+        description=(
+            "Usala cuando el deudor pida ser contactado EN OTRO MOMENTO ('ahora no "
+            "puedo', 'llamame manana', 'mejor el viernes por la tarde'). PRIMERO "
+            "preguntale: 'Con mucho gusto. Podria indicarme que dia y en que horario "
+            "prefiere que volvamos a comunicarnos con usted?'. Cuando responda, llama "
+            f"esta funcion con la fecha EXACTA (hoy es {_hoy_co.isoformat()}; resuelve "
+            "'manana' o 'el viernes' a la fecha real). Despues confirma: 'Perfecto. "
+            "Hemos registrado su solicitud y nos comunicaremos nuevamente en el "
+            "horario indicado. Muchas gracias por su tiempo.', despidete y llama end_call."
+        ),
+        properties={
+            "fecha": {"type": "string", "description": "Fecha pedida por el cliente, formato YYYY-MM-DD"},
+            "hora": {"type": "string", "description": "Hora pedida en formato HH:MM de 24 horas (ej: '15:00'), si el cliente la dio"},
+        },
+        required=["fecha"],
+    )
+
     tools_schema = ToolsSchema(standard_tools=[
         end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool,
         escalate_tool, get_policy_info_tool, search_knowledge_tool,
-        notify_payment_claim_tool,
+        notify_payment_claim_tool, reagendar_tool,
     ])
 
     # ── Gemini Live (STT + LLM + TTS all-in-one, 8kHz telephony) ────────
@@ -983,6 +1006,42 @@ async def run_bot(
             result, properties=FunctionCallResultProperties(run_llm=True)
         )
 
+    async def _handle_reagendar_llamada(params):
+        """reagendar_llamada: cita pedida por el cliente — reemplaza el siguiente
+        intento programado (proximo_intento_at) y deja trazabilidad (informe §3)."""
+        fecha_s = str(params.arguments.get("fecha", "")).strip()
+        hora_s = str(params.arguments.get("hora", "") or "").strip()
+        logger.info("[VOICE] reagendar_llamada: fecha=%s hora=%s debtor=%s",
+                    fecha_s, hora_s, debtor.get("_id"))
+        result = {"ok": False, "error": "fecha invalida"}
+        try:
+            d = _date.fromisoformat(fecha_s[:10])
+            if d < _hoy_co:
+                raise ValueError("fecha en el pasado")
+            try:
+                hh, mm = hora_s.split(":")[:2]
+                t = _dt_time(int(hh), int(mm))
+            except Exception:
+                t = _dt_time(9, 0)  # sin hora → inicio de jornada
+            local = _pytz.timezone("America/Bogota").localize(_datetime.combine(d, t))
+            at_utc = local.astimezone(_pytz.utc)
+            if orchestrator:
+                upd = await orchestrator.update_debtor(str(debtor["_id"]), {
+                    "estado": "reagendado",
+                    "fecha_reagendada": at_utc,
+                    "proximo_intento_at": at_utc,   # el dispatcher la marca a esa hora
+                    "reagendado_solicitado_por": "cliente",  # trazabilidad (informe §3)
+                    "reagendado_en_llamada": call_sid,
+                })
+                if upd.get("ok"):
+                    result = {"ok": True, "reagendado_para": f"{d.isoformat()} {t.strftime('%H:%M')}"}
+                else:
+                    result = upd
+        except Exception as exc:
+            logger.error("[VOICE] reagendar_llamada error: %s", exc)
+            result = {"ok": False, "error": str(exc)[:100]}
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
+
     # cancel_on_interruption=False for any handler with REAL side effects: with
     # barge-in enabled, the caller speaking mid-execution must NOT abort a DB
     # write or an outbound WhatsApp half-way. Read-only tools (get_policy_info,
@@ -1002,6 +1061,10 @@ async def run_bot(
     # It must run to completion regardless of interruptions.
     llm.register_function(
         "notify_payment_claim", _handle_notify_payment_claim, cancel_on_interruption=False
+    )
+    # Side effects reales (escribe la cita en el deudor) — no cancelable.
+    llm.register_function(
+        "reagendar_llamada", _handle_reagendar_llamada, cancel_on_interruption=False
     )
 
     # ── Events ───────────────────────────────────────────────────────────

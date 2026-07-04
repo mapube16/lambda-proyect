@@ -22,7 +22,7 @@ from cobranza.debtor_crud import get_debtor_by_id, update_debtor
 from cobranza.voice_pipecat import run_bot, CallResult
 from services.connection_manager import manager as _ws_manager
 
-_TERMINAL_ESTADOS = {"promesa_de_pago", "escalado", "pagado"}
+_TERMINAL_ESTADOS = {"promesa_de_pago", "escalado", "pagado", "reagendado", "disputa", "pago_reportado", "pausado"}
 
 logger = logging.getLogger("cobranza.voice")
 
@@ -272,7 +272,15 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
 async def _process_call_ended(db, debtor: dict, result: CallResult):
     """Update debtor status and save call history after Pipecat pipeline ends."""
     try:
-        current_estado = debtor.get("estado", "pendiente")
+        # El estado se relee de la DB: las tools de la llamada (reagendar_llamada,
+        # update_debtor→promesa, escalate, notify_payment_claim) escriben durante
+        # la conversación y el dict en memoria quedó en 'llamando' — usarlo
+        # pisaba esos estados con 'contactado' al colgar.
+        debtor_oid = ObjectId(debtor["_id"]) if isinstance(debtor["_id"], str) else debtor["_id"]
+        fresh = await db.debtors.find_one({"_id": debtor_oid}, {"estado": 1})
+        current_estado = (fresh or {}).get("estado") or debtor.get("estado", "pendiente")
+        if current_estado == "llamando":
+            current_estado = debtor.get("estado_previo") or "pendiente"
 
         # Determine new estado
         if current_estado in _TERMINAL_ESTADOS:
