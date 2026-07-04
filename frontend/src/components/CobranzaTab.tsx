@@ -579,6 +579,16 @@ function DebtorModal({
               const cop = (n?: number) => (n != null && n > 0) ? formatCOP(n) : undefined;
               const dt = (d?: string) => d ? formatDate(d) : undefined;
               const mora = debtor.dias_mora ?? debtor.edad_cartera;
+              // Mora vs. por-vencer: la fecha de mora sólo aplica si YA venció.
+              const venc = debtor.fecha_pago || debtor.vencimiento;
+              const hoy = new Date(new Date().toDateString()).getTime();
+              const diasParaVencer = venc ? Math.round((new Date(venc + 'T00:00:00').getTime() - hoy) / 86400000) : null;
+              let moraLabel = 'Días de mora';
+              let moraValue: string | undefined;
+              if (mora != null && mora > 0) moraValue = `${mora} días`;
+              else if (diasParaVencer != null && diasParaVencer > 0) { moraLabel = 'Vence en'; moraValue = `${diasParaVencer} día${diasParaVencer === 1 ? '' : 's'}`; }
+              else if (diasParaVencer === 0) { moraLabel = 'Estado'; moraValue = 'Vence hoy'; }
+              else if (diasParaVencer != null && diasParaVencer < 0) moraValue = `${-diasParaVencer} días`;
               return (
                 <>
                   <div style={{ padding: 14, background: C.tealBg, border: `1px solid ${C.tealBdr}`, borderRadius: 10 }}>
@@ -603,7 +613,7 @@ function DebtorModal({
                       {row('Saldo pendiente', cop(debtor.saldo_pendiente))}
                       {row('Vencimiento', dt(debtor.fecha_pago || debtor.vencimiento))}
                       {row('Compromiso de pago', dt(debtor.fecha_compromiso))}
-                      {row('Días de mora', mora != null ? (mora > 0 ? `${mora} días` : 'Al día / vence hoy') : undefined)}
+                      {row(moraLabel, moraValue)}
                     </div>
                   </div>
                 </>
