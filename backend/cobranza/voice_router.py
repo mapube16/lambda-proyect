@@ -74,6 +74,49 @@ async def twilio_webhook(request: Request):
     return PlainTextResponse(twiml, media_type="application/xml")
 
 
+# ── Call Status Callback (consumo del paquete de minutos) ───────────────────
+
+
+def _twilio_signature_ok(request: Request, form: dict, path: str) -> bool:
+    """
+    Valida X-Twilio-Signature contra la URL pública. El ledger de minutos es
+    ruta de facturación: un callback forjado inflaría el consumo del cliente.
+    Sin TWILIO_AUTH_TOKEN (dev local) no se valida.
+    """
+    token = os.getenv("TWILIO_AUTH_TOKEN")
+    if not token:
+        return True
+    try:
+        from twilio.request_validator import RequestValidator
+        url = f"{os.getenv('VOICE_WEBHOOK_HOST', 'http://localhost:8002')}{path}"
+        signature = request.headers.get("X-Twilio-Signature", "")
+        return RequestValidator(token).validate(url, form, signature)
+    except Exception:
+        logger.exception("[CallStatus] signature validation error")
+        return False
+
+
+@router.post("/call-status")
+async def call_status_callback(request: Request):
+    """
+    Twilio lo llama al terminar la llamada (evento 'completed') con CallDuration.
+    Registra el consumo del paquete de minutos (idempotente por CallSid).
+    """
+    form = dict(await request.form())
+    if not _twilio_signature_ok(request, form, "/api/cobranza/voice/call-status"):
+        raise HTTPException(403, "Invalid Twilio signature")
+
+    call_sid = form.get("CallSid", "")
+    call_status = form.get("CallStatus", "")
+    duration = int(form.get("CallDuration") or 0)
+    logger.info("[CallStatus] %s status=%s duration=%ss", call_sid, call_status, duration)
+
+    if call_status == "completed":
+        from cobranza import minutes
+        await minutes.record_call_consumption(get_db(), call_sid, duration)
+    return PlainTextResponse("OK")
+
+
 # ── Recording Callback ──────────────────────────────────────────────────────
 
 
@@ -325,6 +368,13 @@ async def initiate_call_v2(
     if has_been_contacted_today(debtor):
         raise HTTPException(400, "Ya fue contactado hoy (Ley 2300)")
 
+    # Paquete de minutos: sin saldo no se marca (402 = payment required).
+    from cobranza.minutes import MinutesExhaustedError, require_saldo
+    try:
+        await require_saldo(db, user_id)
+    except MinutesExhaustedError as e:
+        raise HTTPException(402, str(e))
+
     # ── Concurrency cap (Etapa 1 of scaling plan) ─────────────────────────
     # One uvicorn process degrades visibly with 2+ simultaneous Gemini Live
     # pipelines (observed: zombie voicemail call starved a real call — slow
@@ -371,6 +421,7 @@ async def initiate_call_v2(
             from_=from_number,
             url=f"{webhook_url}/api/cobranza/voice/webhook",
             method="POST",
+            **call_status_kwargs(),
         )
         if amd_enabled:
             # "DetectMessageEnd" is more conservative than "Enable": it waits for

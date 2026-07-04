@@ -1458,6 +1458,17 @@ export function CobranzaTab() {
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchTodaySummary]);
 
+  // ── Paquete de minutos (facturación) ───────────────────────────────────────
+  const [minutos, setMinutos] = useState<{
+    minutos_comprados: number; minutos_consumidos: number; minutos_restantes: number;
+  } | null>(null);
+  useEffect(() => {
+    apiFetch('/api/cobranza/minutos')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d) setMinutos(d); })
+      .catch(() => {});
+  }, []);
+
   // ── Whole-cartera counts per estado (KPIs) ─────────────────────────────────
   const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number } | null>(null);
   const fetchFunnel = useCallback(async () => {
@@ -1785,8 +1796,16 @@ export function CobranzaTab() {
 
         {/* Actividad de hoy (backend today-summary) — secondary strip */}
         <div style={{ ...lbl(C.faint, 10), marginBottom: 8 }}>ACTIVIDAD DE HOY</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 22 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 22 }}>
           {[
+            {
+              label: 'Minutos',
+              value: minutos ? minutos.minutos_restantes.toLocaleString('es-CO') : '—',
+              sub: minutos ? `de ${minutos.minutos_comprados.toLocaleString('es-CO')} del paquete` : '',
+              // <15% restante = alerta visual: hay que vender la recarga a tiempo
+              color: minutos && minutos.minutos_restantes < 0.15 * (minutos.minutos_comprados || 1) ? C.orange : C.teal,
+              pulse: false,
+            },
             { label: 'Llamando ahora', value: String(todayKpis?.llamando_ahora ?? llamandoNow), sub: todayKpis?.llamando_ahora ? 'en vivo' : '', color: C.yellow, pulse: (todayKpis?.llamando_ahora ?? 0) > 0 },
             { label: 'Contactados hoy', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.cyan, pulse: false },
             { label: 'Promesas hoy', value: String(todayKpis?.promesas_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.promesas_hoy.monto) : '', color: C.green, pulse: false },

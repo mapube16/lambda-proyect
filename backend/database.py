@@ -139,6 +139,14 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.cobranza_calls_in_progress, [("started_at", 1)], expireAfterSeconds=3600)
     await _safe_index(db.cobranza_calls, [("user_id", 1), ("created_at", -1)])
     await _safe_index(db.cobranza_calls, "call_id", unique=True)
+    # ── Paquete de minutos (ledger append-only, facturación) ─────────────────
+    # Único parcial por call_sid: un status-callback reenviado por Twilio no
+    # puede descontar la misma llamada dos veces.
+    await _safe_index(
+        db.cobranza_minutos_ledger, "call_sid",
+        unique=True, partialFilterExpression={"tipo": "consumo"},
+    )
+    await _safe_index(db.cobranza_minutos_ledger, [("user_id", 1), ("created_at", -1)])
     # ── Phase 25: Agentic Multi-Tenant Architecture indexes ──────────────────
     await _safe_index(db.tenant_configs, "user_id", unique=True)
     await _safe_index(db.agent_instances, "user_id", unique=True)

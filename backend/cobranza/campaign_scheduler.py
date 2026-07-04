@@ -130,7 +130,21 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
             )
             return
 
+        # Paquete de minutos: sin saldo el tenant no marca (el job sigue vivo
+        # para otros tenants; el deudor vuelve a pendiente).
+        from cobranza.minutes import MinutesExhaustedError, require_saldo
+        try:
+            await require_saldo(db, user_id)
+        except MinutesExhaustedError as e:
+            logger.warning("[scheduler] %s — debtor %s vuelve a pendiente", e, debtor["_id"])
+            await db.debtors.update_one(
+                {"_id": debtor["_id"]},
+                {"$set": {"estado": "pendiente", "updated_at": datetime.now(timezone.utc)}},
+            )
+            return
+
         from twilio.rest import Client
+        from cobranza.minutes import call_status_kwargs
 
         account_sid = os.getenv("TWILIO_ACCOUNT_SID")
         auth_token = os.getenv("TWILIO_AUTH_TOKEN")
@@ -145,6 +159,7 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
         call = client.calls.create(
             to=to_number, from_=from_number,
             url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+            **call_status_kwargs(),
         )
         call_sid = call.sid
         logger.info("[scheduler] Twilio call %s -> %s (debtor %s)", call_sid, to_number, debtor["_id"])

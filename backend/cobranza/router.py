@@ -249,6 +249,41 @@ class KillSwitchPayload(BaseModel):
     enabled: bool
 
 
+# ── Paquete de minutos ─────────────────────────────────────────────────────────
+
+@router.get("/minutos")
+async def get_minutos(current_user: dict = Depends(get_current_user)):
+    """Saldo del paquete de minutos del tenant (solo lectura — recargas vía staff)."""
+    from cobranza.minutes import get_saldo
+    return await get_saldo(get_db(), str(current_user["user_id"]))
+
+
+class MinutosRecarga(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    minutos: int
+    nota: str = ""
+    tipo: str = "compra"  # "compra" (>0) o "ajuste" (+/-)
+
+
+@router.post("/minutos/{client_id}")
+async def staff_recargar_minutos(
+    client_id: str,
+    body: MinutosRecarga,
+    staff: dict = Depends(require_staff),
+):
+    """STAFF ONLY: registrar compra/ajuste de minutos para un tenant (ledger auditable)."""
+    from cobranza.minutes import record_purchase
+    try:
+        saldo = await record_purchase(
+            get_db(), client_id, body.minutos,
+            nota=body.nota, actor=str(staff.get("email") or staff.get("user_id")),
+            tipo=body.tipo,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return saldo
+
+
 @router.get("/killswitch")
 async def get_killswitch(current_user: dict = Depends(require_staff)):
     """Return the current state of the automated-dialing master switch."""
@@ -671,11 +706,16 @@ async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict
         if not all([account_sid, auth_token, from_number]):
             raise RuntimeError("Twilio not configured")
 
+        from cobranza.minutes import require_saldo  # lanza si el paquete se agotó
+        await require_saldo(db, user_id)
+
+        from cobranza.minutes import call_status_kwargs
         client = Client(account_sid, auth_token)
         to_number = debtor.get("telefono")
         call = client.calls.create(
             to=to_number, from_=from_number,
             url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+            **call_status_kwargs(),
         )
         call_sid = call.sid
         logger.info("[llamar-ahora] Twilio call %s -> %s", call_sid, to_number)
@@ -755,6 +795,15 @@ async def llamar_ahora(
     if not all([account_sid, auth_token, from_number]):
         raise HTTPException(500, "Twilio not configured")
 
+    # Paquete de minutos: sin saldo no se marca (402 = payment required).
+    from cobranza.minutes import MinutesExhaustedError, require_saldo
+    try:
+        await require_saldo(db, user_id)
+    except MinutesExhaustedError as e:
+        await update_debtor(db, user_id, debtor_id, {"estado": debtor.get("estado", "pendiente")})
+        raise HTTPException(402, str(e))
+
+    from cobranza.minutes import call_status_kwargs
     twilio_client = TwilioClient(account_sid, auth_token)
     to_number = debtor.get("telefono")
     call = twilio_client.calls.create(
@@ -763,6 +812,7 @@ async def llamar_ahora(
         record=True,
         recording_status_callback=f"{webhook_url}/api/cobranza/voice/recording-callback",
         recording_status_callback_method="POST",
+        **call_status_kwargs(),
     )
     call_sid = call.sid
     logger.info("[llamar-ahora] Twilio call %s -> %s", call_sid, to_number)
