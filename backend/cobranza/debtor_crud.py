@@ -166,6 +166,8 @@ async def get_debtors(
     user_id: str,
     estado: Optional[str] = None,
     group: Optional[str] = None,
+    min_mora: Optional[int] = None,
+    sort: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict:
@@ -194,10 +196,19 @@ async def get_debtors(
     if not resolved_view:
         query["is_active"] = {"$ne": False}
 
+    # Filtro por antigüedad de mora (edad_cartera de Softseguros). Deudores sin el
+    # campo (cargas manuales) quedan fuera cuando se pide un umbral > 0.
+    if min_mora is not None:
+        query["dias_mora"] = {"$gte": min_mora}
+
+    # sort="mora" prioriza mayor mora primero (para llamar a los más críticos);
+    # por defecto, actividad más reciente. Los docs sin dias_mora caen al final.
+    sort_field = "dias_mora" if sort == "mora" else "updated_at"
+
     total = await db.debtors.count_documents(query)
     cursor = (
         db.debtors.find(query)
-        .sort("updated_at", -1)
+        .sort(sort_field, -1)
         .skip((page - 1) * page_size)
         .limit(page_size)
     )

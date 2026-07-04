@@ -1081,6 +1081,15 @@ const FILTERS: { value: EstadoFilter; label: string }[] = [
   { value: 'pausado',           label: 'PAUSADO' },
 ];
 
+// Presets de antigüedad de mora (edad_cartera). null = sin umbral.
+const MORA_PRESETS: { value: number | null; label: string }[] = [
+  { value: null, label: 'Todas' },
+  { value: 30,   label: '30+' },
+  { value: 60,   label: '60+' },
+  { value: 90,   label: '90+' },
+  { value: 180,  label: '180+' },
+];
+
 // ─── Onboarding step types ────────────────────────────────────────────────────
 type OnboardingStep = 'describe' | 'review' | 'upload';
 
@@ -1359,6 +1368,8 @@ export function CobranzaTab() {
   const [debtors, setDebtors] = useState<Debtor[]>([]);
   const [loading, setLoading] = useState(true);
   const [estadoFilter, setEstadoFilter] = useState<EstadoFilter>(null);
+  const [minMora, setMinMora] = useState<number | null>(null);
+  const [sortMora, setSortMora] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const PAGE_SIZE = 50;
@@ -1391,6 +1402,8 @@ export function CobranzaTab() {
     try {
       const qs = new URLSearchParams();
       if (estadoFilter) qs.set('estado', estadoFilter);
+      if (minMora != null) qs.set('min_mora', String(minMora));
+      if (sortMora) qs.set('sort', 'mora');
       qs.set('page', String(page));
       qs.set('page_size', String(PAGE_SIZE));
       const r = await apiFetch(`/api/cobranza/debtors?${qs.toString()}`);
@@ -1407,12 +1420,12 @@ export function CobranzaTab() {
       }
     } catch { setDebtors([]); setTotal(0); }
     finally { setLoading(false); }
-  }, [estadoFilter, page]);
+  }, [estadoFilter, minMora, sortMora, page]);
 
   useEffect(() => { fetchDebtors(); }, [fetchDebtors]);
 
-  // Reset to page 1 whenever the estado filter changes.
-  useEffect(() => { setPage(1); }, [estadoFilter]);
+  // Reset to page 1 whenever a filter/sort changes.
+  useEffect(() => { setPage(1); }, [estadoFilter, minMora, sortMora]);
 
   // ── Today's activity KPIs + funnel (whole-cartera, not the current page) ─────
   const [todayKpis, setTodayKpis] = useState<{
@@ -1819,6 +1832,46 @@ export function CobranzaTab() {
           })}
         </div>
 
+        {/* Mora filter + sort — priorizar a los más morosos para llamar primero */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 18, alignItems: 'center' }}>
+          <span style={{ ...lbl(C.faint, 10), marginRight: 2 }}>DÍAS DE MORA</span>
+          {MORA_PRESETS.map(({ value, label }) => {
+            const active = minMora === value;
+            return (
+              <button
+                key={label}
+                onClick={() => setMinMora(value)}
+                style={{
+                  padding: '5px 12px', borderRadius: 999,
+                  border: `1px solid ${active ? C.orange : C.border2}`,
+                  background: active ? C.orange : C.s2,
+                  color: active ? '#fff' : C.text,
+                  fontFamily: C.SG, fontWeight: active ? 700 : 500, fontSize: 12,
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+          <div style={{ width: 1, height: 18, background: C.border, margin: '0 6px' }} />
+          <button
+            onClick={() => setSortMora(s => !s)}
+            title="Ordenar por antigüedad de mora (mayor primero)"
+            style={{
+              padding: '5px 12px', borderRadius: 999,
+              border: `1px solid ${sortMora ? C.purple : C.border2}`,
+              background: sortMora ? C.purple : C.s2,
+              color: sortMora ? '#fff' : C.text,
+              fontFamily: C.SG, fontWeight: sortMora ? 700 : 500, fontSize: 12,
+              cursor: 'pointer', transition: 'all 0.15s',
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+            }}
+          >
+            {sortMora ? '↓ Mayor mora primero' : 'Ordenar por mora'}
+          </button>
+        </div>
+
         {/* Table */}
         {loading ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2036,9 +2089,20 @@ const DebtorRow = memo(function DebtorRow({
         {formatCOP(debtor.monto)}
       </div>
 
-      {/* Vencimiento */}
+      {/* Vencimiento + días de mora */}
       <div style={{ fontFamily: C.IN, fontSize: 13, color: C.text }}>
         {formatDate(debtor.vencimiento)}
+        {(() => {
+          const mora = debtor.dias_mora ?? debtor.edad_cartera;
+          if (mora == null || mora <= 0) return null;
+          return (
+            <div style={{ marginTop: 3 }}>
+              <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 10.5, color: C.orange, background: C.orangeBg, borderRadius: 5, padding: '1px 6px' }}>
+                {mora} d mora
+              </span>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Estado */}
