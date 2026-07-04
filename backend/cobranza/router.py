@@ -9,8 +9,8 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from auth import get_current_user, require_staff
 from database import get_db, get_client_profile
@@ -87,6 +87,152 @@ async def cobranza_status(current_user: dict = Depends(get_current_user)):
     logger.info(f"[cobranza_status] user_id={user_id}, doc found: {doc is not None}, enabled: {enabled}, config found: {config_doc is not None}, configured: {configured}")
     
     return {"enabled": enabled, "configured": configured, "_debug_user_id": user_id, "_debug_doc_exists": doc is not None}
+
+
+# ── Cobranza config (multi-tenant, editable desde UI) ─────────────────────────
+# Todos los parámetros del tenant viven en tenant_config.cobranza y se editan desde
+# aquí. CERO hardcode: sede/estados/ramos/mora/horarios/timings por tenant.
+
+class SoftsegurosCarteraBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sede: int
+    estadopolizas_selected: list[int] = Field(default_factory=list)
+    ramos_selected: list[int] = Field(default_factory=list)
+    tipo: str = "cartera_por_pagar_compania"
+    fecha_desde: Optional[str] = None   # "YYYY-MM-DD" — ventana de fecha_pago (deuda viva)
+    fecha_hasta: Optional[str] = None
+    ventana_proximos_dias: int = Field(30, ge=0, le=365)
+    solo_no_recaudadas: bool = True
+    alias_aseguradoras: dict[str, str] = Field(default_factory=dict)
+    max_concurrency: int = Field(5, ge=1, le=20)
+    base_url: Optional[str] = None
+
+
+class TimingsBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    offsets_intentos_dias_habiles: list[int] = Field(default_factory=lambda: [-1, 0, 2])
+    frecuencia_dias: int = Field(1, ge=1, le=30)
+    max_intentos: int = Field(3, ge=1, le=10)
+    pre_vencimiento_dias: int = Field(1, ge=0, le=30)
+    agendar_por: str = "fecha_compromiso"  # o "fecha_pago"
+
+
+class HorariosBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    timezone: str = "America/Bogota"
+    dias_habiles: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5])
+    franjas: list[list[str]] = Field(default_factory=list)         # [["09:00","12:00"],["14:00","16:00"]]
+    franjas_sabado: list[list[str]] = Field(default_factory=list)
+    festivos: list[str] = Field(default_factory=list)              # ["YYYY-MM-DD"]
+    max_contactos_dia: int = Field(1, ge=1, le=10)
+
+
+class VolumenBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    llamadas_por_dia: int = Field(30, ge=1, le=5000)
+    distribucion: str = "uniforme"
+
+
+class EstrategiaBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tono: Optional[str] = None
+    guion: dict[str, str] = Field(default_factory=dict)
+
+
+class CobranzaConfigPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    softseguros_cartera: Optional[SoftsegurosCarteraBlock] = None
+    timings: Optional[TimingsBlock] = None
+    horarios: Optional[HorariosBlock] = None
+    volumen: Optional[VolumenBlock] = None
+    estrategia: Optional[EstrategiaBlock] = None
+
+
+class SincronizarBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Carga manual con ventana custom (fecha_desde/fecha_hasta/ventana_proximos_dias…).
+    # Si viene, corre en modo "manual" y PINEA los deudores (el sweep diario no los toca).
+    override_filters: Optional[dict] = None
+
+
+# Ley 2300 (Colombia) = techo legal duro. La UI nunca puede exceder esto.
+_LEY2300_LV = (7 * 60, 19 * 60)    # L-V 07:00–19:00
+_LEY2300_SAB = (8 * 60, 15 * 60)   # Sáb 08:00–15:00
+
+
+def _hhmm(s: str) -> int:
+    h, m = s.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _validate_franjas(franjas: list, legal: tuple, label: str) -> None:
+    lo, hi = legal
+    for fr in franjas or []:
+        if not isinstance(fr, (list, tuple)) or len(fr) != 2:
+            raise HTTPException(status_code=400, detail=f"{label}: cada franja debe ser [inicio, fin] HH:MM")
+        try:
+            a, b = _hhmm(fr[0]), _hhmm(fr[1])
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"{label}: hora inválida (usa HH:MM)")
+        if a >= b:
+            raise HTTPException(status_code=400, detail=f"{label}: {fr[0]} debe ser antes de {fr[1]}")
+        if a < lo or b > hi:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label}: {fr[0]}-{fr[1]} excede el límite legal (Ley 2300: {lo//60:02d}:00-{hi//60:02d}:00)",
+            )
+
+
+@router.get("/config")
+async def get_cobranza_config(current_user: dict = Depends(get_current_user)):
+    """Devuelve el bloque `cobranza` de tenant_config para pre-cargar la UI. {} si no está configurado."""
+    from cobranza.config_cache import get_tenant_config
+    user_id = str(current_user["user_id"])
+    cfg = await get_tenant_config(user_id)
+    return cfg.get("cobranza") or {}
+
+
+@router.patch("/config")
+async def patch_cobranza_config(
+    body: CobranzaConfigPatch,
+    current_user: dict = Depends(get_current_user),
+):
+    """Actualiza (parcial) la config de cobranza del tenant. Clampa horarios contra Ley 2300."""
+    from cobranza.tenant_config import set_cobranza_config
+    from cobranza.config_cache import get_tenant_config
+    user_id = str(current_user["user_id"])
+    if body.horarios is not None:
+        _validate_franjas(body.horarios.franjas, _LEY2300_LV, "franjas (L-V)")
+        _validate_franjas(body.horarios.franjas_sabado, _LEY2300_SAB, "franjas (Sáb)")
+    block = body.model_dump(exclude_none=True)
+    if not block:
+        raise HTTPException(status_code=400, detail="No hay bloques de config para actualizar.")
+    await set_cobranza_config(user_id, block)
+    cfg = await get_tenant_config(user_id)
+    return {"saved": True, "cobranza": cfg.get("cobranza") or {}}
+
+
+@router.post("/sincronizar")
+async def cobranza_sincronizar(
+    body: Optional[SincronizarBody],
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """Dispara un sync de la cartera Softseguros en background. Sin `override_filters`
+    = refresh con la config estándar. Con `override_filters` = carga manual (pinned)."""
+    user_id = str(current_user["user_id"])
+    override = body.override_filters if body else None
+    mode = "manual" if override else "cron_daily"
+
+    async def _run():
+        try:
+            from softseguros.sync import run_cartera_sync
+            await run_cartera_sync(get_db(), user_id, mode=mode, override_filters=override)
+        except Exception:  # noqa: BLE001
+            logger.exception("cobranza sincronizar failed user_id=%s mode=%s", user_id, mode)
+
+    background_tasks.add_task(_run)
+    return {"sync_started": True, "mode": mode, "pinned": override is not None}
 
 
 # ── EMERGENCY KILL-SWITCH (master ON/OFF for automated dialing) ────────────────
