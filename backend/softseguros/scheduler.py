@@ -21,11 +21,19 @@ logger = logging.getLogger(__name__)
 JOB_ID = "softseguros_daily_sync"
 
 
-def _daily_hour() -> int:
-    try:
-        return int(os.getenv("SOFTSEGUROS_SYNC_DAILY_HOUR_UTC", "3"))
-    except ValueError:
-        return 3
+def _sync_hours_utc() -> str:
+    """
+    Horas UTC (lista separada por comas, formato cron) a las que corre el sync.
+    Default "13,18" = 08:00 y 13:00 Colombia — UNA HORA ANTES de cada franja de
+    llamadas del informe (9-12 / 14-16): así nadie que ya pagó recibe llamada
+    (informe §3: verificar el estado actual antes de cada contacto; el sweep
+    marca pagados → is_active=False y el dispatcher los salta).
+    Compat: si solo existe el viejo SOFTSEGUROS_SYNC_DAILY_HOUR_UTC, se usa.
+    """
+    hours = os.getenv("SOFTSEGUROS_SYNC_HOURS_UTC")
+    if hours:
+        return hours
+    return os.getenv("SOFTSEGUROS_SYNC_DAILY_HOUR_UTC") or "13,18"
 
 
 async def run_daily_sync_for_all_users() -> None:
@@ -54,14 +62,14 @@ async def setup_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(
         run_daily_sync_for_all_users,
-        trigger=CronTrigger(hour=_daily_hour(), minute=0, timezone="UTC"),
+        trigger=CronTrigger(hour=_sync_hours_utc(), minute=0, timezone="UTC"),
         id=JOB_ID,
         replace_existing=True,
         misfire_grace_time=3600,
     )
     scheduler.start()
     app.state.softseguros_scheduler = scheduler
-    logger.info("softseguros scheduler started — daily sync at %02d:00 UTC", _daily_hour())
+    logger.info("softseguros scheduler started — sync at %s:00 UTC (pre-franja)", _sync_hours_utc())
     return scheduler
 
 
