@@ -221,6 +221,29 @@ class SoftSegurosAdapter:
         """GET /api/poliza/{id} — single póliza dict (raises SoftSegurosAPIError on 404)."""
         return await self._get_json(f"/api/poliza/{poliza_id}")
 
+    # ── Cartera real (cuotas) — the endpoint the web UI actually uses ──────────
+
+    async def list_pagos_filtrados(self, page: int = 1, *, params) -> dict:
+        """
+        GET /api/pagopoliza/list_pagospolizas_filtro_paginados/ — the REAL cartera
+        (cuotas) endpoint used by the SOFTSEGUROS web UI (menu Cobros → Listado de
+        pagos). Returns the per-installment schedule: fecha_pago (vencimiento),
+        fecha_realizara_pago (compromiso), edad_cartera (días de mora),
+        valor_a_pagar, recaudado, cliente + póliza. See CARTERA_ENDPOINT.md.
+
+        `params` is built by the caller from tenant_config (list[tuple[str,str]] or
+        dict) — NOTHING is hardcoded here. Scope params (sede, estadopolizas_selected[],
+        ramos_selected[], tipo, order_by) MUST come from the tenant's config; without
+        `sede` the endpoint returns 504. List params (estadopolizas_selected[],
+        ramos_selected[]) must arrive as repeated (key, value) tuples so httpx repeats
+        the key once per id.
+        """
+        query = list(params.items()) if isinstance(params, dict) else list(params)
+        query.append(("page", str(page)))
+        return await self._get_json(
+            "/api/pagopoliza/list_pagospolizas_filtro_paginados/", params=query
+        )
+
     @staticmethod
     def parse_next_page(next_token: Optional[str]) -> Optional[int]:
         """

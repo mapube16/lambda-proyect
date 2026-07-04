@@ -224,6 +224,110 @@ def _poliza_to_debtor_doc(p: dict, bucket: str) -> dict:
     }
 
 
+# ── cartera real (cuota) → debtor doc mapping ─────────────────────────────────
+# The REAL endpoint (list_pagospolizas_filtro_paginados) returns one row per CUOTA
+# with its own fecha_pago / fecha_realizara_pago (compromiso) / edad_cartera (mora).
+# Everything below is driven by tenant_config — zero DPG hardcoding. See
+# CARTERA_ENDPOINT.md for the field contract.
+
+def _build_cartera_query(c: dict) -> list:
+    """Build the querystring (list of (key, value) tuples) for
+    list_pagospolizas_filtro_paginados from the tenant's `softseguros_cartera`
+    config. NOTHING is hardcoded: sede/estados/ramos/tipo/order all come from
+    config. `sede` is REQUIRED — without it the endpoint returns 504.
+    List filters (estados, ramos) become repeated tuples so httpx repeats the key.
+    """
+    if not c.get("sede"):
+        raise ValueError(
+            "softseguros_cartera.sede es obligatorio (sin sede el endpoint da 504)"
+        )
+    q = [
+        ("sede", str(c["sede"])),
+        ("tipo", c.get("tipo", "consultar_nominas_pasadas")),
+        ("fecha_a_buscar", c.get("fecha_a_buscar", c.get("tipo", "consultar_nominas_pasadas"))),
+        ("order_by", c.get("order_by", "fecha_pago")),
+        ("sort_by", c.get("sort_by", "asc")),
+        ("dias_vencidos", str(c.get("dias_vencidos", -1))),
+        ("fecha_busqueda_pagos", str(c.get("fecha_busqueda_pagos", -1))),
+        ("search_in", c.get("search_in", "poliza_numero_poliza")),
+    ]
+    for eid in c.get("estadopolizas_selected", []) or []:
+        q.append(("estadopolizas_selected[]", str(eid)))
+    for rid in c.get("ramos_selected", []) or []:
+        q.append(("ramos_selected[]", str(rid)))
+    for k, v in (c.get("extra_filtros") or {}).items():
+        q.append((k, str(v)))
+    return q
+
+
+def _norm_phone_co(raw) -> str:
+    """poliza_cliente_celular is 10 digits (CO mobile). Twilio needs E.164 (+57…)."""
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return ""
+    if s.startswith("+"):
+        return "+" + digits
+    if len(digits) == 10:
+        return "+57" + digits
+    if len(digits) == 12 and digits.startswith("57"):
+        return "+" + digits
+    return "+" + digits  # best effort — already has a country code
+
+
+def _num(v) -> Optional[float]:
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _pago_to_debtor_doc(pago: dict, bucket: str, alias_aseguradoras: Optional[dict] = None) -> dict:
+    """Map a SOFTSEGUROS cuota (list_pagospolizas_filtro_paginados row) + bucket →
+    the $set payload for a debtor. ONE debtor == ONE cuota, keyed by
+    `softseguros_pago_id` (the global cuota id). See CARTERA_ENDPOINT.md §mapeo."""
+    aseg = pago.get("aseguradora_nombre") or None
+    if aseg and alias_aseguradoras:
+        aseg = alias_aseguradoras.get(aseg, aseg)
+    nombre = " ".join(
+        str(x) for x in (pago.get("poliza_cliente_nombres"), pago.get("poliza_cliente_apellidos")) if x
+    ).strip()
+    return {
+        # ── idempotency keys ──
+        "softseguros_pago_id": pago.get("id"),          # global cuota id (unique)
+        "softseguros_poliza_id": pago.get("poliza_id"),  # groups cuotas of a policy
+        # ── client ──
+        "nombre": nombre,
+        "telefono": _norm_phone_co(pago.get("poliza_cliente_celular")),
+        "cliente_documento": pago.get("poliza_cliente_numero_documento"),
+        "cliente_celular": pago.get("poliza_cliente_celular"),
+        # ── the two dates that drive the ARIA sequence (informe §3) ──
+        "vencimiento": pago.get("fecha_pago"),            # fecha de pago = vencimiento cuota
+        "fecha_pago": pago.get("fecha_pago"),
+        "fecha_compromiso": pago.get("fecha_realizara_pago"),  # fecha acordada con el cliente
+        "fecha_realizo_pago": pago.get("fecha_realizo_pago"),
+        "edad_cartera": pago.get("edad_cartera"),
+        "dias_mora": pago.get("edad_cartera"),
+        # ── money ──
+        "monto": _num(pago.get("valor_a_pagar")) or _num(pago.get("valor_neto_a_pagar")) or 0.0,
+        "valor_cuota": _num(pago.get("valor_a_pagar")),
+        "saldo_pendiente": _num(pago.get("saldo_pendiente")),
+        "numero_cuota": pago.get("numero_pago") or pago.get("pago_poliza_consecutivo"),
+        # ── policy ──
+        "numero_poliza": pago.get("poliza_numero_poliza"),
+        "ramo_nombre": pago.get("ramo_nombre"),
+        "ramo_id": pago.get("ramo_id"),
+        "aseguradora_nombre": aseg,
+        "forma_pago": (pago.get("poliza_forma_pago") or "").strip() or None,
+        "objeto_asegurado": pago.get("poliza_codio_objeto_asegurado"),
+        "recaudado": bool(pago.get("recaudado")),
+        "status_softseguros": bucket,
+        "is_active": True,
+    }
+
+
 def _classify(p: dict, today: date) -> str:
     return classify_poliza(
         estado_cartera=p.get("estado_cartera"),

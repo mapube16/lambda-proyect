@@ -78,6 +78,36 @@ def classify_poliza(
     return "futuro"
 
 
+def classify_cuota(
+    fecha_pago: Optional[DateLike],
+    recaudado: bool,
+    today: DateLike,
+    ventana_dias: int = 30,
+) -> str:
+    """
+    Classify a SOFTSEGUROS cuota (installment) by its OWN due date `fecha_pago`.
+
+    Returns "pagado" | "ya_vencidos" | "proximos_a_vencer" | "futuro".
+
+    This is the cuota-level classifier for the real cartera endpoint
+    (list_pagospolizas_filtro_paginados), where each row is one installment with
+    its own `fecha_pago`. `ventana_dias` (the "próximos a vencer" horizon) is
+    tenant-configurable (cobranza.softseguros_cartera.ventana_proximos_dias).
+    Pure function — no side effects.
+    """
+    if recaudado:
+        return "pagado"
+    fref = _to_date(fecha_pago)
+    if fref is None:
+        return "futuro"
+    td = _to_date(today)
+    if fref < td:
+        return "ya_vencidos"
+    if fref <= td + timedelta(days=ventana_dias):
+        return "proximos_a_vencer"
+    return "futuro"
+
+
 # Backwards-compat shim: earlier 18-03 partial work referenced classify_pagopoliza.
 # The SOFTSEGUROS /api/pagopoliza/ endpoint turned out to be broken (504), so the
 # real model is the póliza. Keep a thin alias so any straggler import doesn't break,

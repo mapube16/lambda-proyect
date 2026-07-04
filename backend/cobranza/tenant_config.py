@@ -141,6 +141,49 @@ async def set_voice_persona(user_id: str, persona: dict) -> None:
     await _invalidate(user_id)
 
 
+# ── cobranza config (multi-tenant, editable from UI) ────────────────────────────
+
+# Top-level blocks the cobranza config may define. Each is a free-form sub-document.
+# DPG is tenant #1 but NOTHING here is hardcoded to DPG — every value (softseguros
+# query scope, attempt timings, call windows, volume, estrategia) lives per-tenant
+# and is edited from the UI via PATCH /api/cobranza/config.
+COBRANZA_BLOCK_KEYS = (
+    "softseguros_cartera",  # querystring scope of the cartera endpoint + import/classify rules
+    "sync",                 # sync cadence (frecuencia, hora_utc)
+    "timings",              # attempt offsets, frecuencia_dias, max_intentos, agendar_por
+    "horarios",             # call windows, días hábiles, festivos, max contactos/día
+    "volumen",              # llamadas/día + distribución
+    "estrategia",           # tono + guion (4 secciones)
+)
+
+
+async def set_cobranza_config(user_id: str, block: dict) -> None:
+    """
+    Upsert the tenant's cobranza config under the `cobranza` key. Only known
+    top-level blocks are persisted; a block that is absent or None is left
+    untouched (partial update — editing `horarios` never blanks `timings`).
+    CACHE-01: invalidates Redis after write so the next read reflects the change.
+    """
+    clean = {
+        f"cobranza.{k}": block[k]
+        for k in COBRANZA_BLOCK_KEYS
+        if block.get(k) is not None
+    }
+    if not clean:
+        return
+    db = get_db()
+    now = _utcnow()
+    await db.tenant_configs.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {**clean, "user_id": user_id, "updated_at": now},
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+    await _invalidate(user_id)
+
+
 # ── agent_instances ────────────────────────────────────────────────────────────
 
 async def upsert_agent_instance(user_id: str, fields: dict) -> None:
