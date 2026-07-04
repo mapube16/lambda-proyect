@@ -261,6 +261,10 @@ export async function getQuota() {
   return apiCall(`/api/tenant/quota`);
 }
 
+export async function getMinutos() {
+  return apiCall(`/api/cobranza/minutos`);
+}
+
 // ============ CHAT (la Reina) ============
 // POST /api/chat/prospect → single-turn NL. Returns either
 // { status: "extracted", campaign } or { status: "needs_clarification", reply }.

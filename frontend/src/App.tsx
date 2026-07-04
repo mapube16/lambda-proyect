@@ -1205,17 +1205,39 @@ function Sidebar({ view, setView, user, onLogout }: any) {
   useEffect(() => {
     let alive = true;
     (async () => {
+      let gotQuota = false;
       try {
         const q = await api.getQuota();
-        if (alive) setQuota(q);
+        if (alive && q && q.credits_total != null) { setQuota(q); gotQuota = true; }
       } catch (e) {
         console.warn('Quota load failed:', e);
       }
+      let cobranza = false;
       try {
         const s = await api.getCobranzaStatus();
-        if (alive) setCobranzaEnabled(!!s.enabled);
+        cobranza = !!s.enabled;
+        if (alive) setCobranzaEnabled(cobranza);
       } catch (e) {
         console.warn('Cobranza status load failed:', e);
+      }
+      // Tenant de cobranza sin plan B2B: el plan que compró son MINUTOS de voz.
+      // Mapeamos el saldo del paquete al mismo shape del widget.
+      if (alive && !gotQuota && cobranza) {
+        try {
+          const m = await api.getMinutos();
+          if (alive && m && m.minutos_comprados != null) {
+            const total = m.minutos_comprados + (m.minutos_ajustes || 0);
+            setQuota({
+              plan: 'minutos',
+              unidad: 'minutos',
+              credits_total: total,
+              credits_remaining: m.minutos_restantes,
+              usage_percent: total > 0 ? (m.minutos_consumidos / total) * 100 : 0,
+            });
+          }
+        } catch (e) {
+          console.warn('Minutos load failed:', e);
+        }
       }
     })();
     return () => { alive = false; };
@@ -1283,7 +1305,9 @@ function Sidebar({ view, setView, user, onLogout }: any) {
             <div style={{ width: usagePct + '%', height: '100%', background: SB_ACTIVE_C, borderRadius: 999 }} />
           </div>
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.40)', marginTop: 8 }}>
-            {quota ? `${fmt(quota.credits_remaining)} / ${fmt(quota.credits_total)} créditos` : 'Cargando créditos…'}
+            {quota
+              ? `${fmt(quota.credits_remaining)} / ${fmt(quota.credits_total)} ${quota.unidad === 'minutos' ? 'minutos' : 'créditos'}`
+              : 'Sin plan activo'}
           </div>
         </div>
       </div>
