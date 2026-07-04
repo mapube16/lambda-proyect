@@ -4,6 +4,7 @@ import './landa.css';
 import * as api from './api';
 import { DebtorsSoftSegurosTab } from './components/DebtorsSoftSegurosTab';
 import { CobranzaTab } from './components/CobranzaTab';
+import { CobranzaSettings } from './components/CobranzaSettings';
 import { AdminPanel } from './components/AdminPanel';
 
 // Context for shared email status (used by multiple views)
@@ -1166,13 +1167,13 @@ function ViewAjustes() {
 // (The old demo cartera + fake "estrategia IA" onboarding lived here and never
 //  persisted — that was the "contactos se borran al salir" bug. Removed.)
 function ViewCobranza() {
-  const [activeTab, setActiveTab] = useState<'manual' | 'softseguros'>('manual');
+  const [activeTab, setActiveTab] = useState<'manual' | 'softseguros' | 'config'>('manual');
 
   return (
     <div style={{ padding:'24px 28px', display:'flex', flexDirection:'column', gap:16 }}>
       {/* Tabs */}
       <div style={{ display:'flex', gap:4, borderBottom:'1px solid var(--border)' }}>
-        {([['manual','Cartera'],['softseguros','SoftSeguros']] as ['manual'|'softseguros',string][]).map(([tab,label])=>(
+        {([['manual','Cartera'],['softseguros','SoftSeguros'],['config','Configuración']] as ['manual'|'softseguros'|'config',string][]).map(([tab,label])=>(
           <button key={tab} onClick={()=>setActiveTab(tab)} style={{ padding:'9px 18px', border:'none', borderBottom: activeTab===tab?'2px solid var(--primary)':'2px solid transparent', background:'transparent', fontFamily:'inherit', fontWeight: activeTab===tab?700:500, fontSize:13.5, color: activeTab===tab?'var(--primary)':'var(--text-muted)', cursor:'pointer', marginBottom:-1 }}>
             {label}
             {tab==='softseguros' && <span style={{ marginLeft:7, fontSize:10, fontWeight:700, color:'#fff', background:'#1FA89E', borderRadius:999, padding:'2px 7px' }}>SYNC</span>}
@@ -1182,6 +1183,7 @@ function ViewCobranza() {
 
       {activeTab === 'manual' && <CobranzaTab />}
       {activeTab === 'softseguros' && <DebtorsSoftSegurosTab />}
+      {activeTab === 'config' && <CobranzaSettings />}
     </div>
   );
 }
