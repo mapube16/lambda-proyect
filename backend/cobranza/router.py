@@ -384,7 +384,9 @@ async def today_summary(current_user: dict = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    base = {"user_id": user_id}
+    # is_active != False: excluye deudores archivados por el sync (pagados upstream /
+    # fuera de la ventana) para que no inflen los contadores de la cola activa.
+    base = {"user_id": user_id, "is_active": {"$ne": False}}
 
     # Llamando ahora (live, not date-bound)
     llamando = await db.debtors.count_documents({**base, "estado": "llamando"})
@@ -432,7 +434,7 @@ async def funnel(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["user_id"])
     db = get_db()
     pipeline = [
-        {"$match": {"user_id": user_id}},
+        {"$match": {"user_id": user_id, "is_active": {"$ne": False}}},
         {"$group": {"_id": "$estado", "n": {"$sum": 1}}},
     ]
     counts: dict[str, int] = {}

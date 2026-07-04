@@ -187,6 +187,13 @@ async def get_debtors(
     elif group is not None and group in ESTADO_GROUPS:
         query["estado"] = {"$in": ESTADO_GROUPS[group]}
 
+    # Exclude debtors the SOFTSEGUROS sync archived (is_active=False: paid upstream /
+    # fell out of the configured window) from the ACTIVE-queue views, so they don't
+    # inflate "Pendiente". A resolved-state query (pagado/pausado) still sees them.
+    resolved_view = estado in ("pagado", "pausado") or group == "resueltos"
+    if not resolved_view:
+        query["is_active"] = {"$ne": False}
+
     total = await db.debtors.count_documents(query)
     cursor = (
         db.debtors.find(query)
