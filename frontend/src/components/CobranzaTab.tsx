@@ -1458,6 +1458,15 @@ export function CobranzaTab() {
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [fetchTodaySummary]);
 
+  // ── Máximo de intentos del tenant (informe §3 = 3) — fuente única: config ───
+  const [maxIntentos, setMaxIntentos] = useState(3);
+  useEffect(() => {
+    apiFetch('/api/cobranza/config')
+      .then(r => (r.ok ? r.json() : null))
+      .then(c => { const m = c?.timings?.max_intentos; if (m) setMaxIntentos(Number(m)); })
+      .catch(() => {});
+  }, []);
+
   // ── Paquete de minutos (facturación) ───────────────────────────────────────
   const [minutos, setMinutos] = useState<{
     minutos_comprados: number; minutos_consumidos: number; minutos_restantes: number;
@@ -2022,11 +2031,11 @@ export function CobranzaTab() {
             {/* Table header */}
             <div style={{
               display: 'grid',
-              gridTemplateColumns: '2fr 1.2fr 1.2fr 1fr 1fr 100px',
+              gridTemplateColumns: '1.9fr 1fr 1fr 0.9fr 0.9fr 0.7fr 96px',
               padding: '10px 20px',
               background: C.s2, gap: 12, borderBottom: `1px solid ${C.border}`,
             }}>
-              {['DEUDOR', 'MONTO', 'VENCIMIENTO', 'ESTADO', 'INTENTOS', 'ACCIÓN'].map(h => (
+              {['DEUDOR', 'MONTO', 'VENCIMIENTO', 'MORA', 'ESTADO', 'INTENTOS', 'ACCIÓN'].map(h => (
                 <div key={h} style={lbl(C.faint, 10.5)}>{h}</div>
               ))}
             </div>
@@ -2037,6 +2046,7 @@ export function CobranzaTab() {
                 <DebtorRow
                   key={d._id}
                   debtor={d}
+                  maxIntentos={maxIntentos}
                   onView={setSelectedDebtor}
                   onLlamar={onRowLlamar}
                   onPagar={onRowPagar}
@@ -2157,12 +2167,14 @@ export function CobranzaTab() {
 // ─── Debtor row ───────────────────────────────────────────────────────────────
 const DebtorRow = memo(function DebtorRow({
   debtor,
+  maxIntentos,
   onView,
   onLlamar,
   onPagar,
   onPausar,
 }: {
   debtor: Debtor;
+  maxIntentos: number;
   // Handlers take the debtor so the parent can pass stable (useCallback)
   // references — no fresh inline arrow per row, so memo actually holds.
   onView: (d: Debtor) => void;
@@ -2179,7 +2191,7 @@ const DebtorRow = memo(function DebtorRow({
       onMouseLeave={() => setHover(false)}
       style={{
         display: 'grid',
-        gridTemplateColumns: '2fr 1.2fr 1.2fr 1fr 1fr 100px',
+        gridTemplateColumns: '1.9fr 1fr 1fr 0.9fr 0.9fr 0.7fr 96px',
         padding: '14px 20px', gap: 12, alignItems: 'center',
         background: hover ? C.s2 : 'transparent',
         borderBottom: `1px solid ${C.border}`,
@@ -2208,19 +2220,34 @@ const DebtorRow = memo(function DebtorRow({
         {formatCOP(debtor.monto)}
       </div>
 
-      {/* Vencimiento + días de mora */}
+      {/* Vencimiento */}
       <div style={{ fontFamily: C.IN, fontSize: 13, color: C.text }}>
         {formatDate(debtor.vencimiento)}
+      </div>
+
+      {/* Mora — valor siempre visible: días en mora (rojo si alto), o cuánto */}
+      {/* falta para vencer. El dato viene de edad_cartera del cURL. */}
+      <div>
         {(() => {
-          const mora = debtor.dias_mora ?? debtor.edad_cartera;
-          if (mora == null || mora <= 0) return null;
-          return (
-            <div style={{ marginTop: 3 }}>
-              <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 10.5, color: C.orange, background: C.orangeBg, borderRadius: 5, padding: '1px 6px' }}>
-                {mora} d mora
+          const mora = debtor.dias_mora ?? debtor.edad_cartera ?? 0;
+          if (mora > 0) {
+            const alto = mora >= 60;
+            return (
+              <span style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 12.5, color: alto ? C.pink : C.orange, background: alto ? C.pinkBg : C.orangeBg, borderRadius: 6, padding: '2px 8px', whiteSpace: 'nowrap' }}>
+                {mora} {mora === 1 ? 'día' : 'días'}
               </span>
-            </div>
-          );
+            );
+          }
+          // Sin mora: cuánto falta para el vencimiento (próximo a vencer).
+          const v = debtor.vencimiento ? new Date(debtor.vencimiento) : null;
+          if (v && !isNaN(v.getTime())) {
+            const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+            v.setHours(0, 0, 0, 0);
+            const dias = Math.round((v.getTime() - hoy.getTime()) / 86400000);
+            const txt = dias === 0 ? 'vence hoy' : dias > 0 ? `en ${dias} ${dias === 1 ? 'día' : 'días'}` : 'al día';
+            return <span style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{txt}</span>;
+          }
+          return <span style={{ fontFamily: C.IN, fontSize: 12, color: C.faint }}>—</span>;
         })()}
       </div>
 
@@ -2229,9 +2256,9 @@ const DebtorRow = memo(function DebtorRow({
         <EstadoBadge estado={debtor.estado} />
       </div>
 
-      {/* Intentos */}
+      {/* Intentos — máximo desde la config del tenant (informe §3 = 3) */}
       <div style={{ fontFamily: C.IN, fontSize: 13, color: C.muted }}>
-        {debtor.intentos}/{debtor.max_intentos}
+        {debtor.intentos}/{maxIntentos}
       </div>
 
       {/* Acción — Llamar primary; pagar/pausar surface on hover */}

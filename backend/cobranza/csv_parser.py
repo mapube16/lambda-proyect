@@ -86,7 +86,7 @@ def parse_debtor_csv(file_bytes: bytes) -> tuple[list[dict], list[str]]:
             "vencimiento": vencimiento,
             "estado": "pendiente",
             "intentos": 0,
-            "max_intentos": 5,
+            "max_intentos": 3,
             "historial_llamadas": [],
             "escalado": False,
             "notas": None,
