@@ -283,6 +283,28 @@ async def run_bot(
     if not (tenant_config.get("voice_persona") or {}).get("tono"):
         persona["tono"] = tono
 
+    # Mora calculada EN VIVO (informe §3: antes de cada contacto se verifica la
+    # fecha de pago para saber si ya venció y cuántos días acumula) — el dato
+    # del sync puede tener 1 día de rezago.
+    from datetime import date as _date, datetime as _datetime
+    import pytz as _pytz
+    _hoy_co = _datetime.now(_pytz.timezone("America/Bogota")).date()
+    _venc_raw = debtor.get("fecha_pago") or debtor.get("vencimiento")
+    _venc_d = None
+    if isinstance(_venc_raw, _datetime):
+        _venc_d = _venc_raw.date()
+    elif isinstance(_venc_raw, _date):
+        _venc_d = _venc_raw
+    elif _venc_raw:
+        try:
+            _venc_d = _date.fromisoformat(str(_venc_raw)[:10])
+        except ValueError:
+            _venc_d = None
+    if _venc_d is not None:
+        _dias_mora = max(0, (_hoy_co - _venc_d).days)
+    else:
+        _dias_mora = max(0, int(debtor.get("dias_mora") or 0))
+
     system_prompt = assemble_system_prompt(
         persona,
         runtime_block=runtime_block,
@@ -292,6 +314,9 @@ async def run_bot(
         aseguradora=debtor.get("aseguradora_nombre") or "",
         riesgo=str(debtor.get("objeto_asegurado") or "").strip(),
         modalidad=str(debtor.get("forma_pago") or debtor.get("forma_pago_texto") or "").strip(),
+        intento=int(debtor.get("proximo_intento_numero") or (debtor.get("intentos") or 0) + 1),
+        dias_mora=_dias_mora,
+        numero_cuota=str(debtor.get("numero_cuota") or ""),
     )
     logger.info(
         "[VOICE] Assembled 3-layer prompt for user %s (persona=%s, %d chars)",

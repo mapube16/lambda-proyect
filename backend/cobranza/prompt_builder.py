@@ -158,6 +158,28 @@ def resolve_persona(tenant_config: Optional[dict]) -> dict:
     return persona
 
 
+def select_pitch_template(persona: dict, *, intento: int = 1, dias_mora: int = 0) -> str:
+    """
+    Elige el guion de apertura según el informe §9 (y §3: si la póliza ya está
+    vencida, el speech de VENCIDA aplica en CUALQUIER intento):
+
+        dias_mora >= 1  → "vencida"  (9.3 — informa # días de mora)
+        intento >= 2    → "l2"       (9.2 — hoy es el día del vencimiento)
+        resto           → "l1"       (9.1 — recordatorio preventivo)
+
+    Las variantes viven en persona["pitch_variants"] = {"l1","l2","vencida"}
+    (editables por tenant, sin deploy). Sin variante → pitch_template genérico.
+    """
+    variants = persona.get("pitch_variants") or {}
+    if dias_mora and int(dias_mora) > 0:
+        key = "vencida"
+    elif int(intento or 1) >= 2:
+        key = "l2"
+    else:
+        key = "l1"
+    return variants.get(key) or persona.get("pitch_template", "")
+
+
 def render_greeting(persona: dict, first_name: str) -> str:
     """Render the spoken opener. Uses greeting_template when we have a first
     name, else greeting_template_no_name."""
@@ -185,6 +207,9 @@ def assemble_system_prompt(
     aseguradora: str = "",
     riesgo: str = "",
     modalidad: str = "",
+    intento: int = 1,
+    dias_mora: int = 0,
+    numero_cuota: str = "",
 ) -> str:
     """Render the full ENGINE with persona values + the runtime data block."""
     brand = persona.get("company_brand") or persona.get("company_name", "")
@@ -198,14 +223,22 @@ def assemble_system_prompt(
         "aseguradora": aseguradora,
         "riesgo": riesgo,
         "modalidad": modalidad,
+        "dias_mora": str(dias_mora or 0),
+        "numero_cuota": str(numero_cuota or ""),
         # Optional fragments — empty when we don't have the datum, so the pitch
         # reads cleanly whether or not the field exists.
         "con_compania": f" con la compania {aseguradora}" if aseguradora else "",
         "con_riesgo": f", asociada a {riesgo}" if riesgo else "",
         "con_modalidad": f", bajo la modalidad de pago {modalidad}" if modalidad else "",
+        "con_cuota": f" numero {numero_cuota}" if numero_cuota else "",
     }
-    # The pitch template can reference persona + runtime values.
-    pitch = _fmt(persona.get("pitch_template", ""), persona_vals)
+    # The pitch template can reference persona + runtime values. La variante
+    # (preventivo / dia de vencimiento / vencida) la decide el estado real de
+    # la cuota en ESTA llamada (informe §3/§9).
+    pitch = _fmt(
+        select_pitch_template(persona, intento=intento, dias_mora=dias_mora),
+        persona_vals,
+    )
     # Objection handling / business rules may reference {agent_name}/{company_brand}.
     objection = _fmt(persona.get("objection_handling", ""), persona_vals)
     business = _fmt(persona.get("business_rules", ""), persona_vals)

@@ -109,6 +109,7 @@ VOICE_PERSONA_KEYS = (
     "greeting_template",
     "greeting_template_no_name",
     "pitch_template",
+    "pitch_variants",   # {"l1","l2","vencida"} — guiones por intento/mora (informe §9)
     "business_rules",
     "objection_handling",
     "forbidden",
