@@ -1,13 +1,17 @@
 """
-campaign_scheduler.py — APScheduler jobs for the automated cobranza call campaign.
+campaign_scheduler.py — infraestructura de la campaña de llamadas (APScheduler).
 
-Three periodic jobs:
-  - pre_vencimiento_job:      fires every 60 min — reminds pendiente debtors 3 days before due
-  - post_vencimiento_job:     fires every 60 min — retries sin_contacto/pendiente debtors after due
-  - rescue_stuck_llamando_job: fires every 10 min — rescues debtors stuck in 'llamando' > 15 min
+Este módulo es dueño del kill-switch runtime, de safe_initiate_call (la única
+puerta de salida hacia Twilio: kill-switch + saldo de minutos + mapping) y del
+rescue de llamadas colgadas. La LÓGICA de la secuencia (qué deudor toca cuándo)
+vive en cobranza/sequence_engine.py — la máquina de intentos del informe ARIA:
 
-All jobs respect Ley 2300 compliance via is_contact_allowed_now() and has_been_contacted_today().
-Calls are initiated via Twilio + Pipecat (not Vapi).
+  - seq_plan_intentos:     cada 15 min — asigna proximo_intento_at por deudor
+                           (ancla compromiso/vencimiento ± offsets en días hábiles).
+  - seq_dispatch_intentos: cada 5 min — marca a los que están en hora, dentro de
+                           franjas del tenant + Ley 2300, con cupo diario y la
+                           prioridad del informe.
+  - cobr_rescue_llamando:  cada 10 min — rescata deudores atascados en 'llamando'.
 
 Usage:
     from cobranza.campaign_scheduler import register_cobranza_jobs
@@ -24,7 +28,7 @@ from cobranza.call_scheduler import is_contact_allowed_now, has_been_contacted_t
 logger = logging.getLogger("cobranza.campaign_scheduler")
 
 # IDs of the 3 campaign jobs — used by the runtime kill-switch to pause/resume.
-_COBRANZA_JOB_IDS = ("cobr_pre_vencimiento", "cobr_post_vencimiento", "cobr_rescue_llamando")
+_COBRANZA_JOB_IDS = ("seq_plan_intentos", "seq_dispatch_intentos", "cobr_rescue_llamando")
 
 
 # ---------------------------------------------------------------------------
@@ -183,120 +187,6 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Job 1: Pre-vencimiento reminder (3 days before due, pendiente debtors)
-# ---------------------------------------------------------------------------
-
-async def pre_vencimiento_job() -> None:
-    """
-    Contacts debtors in estado='pendiente' whose vencimiento is within the next
-    3 days (exclusive of past-due). Fires once per debtor per day (Ley 2300).
-    """
-    if not await is_autocall_enabled():
-        logger.info("[pre_vencimiento_job] Autocall kill-switch OFF — skipping")
-        return
-    if not is_contact_allowed_now():
-        logger.debug("[pre_vencimiento_job] Outside allowed hours — skipping")
-        return
-
-    now = datetime.now(timezone.utc)
-    in_3_days = now + timedelta(days=3)
-
-    db = get_db()
-    cursor = db.debtors.find(
-        {
-            "estado": "pendiente",
-            "vencimiento": {"$lte": in_3_days, "$gt": now},
-        }
-    )
-    debtors = await cursor.to_list(length=None)
-    logger.info("[pre_vencimiento_job] Found %d pre-vencimiento debtors", len(debtors))
-
-    for debtor in debtors:
-        if has_been_contacted_today(debtor):
-            logger.debug("[pre_vencimiento_job] Debtor %s already contacted today — skip", debtor["_id"])
-            continue
-
-        user_id = debtor.get("user_id")
-
-        await db.debtors.update_one(
-            {"_id": debtor["_id"]},
-            {"$set": {"estado": "llamando", "updated_at": datetime.now(timezone.utc)}},
-        )
-        asyncio.create_task(safe_initiate_call(debtor, user_id))
-
-
-# ---------------------------------------------------------------------------
-# Job 2: Post-vencimiento retry (sin_contacto / pendiente, past due)
-# ---------------------------------------------------------------------------
-
-async def post_vencimiento_job() -> None:
-    """
-    Retries debtors in estado='pendiente' or 'sin_contacto' whose vencimiento
-    has already passed. Respects max_intentos, frecuencia_dias, and Ley 2300.
-    """
-    if not await is_autocall_enabled():
-        logger.info("[post_vencimiento_job] Autocall kill-switch OFF — skipping")
-        return
-    if not is_contact_allowed_now():
-        logger.debug("[post_vencimiento_job] Outside allowed hours — skipping")
-        return
-
-    now = datetime.now(timezone.utc)
-
-    db = get_db()
-    cursor = db.debtors.find(
-        {
-            "estado": {"$in": ["pendiente", "sin_contacto"]},
-            "vencimiento": {"$lte": now},
-        }
-    )
-    debtors = await cursor.to_list(length=None)
-    logger.info("[post_vencimiento_job] Found %d post-vencimiento debtors", len(debtors))
-
-    for debtor in debtors:
-        intentos = debtor.get("intentos", 0)
-        max_intentos = debtor.get("max_intentos", 5)
-
-        # Exhaused attempts → set agotado and move on
-        if intentos >= max_intentos:
-            logger.info("[post_vencimiento_job] Debtor %s exhausted (%d/%d) — marking agotado", debtor["_id"], intentos, max_intentos)
-            await db.debtors.update_one(
-                {"_id": debtor["_id"]},
-                {"$set": {"estado": "agotado", "updated_at": datetime.now(timezone.utc)}},
-            )
-            continue
-
-        if has_been_contacted_today(debtor):
-            logger.debug("[post_vencimiento_job] Debtor %s already contacted today — skip", debtor["_id"])
-            continue
-
-        user_id = debtor.get("user_id")
-        config_doc = await db.cobranza_config.find_one({"user_id": user_id})
-        estrategia = (config_doc or {}).get("estrategia", {})
-
-        # Respect frecuencia_dias: days since last contact
-        frecuencia_dias = estrategia.get("frecuencia_dias", 1)
-        ultimo = debtor.get("ultimo_contacto_fecha")
-        if ultimo is not None:
-            if hasattr(ultimo, "tzinfo") and ultimo.tzinfo is None:
-                import pytz
-                ultimo = pytz.utc.localize(ultimo)
-            days_since = (now - ultimo).days
-            if days_since < frecuencia_dias:
-                logger.debug(
-                    "[post_vencimiento_job] Debtor %s last contacted %d days ago (frecuencia=%d) — skip",
-                    debtor["_id"], days_since, frecuencia_dias,
-                )
-                continue
-
-        await db.debtors.update_one(
-            {"_id": debtor["_id"]},
-            {"$set": {"estado": "llamando", "updated_at": datetime.now(timezone.utc)}},
-        )
-        asyncio.create_task(safe_initiate_call(debtor, user_id))
-
-
-# ---------------------------------------------------------------------------
 # Job 3: Rescue stuck 'llamando' debtors (call may not complete cleanly)
 # ---------------------------------------------------------------------------
 
@@ -367,18 +257,20 @@ def register_cobranza_jobs(scheduler, force: bool = False) -> None:
         )
         return
 
+    from cobranza.sequence_engine import dispatch_intentos_job, plan_intentos_job
+
     scheduler.add_job(
-        pre_vencimiento_job,
+        plan_intentos_job,
         "interval",
-        minutes=60,
-        id="cobr_pre_vencimiento",
+        minutes=15,
+        id="seq_plan_intentos",
         replace_existing=True,
     )
     scheduler.add_job(
-        post_vencimiento_job,
+        dispatch_intentos_job,
         "interval",
-        minutes=60,
-        id="cobr_post_vencimiento",
+        minutes=5,
+        id="seq_dispatch_intentos",
         replace_existing=True,
     )
     scheduler.add_job(
@@ -389,6 +281,6 @@ def register_cobranza_jobs(scheduler, force: bool = False) -> None:
         replace_existing=True,
     )
     logger.warning(
-        "[register_cobranza_jobs] AUTOCALL ENABLED — Registered: cobr_pre_vencimiento (60m), "
-        "cobr_post_vencimiento (60m), cobr_rescue_llamando (10m). Real debtors WILL be called."
+        "[register_cobranza_jobs] AUTOCALL ENABLED — Registered: seq_plan_intentos (15m), "
+        "seq_dispatch_intentos (5m), cobr_rescue_llamando (10m). Real debtors WILL be called."
     )

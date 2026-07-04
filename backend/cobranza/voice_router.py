@@ -285,9 +285,16 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
         else:
             new_estado = "sin_contacto"
 
-        # Check max intentos
+        # Check max intentos — manda la config del tenant (informe: 3), con el
+        # max del deudor como fallback para cargas manuales.
+        try:
+            from cobranza.config_cache import get_tenant_config
+            cfg = await get_tenant_config(str(debtor["user_id"]))
+            timings = ((cfg or {}).get("cobranza") or {}).get("timings") or {}
+            max_intentos = int(timings.get("max_intentos") or debtor.get("max_intentos", 3))
+        except Exception:
+            max_intentos = debtor.get("max_intentos", 3)
         current_intentos = debtor.get("intentos", 0)
-        max_intentos = debtor.get("max_intentos", 5)
         new_intentos = current_intentos + 1
         if new_intentos >= max_intentos and new_estado not in _TERMINAL_ESTADOS:
             new_estado = "agotado"
@@ -315,7 +322,9 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
                 },
                 "$inc": {"intentos": 1},
                 "$push": {"historial_llamadas": call_record},
-                "$unset": {"vapi_call_id": ""},
+                # proximo_intento_at se borra para que el planner de la secuencia
+                # recalcule el siguiente intento con el nuevo conteo (offset L2/L3).
+                "$unset": {"vapi_call_id": "", "proximo_intento_at": "", "proximo_intento_numero": ""},
             },
         )
 

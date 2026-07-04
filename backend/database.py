@@ -139,6 +139,9 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.cobranza_calls_in_progress, [("started_at", 1)], expireAfterSeconds=3600)
     await _safe_index(db.cobranza_calls, [("user_id", 1), ("created_at", -1)])
     await _safe_index(db.cobranza_calls, "call_id", unique=True)
+    # ── Máquina de intentos (sequence_engine) ────────────────────────────────
+    await _safe_index(db.debtors, [("user_id", 1), ("proximo_intento_at", 1)])
+    await _safe_index(db.cobranza_daily_stats, [("user_id", 1), ("fecha", 1)], unique=True)
     # ── Paquete de minutos (ledger append-only, facturación) ─────────────────
     # Único parcial por call_sid: un status-callback reenviado por Twilio no
     # puede descontar la misma llamada dos veces.
