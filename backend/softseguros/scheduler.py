@@ -32,7 +32,7 @@ async def run_daily_sync_for_all_users() -> None:
     """Iterate every user with SOFTSEGUROS credentials and run a delta sync sequentially."""
     # Lazy imports — keep module import cheap and avoid circulars.
     from database import get_db
-    from softseguros.sync import run_sync, NoCredentialsError
+    from softseguros.sync import run_cartera_sync, NoCredentialsError
 
     db = get_db()
     cursor = db.softseguros_credentials.find({}, {"user_id": 1})
@@ -40,7 +40,9 @@ async def run_daily_sync_for_all_users() -> None:
     logger.info("softseguros daily sync: %d user(s) with credentials", len(user_ids))
     for user_id in user_ids:
         try:
-            await run_sync(db, user_id, mode="cron_daily")
+            # CUOTA model (the real cartera). Uses the tenant's standing config and
+            # runs the soft-delete sweep, never touching pinned/manual loads.
+            await run_cartera_sync(db, user_id, mode="cron_daily")
         except NoCredentialsError:
             continue
         except Exception:  # noqa: BLE001 — one bad tenant must not abort the rest

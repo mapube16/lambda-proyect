@@ -104,11 +104,16 @@ class DisconnectBody(BaseModel):
 # ── Background-safe sync runner ───────────────────────────────────────────────
 
 async def _safe_run_sync(user_id: str, mode: str, import_filters: Optional[dict] = None) -> None:
-    """Run run_sync, swallowing & logging all exceptions (BackgroundTasks doesn't surface them)."""
+    """Run the SOFTSEGUROS cartera sync (CUOTA model), swallowing & logging exceptions
+    (BackgroundTasks doesn't surface them).
+
+    NOTE: `import_filters` is the legacy póliza-model shape and is IGNORED — the cartera
+    sync reads its scope (sede/estados/ramos/window) from tenant_config. Custom-window
+    manual loads will pass a cartera-shaped override via the config API (F1 remainder)."""
     try:
-        from softseguros.sync import run_sync
+        from softseguros.sync import run_cartera_sync
         db = get_db()
-        await run_sync(db, user_id, mode=mode, import_filters=import_filters)
+        await run_cartera_sync(db, user_id, mode=mode)
     except Exception:  # noqa: BLE001
         logger.exception("background softseguros sync failed user_id=%s mode=%s", user_id, mode)
 
