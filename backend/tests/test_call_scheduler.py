@@ -133,3 +133,42 @@ def test_next_allowed_slot_returns_datetime():
     from cobranza.call_scheduler import get_next_allowed_slot
     slot = get_next_allowed_slot()
     assert isinstance(slot, datetime)
+
+
+# ── add_business_days / is_business_day (secuencia de intentos del informe) ───
+
+def test_business_day_weekend_and_holiday():
+    from datetime import date
+    from cobranza.call_scheduler import is_business_day
+    assert is_business_day(date(2026, 7, 14)) is True       # martes normal
+    assert is_business_day(date(2026, 7, 11)) is False      # sabado
+    assert is_business_day(date(2026, 7, 20)) is False      # festivo (20 de julio)
+    # festivo extra del tenant (horarios.festivos)
+    assert is_business_day(date(2026, 7, 14), extra_festivos=[date(2026, 7, 14)]) is False
+
+
+def test_regla_del_viernes():
+    """Informe SS3: vence sab/dom/lun -> primera llamada (venc - 1 habil) = viernes."""
+    from datetime import date
+    from cobranza.call_scheduler import add_business_days
+    viernes = date(2026, 7, 10)
+    assert add_business_days(date(2026, 7, 11), -1) == viernes  # vence sabado
+    assert add_business_days(date(2026, 7, 12), -1) == viernes  # vence domingo
+    assert add_business_days(date(2026, 7, 13), -1) == viernes  # vence lunes
+    # martes 21-jul: el lunes 20 es festivo -> viernes 17
+    assert add_business_days(date(2026, 7, 21), -1) == date(2026, 7, 17)
+
+
+def test_add_business_days_forward_skips_holiday():
+    from datetime import date
+    from cobranza.call_scheduler import add_business_days
+    # jueves 16-jul + 2 habiles: vie 17, (sab/dom), lun 20 festivo -> mar 21
+    assert add_business_days(date(2026, 7, 16), 2) == date(2026, 7, 21)
+
+
+def test_add_business_days_zero_rolls_back():
+    """n=0 sobre un no-habil rueda al habil ANTERIOR (nunca se llama en finde)."""
+    from datetime import date
+    from cobranza.call_scheduler import add_business_days
+    assert add_business_days(date(2026, 7, 12), 0) == date(2026, 7, 10)  # domingo -> viernes
+    assert add_business_days(date(2026, 7, 14), 0) == date(2026, 7, 14)  # habil queda igual

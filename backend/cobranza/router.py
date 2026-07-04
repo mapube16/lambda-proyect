@@ -99,8 +99,11 @@ class SoftsegurosCarteraBlock(BaseModel):
     estadopolizas_selected: list[int] = Field(default_factory=list)
     ramos_selected: list[int] = Field(default_factory=list)
     tipo: str = "cartera_por_pagar_compania"
-    fecha_desde: Optional[str] = None   # "YYYY-MM-DD" — ventana de fecha_pago (deuda viva)
-    fecha_hasta: Optional[str] = None
+    fecha_desde: Optional[str] = None   # "YYYY-MM-DD" — ventana de compromiso (deuda viva)
+    fecha_hasta: Optional[str] = None   # techo FIJO (solo arranque) …
+    # … o techo RODANTE: hoy + N días hábiles, recalculado en cada sync (régimen).
+    # Si se define, tiene prioridad sobre fecha_hasta.
+    fecha_hasta_rodante_dias: Optional[int] = Field(None, ge=0, le=30)
     ventana_proximos_dias: int = Field(30, ge=0, le=365)
     solo_no_recaudadas: bool = True
     alias_aseguradoras: dict[str, str] = Field(default_factory=dict)

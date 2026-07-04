@@ -158,8 +158,13 @@ export function CobranzaSettings() {
           <Field label="Cartera vencida desde" hint="Vencimientos a partir de esta fecha">
             <input style={inputStyle} type="date" value={cartera.fecha_desde || ''} onChange={e => setBlock('softseguros_cartera', { fecha_desde: e.target.value })} />
           </Field>
-          <Field label="Hasta">
+          <Field label="Hasta (fija — solo arranque)" hint="Techo fijo de compromisos. Déjala solo durante la evacuación inicial.">
             <input style={inputStyle} type="date" value={cartera.fecha_hasta || ''} onChange={e => setBlock('softseguros_cartera', { fecha_hasta: e.target.value })} />
+          </Field>
+          <Field label="Hasta rodante (días hábiles)" hint="Régimen: hoy + N hábiles, se recalcula cada sync y la cola se rellena sola. Si se define, manda sobre la fija.">
+            <input style={inputStyle} type="number" min={0} max={30} placeholder="ej: 1"
+              value={cartera.fecha_hasta_rodante_dias ?? ''}
+              onChange={e => setBlock('softseguros_cartera', { fecha_hasta_rodante_dias: e.target.value === '' ? null : Number(e.target.value) })} />
           </Field>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: C.SG, fontSize: 13, color: C.text, cursor: 'pointer' }}>

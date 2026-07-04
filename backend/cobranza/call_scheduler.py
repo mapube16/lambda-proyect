@@ -9,7 +9,8 @@ Ley 2300 rules:
 - Max 1 contact per debtor per day
 """
 import pytz
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from typing import Iterable, Optional
 
 COLOMBIA_TZ = pytz.timezone("America/Bogota")
 
@@ -35,6 +36,41 @@ COLOMBIA_HOLIDAYS_2026 = {
     (12, 25), # Christmas
 }
 # Expand COLOMBIA_HOLIDAYS_2027 when needed
+
+
+# ── Aritmética de días hábiles (base de la secuencia de intentos del informe) ──
+# Hábil = lunes-viernes no festivo. El informe programa los intentos en días
+# hábiles (L1 = vencimiento − 1 hábil, L3 = vencimiento + 2 hábiles); la "regla
+# del viernes" (vence sáb/dom/lun → llamar el viernes anterior) sale sola de
+# add_business_days(venc, -1). `extra_festivos` permite festivos del tenant
+# (horarios.festivos en tenant_config) sin tocar código.
+
+
+def is_business_day(d: date, extra_festivos: Optional[Iterable[date]] = None) -> bool:
+    if d.weekday() >= 5:
+        return False
+    if (d.month, d.day) in COLOMBIA_HOLIDAYS_2026:
+        return False
+    return not (extra_festivos and d in set(extra_festivos))
+
+
+def add_business_days(d: date, n: int, extra_festivos: Optional[Iterable[date]] = None) -> date:
+    """
+    d + n días hábiles. n=0 rueda al hábil ANTERIOR si d no es hábil (el informe
+    nunca programa una llamada en fin de semana: 'vence sábado → viernes').
+    """
+    extra = set(extra_festivos) if extra_festivos else None
+    if n == 0:
+        while not is_business_day(d, extra):
+            d -= timedelta(days=1)
+        return d
+    step = timedelta(days=1 if n > 0 else -1)
+    remaining = abs(n)
+    while remaining:
+        d += step
+        if is_business_day(d, extra):
+            remaining -= 1
+    return d
 
 
 def is_contact_allowed_now() -> bool:

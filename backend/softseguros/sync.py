@@ -257,12 +257,21 @@ def _build_cartera_query(c: dict) -> list:
         ("fecha_busqueda_pagos", str(c.get("fecha_busqueda_pagos", -1))),
         ("search_in", c.get("search_in", "poliza_numero_poliza")),
     ]
-    # Date window on fecha_pago (the ONLY server-side date filter). API names them
+    # Ventana de fecha (filtra por COMPROMISO en cartera_por_cobrar). API names them
     # fecha_inicio/fecha_fin; config exposes them as fecha_desde/fecha_hasta.
-    # Compromiso has NO server filter — filter it locally after fetch.
+    #
+    # RÉGIMEN vs ARRANQUE: fecha_hasta fija sirve para la evacuación inicial, pero
+    # congela la cola (se drena con los pagos y no entra ningún compromiso nuevo).
+    # Con fecha_hasta_rodante_dias=N el cron recalcula el techo cada corrida:
+    # hoy + N días HÁBILES → los compromisos que van cayendo entran solos.
     if c.get("fecha_desde"):
         q.append(("fecha_inicio", str(c["fecha_desde"])))
-    if c.get("fecha_hasta"):
+    rodante = c.get("fecha_hasta_rodante_dias")
+    if rodante is not None:
+        from cobranza.call_scheduler import add_business_days
+        hasta = add_business_days(_today(), int(rodante))
+        q.append(("fecha_fin", hasta.isoformat()))
+    elif c.get("fecha_hasta"):
         q.append(("fecha_fin", str(c["fecha_hasta"])))
     for eid in c.get("estadopolizas_selected", []) or []:
         q.append(("estadopolizas_selected[]", str(eid)))
