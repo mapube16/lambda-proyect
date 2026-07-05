@@ -6,10 +6,11 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
-/* Estilos de componentes Konsta (theme.css ya carga su propio plugin-colors) +
-   escaneo de las clases de sus componentes */
-@import "konsta/theme.css";
-@source "../node_modules/konsta/react";
+/* Entry CORRECTO de Konsta para React: konsta/react/theme.css — declara sus
+   propios @source hacia react/ + shared/ + styles/ (donde viven las cadenas de
+   clases de los componentes). Importar solo konsta/theme.css deja los botones
+   sin forma: Tailwind no genera las utilidades ios: / rounded / padding. */
+@import "konsta/react/theme.css";
 
 /* Color de marca Landa → sobrescribe el azul iOS por defecto de Konsta; de aquí
    deriva todos sus tonos (--k-color-*). Va DESPUÉS del import para ganar. */
