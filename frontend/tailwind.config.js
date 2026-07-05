@@ -5,7 +5,11 @@ export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
-    "./node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}",
+    // HeroUI v2 monolítico: el theme está ANIDADO (@heroui/react/node_modules/
+    // @heroui/theme) y las clases viven en archivos .mjs. Este glob amplio cubre
+    // ambas cosas — sin él, Tailwind no genera las clases de color (bg-primary…)
+    // y los botones salen sin relleno.
+    "./node_modules/@heroui/**/dist/**/*.{js,mjs}",
   ],
   // CLAVE: sin preflight. El proyecto ya tiene su reset (index.css) y su sistema
   // de diseño Landa (landa.css + estilos inline). Activar el preflight de
