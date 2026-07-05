@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
+import { Button } from '@heroui/react';
 import { apiFetch } from '../lib/apiFetch';
 import { DebtorsSoftSegurosTab } from './DebtorsSoftSegurosTab';
 
@@ -1917,15 +1918,14 @@ export function CobranzaTab() {
                         {it.telefono} · intento {it.intento} · {it.hora}
                         {!it.dentro_cupo && ' · fuera de cupo'}
                       </span>
-                      <button
+                      <Button
+                        size="sm"
+                        radius="md"
+                        variant="light"
+                        color="danger"
                         title="Excluir de la jornada (pausa el deudor; se reactiva desde la tabla)"
-                        onClick={() => excluirDeJornada(it)}
-                        style={{
-                          padding: '4px 10px', borderRadius: 7, border: `1px solid ${C.border2}`,
-                          background: 'transparent', color: C.pink, fontFamily: C.SG,
-                          fontWeight: 600, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
-                        }}
-                      >✕ Excluir</button>
+                        onPress={() => excluirDeJornada(it)}
+                      >✕ Excluir</Button>
                     </div>
                   );
                 })
@@ -1940,22 +1940,18 @@ export function CobranzaTab() {
             const active = estadoFilter === value;
             const count = value ? (funnel?.counts?.[value] ?? null) : (funnel?.total ?? null);
             return (
-              <button
+              <Button
                 key={label}
-                onClick={() => setEstadoFilter(value)}
-                style={{
-                  padding: '6px 14px', borderRadius: 999,
-                  border: `1px solid ${active ? C.purple : C.border2}`,
-                  background: active ? C.purple : C.s2,
-                  color: active ? '#fff' : C.text,
-                  fontFamily: C.SG, fontWeight: active ? 700 : 500, fontSize: 12.5,
-                  textTransform: 'capitalize', cursor: 'pointer', transition: 'all 0.15s',
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                }}
+                size="sm"
+                radius="full"
+                color={active ? 'primary' : 'default'}
+                variant={active ? 'solid' : 'bordered'}
+                onPress={() => setEstadoFilter(value)}
+                className="capitalize"
               >
                 {label.charAt(0) + label.slice(1).toLowerCase()}
-                {count !== null && <span style={{ opacity: 0.7 }}>({count})</span>}
-              </button>
+                {count !== null && <span style={{ opacity: 0.7 }}>&nbsp;({count})</span>}
+              </Button>
             );
           })}
         </div>
@@ -1966,38 +1962,29 @@ export function CobranzaTab() {
           {MORA_PRESETS.map(({ value, label }) => {
             const active = minMora === value;
             return (
-              <button
+              <Button
                 key={label}
-                onClick={() => setMinMora(value)}
-                style={{
-                  padding: '5px 12px', borderRadius: 999,
-                  border: `1px solid ${active ? C.orange : C.border2}`,
-                  background: active ? C.orange : C.s2,
-                  color: active ? '#fff' : C.text,
-                  fontFamily: C.SG, fontWeight: active ? 700 : 500, fontSize: 12,
-                  cursor: 'pointer', transition: 'all 0.15s',
-                }}
+                size="sm"
+                radius="full"
+                color={active ? 'warning' : 'default'}
+                variant={active ? 'solid' : 'bordered'}
+                onPress={() => setMinMora(value)}
               >
                 {label}
-              </button>
+              </Button>
             );
           })}
           <div style={{ width: 1, height: 18, background: C.border, margin: '0 6px' }} />
-          <button
-            onClick={() => setSortMora(s => !s)}
+          <Button
+            size="sm"
+            radius="full"
+            color={sortMora ? 'primary' : 'default'}
+            variant={sortMora ? 'solid' : 'bordered'}
+            onPress={() => setSortMora(s => !s)}
             title="Ordenar por antigüedad de mora (mayor primero)"
-            style={{
-              padding: '5px 12px', borderRadius: 999,
-              border: `1px solid ${sortMora ? C.purple : C.border2}`,
-              background: sortMora ? C.purple : C.s2,
-              color: sortMora ? '#fff' : C.text,
-              fontFamily: C.SG, fontWeight: sortMora ? 700 : 500, fontSize: 12,
-              cursor: 'pointer', transition: 'all 0.15s',
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-            }}
           >
             {sortMora ? '↓ Mayor mora primero' : 'Ordenar por mora'}
-          </button>
+          </Button>
         </div>
 
         {/* Table */}
@@ -2265,26 +2252,36 @@ const DebtorRow = memo(function DebtorRow({
       <div onClick={e => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4 }}>
         {hover && (
           <>
-            <button
+            <Button
+              isIconOnly
+              size="sm"
+              radius="sm"
+              variant="light"
+              color="success"
               title="Marcar pagado"
-              onClick={() => onPagar(debtor)}
-              style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${C.border2}`, background: 'transparent', cursor: 'pointer', color: C.green, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >✓</button>
-            <button
+              onPress={() => onPagar(debtor)}
+            >✓</Button>
+            <Button
+              isIconOnly
+              size="sm"
+              radius="sm"
+              variant="light"
+              color="primary"
               title={debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar'}
-              onClick={() => onPausar(debtor)}
-              style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${C.border2}`, background: 'transparent', cursor: 'pointer', color: C.purple, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >{debtor.estado === 'pausado' ? '▷' : '⏸'}</button>
+              onPress={() => onPausar(debtor)}
+            >{debtor.estado === 'pausado' ? '▷' : '⏸'}</Button>
           </>
         )}
-        <button
-          className="btn btn-soft"
+        <Button
+          size="sm"
+          radius="md"
+          color="primary"
+          variant="flat"
           title="Llamar ahora"
-          onClick={() => onLlamar(debtor)}
-          style={{ fontFamily: C.SG, fontSize: 12, padding: '6px 10px' }}
+          onPress={() => onLlamar(debtor)}
         >
           📞 Llamar
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -1,0 +1,6 @@
+/* Entrada de Tailwind SOLO para HeroUI. Con preflight desactivado (ver
+   tailwind.config.js), `@tailwind base` casi no emite nada — no toca el diseño
+   existente. Las utilidades y los estilos de HeroUI se generan bajo demanda. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

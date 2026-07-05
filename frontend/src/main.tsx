@@ -1,5 +1,7 @@
+import './tailwind.css';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { HeroUIProvider } from '@heroui/react';
 import App from './App';
 
 // Create QueryClient instance with optimized defaults
@@ -19,6 +21,8 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
-    <App />
+    <HeroUIProvider>
+      <App />
+    </HeroUIProvider>
   </QueryClientProvider>
 );
