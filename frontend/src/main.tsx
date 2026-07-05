@@ -1,7 +1,8 @@
-import './tailwind.css';
+import '@mantine/core/styles.css';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { KonstaProvider } from 'konsta/react';
+import { MantineProvider } from '@mantine/core';
+import { theme } from './mantineTheme';
 import App from './App';
 
 // Create QueryClient instance with optimized defaults
@@ -21,8 +22,8 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
-    <KonstaProvider theme="ios">
+    <MantineProvider theme={theme}>
       <App />
-    </KonstaProvider>
+    </MantineProvider>
   </QueryClientProvider>
 );

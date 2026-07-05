@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
-import { Button } from 'konsta/react';
+import { Button, ActionIcon, CloseButton, UnstyledButton } from '@mantine/core';
+import { ClipboardDocumentListIcon } from '@heroicons/react/24/outline';
 import { apiFetch } from '../lib/apiFetch';
 import { DebtorsSoftSegurosTab } from './DebtorsSoftSegurosTab';
 
@@ -8,14 +9,20 @@ if (typeof document !== 'undefined' && !document.getElementById('cobr-styles')) 
   const s = document.createElement('style');
   s.id = 'cobr-styles';
   s.textContent = `
-    @keyframes cobr-pulse { 0%,100%{opacity:1;box-shadow:0 0 6px #4F46E5} 50%{opacity:0.4;box-shadow:0 0 2px #4F46E5} }
+    @keyframes cobr-pulse { 0%,100%{opacity:1;box-shadow:0 0 6px #234876} 50%{opacity:0.4;box-shadow:0 0 2px #234876} }
     @keyframes cobr-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     @keyframes cobr-fade-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
   `;
   document.head.appendChild(s);
 }
 
-// ─── Tokens (same as ClientDashboard) ──────────────────────────────────────────
+// ─── Tokens — paleta corporativa "Ledger Navy + Deep Teal" ─────────────────────
+// Un solo acento de marca (purple/cyan = variantes de azul-marino) para toda
+// acción/estado informativo; teal queda RESERVADO exclusivamente para señales
+// de "en vivo / sincronización" (insignia SoftSeguros, llamada en curso) — no
+// compite como un segundo color de marca. Verde/ámbar/rojo son semántica de
+// estado (éxito/advertencia/peligro), nunca el acento. Mismos valores que
+// mantineTheme.ts — cambiar ahí también si se ajusta la paleta.
 const C = {
   bg:        '#F6F6FB',
   s0:        '#FFFFFF',
@@ -26,22 +33,22 @@ const C = {
   text:      '#34343F',
   muted:     '#6B6B7A',
   faint:     '#9696A6',
-  cyan:      '#0EA5E9',
-  cyanBg:    'rgba(14,165,233,0.08)',
-  cyanBdr:   'rgba(14,165,233,0.22)',
-  green:     '#15A56A',
-  greenBg:   '#E6F6EE',
-  pink:      '#E03E4C',
-  pinkBg:    '#FCE9EA',
-  orange:    '#D97A06',
-  orangeBg:  '#FCF1E0',
-  purple:    '#4F46E5',
-  purpleBg:  '#EEEDFC',
-  yellow:    '#D97A06',
-  yellowBg:  '#FCF1E0',
-  teal:      '#1FA89E',
-  tealBg:    'rgba(31,168,158,0.08)',
-  tealBdr:   'rgba(31,168,158,0.30)',
+  cyan:      '#3B6EA5', // azul informativo — misma familia que el navy, un tono más claro
+  cyanBg:    '#EAF0F7',
+  cyanBdr:   'rgba(59,110,165,0.25)',
+  green:     '#157F5B', // éxito
+  greenBg:   '#E5F0EA',
+  pink:      '#B91C3C', // peligro
+  pinkBg:    '#F7E5E8',
+  orange:    '#B7791E', // advertencia
+  orangeBg:  '#F7EEDC',
+  purple:    '#234876', // acento de marca — Ledger Navy
+  purpleBg:  '#E7ECF1',
+  yellow:    '#B7791E',
+  yellowBg:  '#F7EEDC',
+  teal:      '#0F6B64', // reservado: solo señales "en vivo / sincronización"
+  tealBg:    'rgba(15,107,100,0.08)',
+  tealBdr:   'rgba(15,107,100,0.30)',
   border:    '#ECECF3',
   border2:   '#E3E3EC',
   ink:       '#16161D',
@@ -83,18 +90,18 @@ function SoftSegurosSection() {
   const [expanded, setExpanded] = useState(true);
   return (
     <div style={{ marginBottom: 24 }}>
-      <button
+      <UnstyledButton
         onClick={() => setExpanded(e => !e)}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-          background: C.s0, border: `1px solid rgba(14,165,233,0.18)`,
+          background: C.s0, border: `1px solid rgba(59,110,165,0.18)`,
           padding: '10px 14px', cursor: 'pointer', color: C.cyan,
           fontFamily: C.SG, fontWeight: 600, fontSize: 12, letterSpacing: '0.08em',
         }}
       >
         <span style={{ fontSize: 10, transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▶</span>
         DEUDORES SOFTSEGUROS
-      </button>
+      </UnstyledButton>
       {expanded && (
         <div style={{ marginTop: 8 }}>
           <DebtorsSoftSegurosTab />
@@ -219,7 +226,7 @@ function CobranzaToast({ toast, onDismiss }: { toast: CobrToast; onDismiss: (id:
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '11px 16px', minWidth: 260,
-      background: C.s3, border: `1px solid ${toast.ok ? 'rgba(21,165,106,0.25)' : 'rgba(224,62,76,0.25)'}`,
+      background: C.s3, border: `1px solid ${toast.ok ? 'rgba(21,127,91,0.25)' : 'rgba(185,28,60,0.25)'}`,
       boxShadow: '0 4px 16px rgba(20,20,40,0.10)', pointerEvents: 'all',
       opacity: visible ? 1 : 0, transform: visible ? 'translateX(0)' : 'translateX(12px)',
       transition: 'opacity 0.2s, transform 0.2s',
@@ -228,10 +235,7 @@ function CobranzaToast({ toast, onDismiss }: { toast: CobrToast; onDismiss: (id:
         {toast.ok ? '✓' : '✕'}
       </span>
       <span style={{ fontFamily: C.SG, fontSize: 12, color: C.text, flex: 1 }}>{toast.message}</span>
-      <button onClick={() => onDismiss(toast.id)} style={{
-        background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer',
-        fontSize: 14, width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-      }}>✕</button>
+      <CloseButton onClick={() => onDismiss(toast.id)} size="sm" c={C.muted} />
     </div>
   );
 }
@@ -476,7 +480,7 @@ function DebtorModal({
                         onChange={e => setEditFields(p => ({ ...p, [key]: e.target.value }))}
                         style={{
                           width: '100%', boxSizing: 'border-box', background: C.s2,
-                          border: `1px solid rgba(217,122,6,0.35)`, color: C.text,
+                          border: `1px solid rgba(35,72,118,0.35)`, color: C.text,
                           fontFamily: C.SG, fontSize: 13, padding: '6px 10px', outline: 'none',
                         }}
                       />
@@ -496,7 +500,7 @@ function DebtorModal({
                         onChange={e => setEditFields(p => ({ ...p, [key]: e.target.value }))}
                         style={{
                           width: '100%', boxSizing: 'border-box', background: C.s2,
-                          border: `1px solid rgba(217,122,6,0.35)`, color: C.text,
+                          border: `1px solid rgba(35,72,118,0.35)`, color: C.text,
                           fontFamily: C.SG, fontSize: 13, padding: '6px 10px', outline: 'none',
                         }}
                       />
@@ -529,33 +533,15 @@ function DebtorModal({
             )}
             {editMode ? (
               <>
-                <button
-                  onClick={() => setEditMode(false)}
-                  className="btn btn-ghost"
-                  style={{ fontFamily: C.SG }}
-                >Cancelar</button>
-                <button
-                  onClick={handleSaveEdits}
-                  disabled={saving}
-                  className="btn btn-primary"
-                  style={{ fontFamily: C.SG, opacity: saving ? 0.6 : 1 }}
-                >{saving ? 'Guardando…' : 'Guardar cambios'}</button>
+                <Button onClick={() => setEditMode(false)} variant="default" size="sm">Cancelar</Button>
+                <Button onClick={handleSaveEdits} loading={saving} color="indigo" size="sm">Guardar cambios</Button>
               </>
             ) : (
-              <button
-                onClick={() => handleLlamarAhora()}
-                disabled={acting}
-                className="btn btn-primary"
-                style={{ fontFamily: C.SG, opacity: acting ? 0.6 : 1 }}
-              >
+              <Button onClick={() => handleLlamarAhora()} loading={acting} color="indigo" size="sm">
                 📞 Llamar
-              </button>
+              </Button>
             )}
-            <button
-              onClick={onClose}
-              className="btn btn-ghost btn-icon"
-              style={{ fontFamily: C.SG, fontSize: 16, width: 36, height: 36 }}
-            >✕</button>
+            <CloseButton onClick={onClose} size="lg" />
           </div>
         </div>
 
@@ -678,15 +664,12 @@ function DebtorModal({
                           </div>
                           <div style={{ ...lbl(C.muted, 9), marginTop: 2 }}>{call.resultado.toUpperCase()}</div>
                           {(call.transcript || call.summary) && (
-                            <button
+                            <UnstyledButton
                               onClick={() => setExpandedCall(expandedCall === call.call_id ? null : call.call_id)}
-                              style={{
-                                marginTop: 4, background: 'transparent', border: 'none', cursor: 'pointer',
-                                ...lbl(C.cyan, 9), padding: 0,
-                              }}
+                              style={{ marginTop: 4, cursor: 'pointer', ...lbl(C.cyan, 9) }}
                             >
                               {expandedCall === call.call_id ? '▲ ocultar' : call.transcript ? '▼ ver transcript' : '▼ ver resumen'}
-                            </button>
+                            </UnstyledButton>
                           )}
                           {expandedCall === call.call_id && (call.transcript || call.summary) && (
                             <div style={{
@@ -728,39 +711,22 @@ function DebtorModal({
                   boxSizing: 'border-box',
                 }}
               />
-              <button
-                onClick={handleSaveNotas}
-                disabled={saving}
-                className="btn btn-soft"
-                style={{ marginTop: 8, fontFamily: C.SG, fontSize: 12.5, opacity: saving ? 0.6 : 1 }}
-              >
-                {saving ? 'Guardando...' : 'Guardar nota'}
-              </button>
+              <Button onClick={handleSaveNotas} loading={saving} variant="light" color="indigo" size="sm" mt={8}>
+                Guardar nota
+              </Button>
             </div>
 
             {/* Action grid */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               {[
-                { label: 'Editar', onClick: () => setEditMode(true), color: C.orange },
-                { label: 'Marcar pagado', onClick: handlePagar, color: C.green },
-                { label: debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar', onClick: handlePausar, color: C.purple },
-                { label: 'Eliminar', onClick: handleEliminar, color: C.pink },
+                { label: 'Editar', onClick: () => setEditMode(true), color: 'orange' },
+                { label: 'Marcar pagado', onClick: handlePagar, color: 'green' },
+                { label: debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar', onClick: handlePausar, color: 'indigo' },
+                { label: 'Eliminar', onClick: handleEliminar, color: 'red' },
               ].map(({ label, onClick, color }) => (
-                <button
-                  key={label}
-                  onClick={onClick}
-                  disabled={acting}
-                  style={{
-                    padding: '10px 8px', border: `1px solid ${C.border2}`, borderRadius: 10,
-                    background: 'transparent', cursor: acting ? 'not-allowed' : 'pointer',
-                    fontFamily: C.SG, fontWeight: 700, fontSize: 12, color,
-                    opacity: acting ? 0.5 : 1, transition: 'background 0.15s',
-                  }}
-                  onMouseEnter={e => { if (!acting) (e.currentTarget as HTMLElement).style.background = C.s3; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                >
+                <Button key={label} onClick={onClick} disabled={acting} variant="light" color={color} size="sm">
                   {label}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -783,7 +749,7 @@ function DebtorModal({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <div style={{
                     padding: '10px 14px', background: C.s2,
-                    borderLeft: `2px solid rgba(14,165,233,0.30)`,
+                    borderLeft: `2px solid rgba(59,110,165,0.30)`,
                     display: 'flex', justifyContent: 'space-between',
                   }}>
                     <span style={{ fontFamily: C.SG, fontSize: 11, color: C.text }}>
@@ -896,24 +862,12 @@ function DebtorModal({
               Si decides continuar, la responsabilidad del contacto adicional recae sobre el operador.
             </p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setShowLey2300Warning(false)}
-                style={{
-                  padding: '8px 18px', border: `1px solid ${C.s4}`, background: 'transparent',
-                  color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
-                }}
-              >
+              <Button onClick={() => setShowLey2300Warning(false)} variant="default" size="sm">
                 Cancelar
-              </button>
-              <button
-                onClick={() => { setShowLey2300Warning(false); handleLlamarAhora(true); }}
-                style={{
-                  padding: '8px 18px', border: `1px solid ${C.orange}`, background: C.orangeBg,
-                  color: C.orange, fontFamily: C.SG, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                }}
-              >
+              </Button>
+              <Button onClick={() => { setShowLey2300Warning(false); handleLlamarAhora(true); }} color="orange" variant="light" size="sm">
                 Llamar de todos modos
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -924,7 +878,7 @@ function DebtorModal({
         <div style={{
           position: 'absolute', bottom: 32, left: '50%', transform: 'translateX(-50%)',
           zIndex: 300, background: C.s3, padding: '10px 20px',
-          border: `1px solid rgba(14,165,233,0.22)`, fontFamily: C.SG, fontSize: 12, color: C.text,
+          border: `1px solid rgba(59,110,165,0.22)`, fontFamily: C.SG, fontSize: 12, color: C.text,
           animation: 'cobr-fade-in 0.2s ease',
         }}>
           {toastMsg}
@@ -993,14 +947,14 @@ function DebtorCreateModal({
     border: `1px solid #E3E3EC`, color: C.text,
     fontFamily: C.IN, fontSize: 13, padding: '9px 12px', outline: 'none',
   };
-  const focusStyle = `border-color: rgba(217,122,6,0.45)`;
+  const focusStyle = `border-color: rgba(35,72,118,0.45)`;
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(50,50,90,0.45)', backdropFilter: 'blur(4px)' }} />
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 480,
-        background: C.s1, border: `1px solid rgba(217,122,6,0.22)`,
+        background: C.s1, border: `1px solid rgba(35,72,118,0.22)`,
         animation: 'cobr-fade-in 0.2s ease',
       }}>
         {/* Header */}
@@ -1009,7 +963,7 @@ function DebtorCreateModal({
             <div style={lbl(C.orange, 9)}>NUEVO DEUDOR</div>
             <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 16, color: C.text, marginTop: 4 }}>Agregar manualmente</div>
           </div>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 16 }}>✕</button>
+          <CloseButton onClick={onClose} size="md" />
         </div>
         {/* Form */}
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1049,16 +1003,12 @@ function DebtorCreateModal({
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button onClick={onClose} style={{ padding: '9px 16px', background: 'transparent', border: `1px solid #E3E3EC`, color: C.muted, fontFamily: C.SG, fontSize: 11, cursor: 'pointer' }}>
+            <Button onClick={onClose} variant="default" size="sm">
               Cancelar
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={saving}
-              style={{ padding: '9px 20px', border: 'none', background: saving ? C.s3 : C.orange, color: C.bg, fontFamily: C.SG, fontWeight: 700, fontSize: 12, cursor: saving ? 'not-allowed' : 'pointer' }}
-            >
-              {saving ? 'Guardando…' : 'Crear deudor'}
-            </button>
+            </Button>
+            <Button onClick={handleSubmit} loading={saving} color="indigo" size="sm">
+              Crear deudor
+            </Button>
           </div>
         </div>
       </div>
@@ -1215,7 +1165,7 @@ function CobranzaOnboarding({ onDone }: { onDone: () => void }) {
               rows={6}
               style={{
                 width: '100%', boxSizing: 'border-box',
-                background: C.s2, border: `1px solid ${descripcion ? 'rgba(217,122,6,0.35)' : C.faint}`,
+                background: C.s2, border: `1px solid ${descripcion ? 'rgba(35,72,118,0.35)' : C.faint}`,
                 borderRadius: 8, color: C.text, fontFamily: C.IN, fontSize: 13,
                 padding: '14px 16px', resize: 'vertical', outline: 'none',
                 transition: 'border-color 0.15s', lineHeight: 1.6,
@@ -1225,18 +1175,15 @@ function CobranzaOnboarding({ onDone }: { onDone: () => void }) {
               <span style={{ fontFamily: C.IN, fontSize: 12, color: C.faint }}>
                 {descripcion.length} caracteres · mínimo 30
               </span>
-              <button
+              <Button
                 onClick={handleStart}
-                disabled={loading || descripcion.trim().length < 30}
-                style={{
-                  padding: '10px 22px', borderRadius: 7, border: 'none', cursor: descripcion.trim().length >= 30 && !loading ? 'pointer' : 'not-allowed',
-                  background: descripcion.trim().length >= 30 && !loading ? C.orange : C.s3,
-                  color: C.bg, fontFamily: C.SG, fontWeight: 700, fontSize: 13,
-                  transition: 'background 0.15s',
-                }}
+                disabled={descripcion.trim().length < 30}
+                loading={loading}
+                color="indigo"
+                size="sm"
               >
-                {loading ? 'Generando…' : 'Generar estrategia →'}
-              </button>
+                Generar estrategia →
+              </Button>
             </div>
           </div>
         )}
@@ -1281,22 +1228,8 @@ function CobranzaOnboarding({ onDone }: { onDone: () => void }) {
 
             {/* Actions */}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button
-                onClick={() => setStep('describe')}
-                style={{
-                  padding: '10px 18px', borderRadius: 7, border: `1px solid ${C.faint}`,
-                  background: 'transparent', color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
-                }}
-              >← Volver</button>
-              <button
-                onClick={handleApprove}
-                disabled={loading}
-                style={{
-                  padding: '10px 22px', borderRadius: 7, border: 'none', cursor: loading ? 'not-allowed' : 'pointer',
-                  background: loading ? C.s3 : C.green, color: C.bg,
-                  fontFamily: C.SG, fontWeight: 700, fontSize: 13, transition: 'background 0.15s',
-                }}
-              >{loading ? 'Guardando…' : 'Aprobar y activar →'}</button>
+              <Button onClick={() => setStep('describe')} variant="default" size="sm">← Volver</Button>
+              <Button onClick={handleApprove} loading={loading} color="green" size="sm">Aprobar y activar →</Button>
             </div>
           </div>
         )}
@@ -1315,40 +1248,18 @@ function CobranzaOnboarding({ onDone }: { onDone: () => void }) {
               </p>
               <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvOnboarding} />
               {csvResult ? (
-                <div style={{ background: C.greenBg, border: `1px solid rgba(21,165,106,0.30)`, borderRadius: 7, padding: '12px 16px', color: C.green, fontFamily: C.SG, fontWeight: 600, fontSize: 13 }}>
+                <div style={{ background: C.greenBg, border: `1px solid rgba(21,127,91,0.30)`, borderRadius: 7, padding: '12px 16px', color: C.green, fontFamily: C.SG, fontWeight: 600, fontSize: 13 }}>
                   {csvResult.created} deudores importados correctamente
                 </div>
               ) : (
-                <button
-                  onClick={() => csvRef.current?.click()}
-                  disabled={uploadingCsv}
-                  style={{
-                    padding: '10px 22px', borderRadius: 7, border: `1px solid ${C.cyanBdr}`,
-                    background: C.cyanBg, color: C.cyan,
-                    fontFamily: C.SG, fontWeight: 700, fontSize: 13,
-                    cursor: uploadingCsv ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {uploadingCsv ? 'Subiendo…' : '↑ Seleccionar CSV'}
-                </button>
+                <Button onClick={() => csvRef.current?.click()} loading={uploadingCsv} variant="default" size="sm">
+                  ↑ Seleccionar CSV
+                </Button>
               )}
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button
-                onClick={onDone}
-                style={{
-                  padding: '10px 18px', borderRadius: 7, border: `1px solid ${C.faint}`,
-                  background: 'transparent', color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
-                }}
-              >Omitir por ahora</button>
-              <button
-                onClick={onDone}
-                style={{
-                  padding: '10px 22px', borderRadius: 7, border: 'none', cursor: 'pointer',
-                  background: C.green, color: C.bg,
-                  fontFamily: C.SG, fontWeight: 700, fontSize: 13,
-                }}
-              >Ir al panel →</button>
+              <Button onClick={onDone} variant="default" size="sm">Omitir por ahora</Button>
+              <Button onClick={onDone} color="green" size="sm">Ir al panel →</Button>
             </div>
           </div>
         )}
@@ -1777,52 +1688,57 @@ export function CobranzaTab() {
                 <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.teal, flexShrink: 0, ...(syncStatus.is_syncing_now ? { animation: 'cobr-pulse 1.5s infinite' } : {}) }} />
                 <span style={{ fontFamily: C.SG, fontSize: 12, fontWeight: 700, color: C.teal }}>SoftSeguros</span>
                 <span style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted }}>· sinc. {fmtSyncTime(syncStatus.last_sync_at)}</span>
-                <button onClick={handleSyncNow} disabled={syncing || syncStatus.is_syncing_now} title="Sincronizar ahora" style={{ display: 'inline-flex', alignItems: 'center', border: 'none', background: 'transparent', color: C.teal, cursor: (syncing || syncStatus.is_syncing_now) ? 'default' : 'pointer', padding: 0, marginLeft: 2, opacity: (syncing || syncStatus.is_syncing_now) ? 0.5 : 1 }}>
+                <ActionIcon onClick={handleSyncNow} disabled={syncing || syncStatus.is_syncing_now} title="Sincronizar ahora" variant="transparent" color="teal" size="sm" ml={2}>
                   <span style={{ display: 'inline-flex', animation: (syncing || syncStatus.is_syncing_now) ? 'cobr-spin 0.8s linear infinite' : 'none', fontSize: 14 }}>↻</span>
-                </button>
+                </ActionIcon>
               </div>
             )}
             {/* Secondary CSV tools */}
-            <button
+            <Button
               onClick={() => csvInputRef.current?.click()}
+              loading={uploadingCsv === 'create'}
               disabled={!!uploadingCsv}
               title="Agregar nuevos deudores desde CSV"
-              className="btn btn-ghost"
-              style={{ fontFamily: C.SG, opacity: uploadingCsv ? 0.6 : 1 }}
+              variant="default"
+              size="sm"
             >
-              {uploadingCsv === 'create' ? '…' : '↑ CSV'}
-            </button>
-            <button
+              ↑ CSV
+            </Button>
+            <Button
               onClick={() => csvUpdateRef.current?.click()}
+              loading={uploadingCsv === 'update'}
               disabled={!!uploadingCsv}
               title="Actualizar deudores existentes por teléfono"
-              className="btn btn-ghost"
-              style={{ fontFamily: C.SG, opacity: uploadingCsv ? 0.6 : 1 }}
+              variant="default"
+              size="sm"
             >
-              {uploadingCsv === 'update' ? '…' : '↕ CSV'}
-            </button>
-            <button
+              ↕ CSV
+            </Button>
+            <ActionIcon
               onClick={() => { fetchDebtors(); fetchFunnel(); fetchTodaySummary(); }}
               title="Refrescar"
-              className="btn btn-ghost btn-icon"
-              style={{ fontFamily: C.SG }}
-            >↺</button>
+              variant="default"
+              size="lg"
+            >↺</ActionIcon>
             {/* Agregar deudor (primary) */}
-            <button
+            <Button
               onClick={() => setShowCreateModal(true)}
               title="Agregar deudor manualmente"
-              className="btn btn-primary"
-              style={{ fontFamily: C.SG }}
-            >+ Agregar deudor</button>
+              color="indigo"
+              size="sm"
+            >+ Agregar deudor</Button>
           </div>
         </div>
 
         {/* KPIs (Panel) */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
           {[
+            // Solo 2 colores con significado real aquí: navy = la métrica insignia;
+            // verde = dinero efectivamente cobrado. El resto son conteos de
+            // actividad, no éxitos/alertas — quedan neutros.
             { label: 'Cartera total', value: formatCOP(carteraMontoPage), color: C.purple, big: false },
-            { label: 'Contactados', value: `${contactados}/${carteraCount}`, color: C.green, big: true },
-            { label: 'Promesas activas', value: String(promesasActivas), color: C.orange, big: true },
+            { label: 'Contactados', value: `${contactados}/${carteraCount}`, color: C.ink, big: true },
+            { label: 'Promesas activas', value: String(promesasActivas), color: C.ink, big: true },
             { label: 'Pagados', value: String(pagados), color: C.green, big: true },
           ].map(({ label, value, color, big }) => (
             <div key={label} className="card" style={{ padding: '16px 18px' }}>
@@ -1842,12 +1758,19 @@ export function CobranzaTab() {
               label: 'Minutos',
               value: minutos ? minutos.minutos_restantes.toLocaleString('es-CO') : '—',
               sub: minutos ? `de ${minutos.minutos_comprados.toLocaleString('es-CO')} del paquete` : '',
-              // <15% restante = alerta visual: hay que vender la recarga a tiempo
-              color: minutos && minutos.minutos_restantes < 0.15 * (minutos.minutos_comprados || 1) ? C.orange : C.teal,
+              // <15% restante = alerta real (ámbar); si no, es un saldo normal (neutro).
+              color: minutos && minutos.minutos_restantes < 0.15 * (minutos.minutos_comprados || 1) ? C.orange : C.ink,
               pulse: false,
             },
-            { label: 'Llamando ahora', value: String(todayKpis?.llamando_ahora ?? llamandoNow), sub: todayKpis?.llamando_ahora ? 'en vivo' : '', color: C.yellow, pulse: (todayKpis?.llamando_ahora ?? 0) > 0 },
-            { label: 'Contactados hoy', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.cyan, pulse: false },
+            {
+              label: 'Llamando ahora',
+              value: String(todayKpis?.llamando_ahora ?? llamandoNow),
+              sub: todayKpis?.llamando_ahora ? 'en vivo' : '',
+              // Teal reservado para "en vivo" real — solo se enciende si hay una llamada activa.
+              color: (todayKpis?.llamando_ahora ?? llamandoNow) > 0 ? C.teal : C.ink,
+              pulse: (todayKpis?.llamando_ahora ?? 0) > 0,
+            },
+            { label: 'Contactados hoy', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.ink, pulse: false },
             { label: 'Promesas hoy', value: String(todayKpis?.promesas_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.promesas_hoy.monto) : '', color: C.green, pulse: false },
             { label: 'Pagado hoy', value: String(todayKpis?.pagado_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.pagado_hoy.monto) : '', color: C.green, pulse: false },
             { label: 'Sin contacto', value: String(todayKpis?.sin_contacto ?? '—'), sub: 'requiere atención', color: C.orange, pulse: false },
@@ -1867,15 +1790,16 @@ export function CobranzaTab() {
 
         {/* Jornada de hoy (informe §2.1) — revisión previa + exclusión */}
         <div className="card" style={{ marginBottom: 18, overflow: 'hidden' }}>
-          <button
+          <UnstyledButton
             onClick={() => setJornadaOpen(o => !o)}
             style={{
               width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '13px 18px', background: 'transparent', border: 'none', cursor: 'pointer',
+              padding: '13px 18px', cursor: 'pointer',
             }}
           >
             <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 13.5, color: C.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
-              📋 Jornada de hoy
+              <ClipboardDocumentListIcon width={16} height={16} style={{ color: C.purple, flexShrink: 0 }} />
+              Jornada de hoy
               {jornada && (
                 <span style={{ fontFamily: C.IN, fontWeight: 500, fontSize: 12, color: C.muted }}>
                   {jornada.total} programados · cupo {jornada.cupo_diario}/día
@@ -1885,7 +1809,7 @@ export function CobranzaTab() {
             <span style={{ color: C.faint, fontSize: 12 }}>
               {jornadaOpen ? '▲ ocultar' : '▼ revisar y excluir antes de la jornada'}
             </span>
-          </button>
+          </UnstyledButton>
           {jornadaOpen && (
             <div style={{ borderTop: `1px solid ${C.border}`, maxHeight: 380, overflowY: 'auto' }}>
               {jornadaLoading ? (
@@ -1919,11 +1843,10 @@ export function CobranzaTab() {
                         {!it.dentro_cupo && ' · fuera de cupo'}
                       </span>
                       <Button
-                        small
-                        inline
-                        clear
+                        size="xs"
+                        variant="subtle"
+                        color="red"
                         onClick={() => excluirDeJornada(it)}
-                        className="!w-auto !text-red-500"
                         title="Excluir de la jornada (pausa el deudor; se reactiva desde la tabla)"
                       >✕ Excluir</Button>
                     </div>
@@ -1942,12 +1865,11 @@ export function CobranzaTab() {
             return (
               <Button
                 key={label}
-                small
-                inline
-                rounded
-                outline={!active}
+                size="xs"
+                radius="xl"
+                variant={active ? 'filled' : 'outline'}
+                color="indigo"
                 onClick={() => setEstadoFilter(value)}
-                className="!w-auto capitalize"
               >
                 {label.charAt(0) + label.slice(1).toLowerCase()}
                 {count !== null && <span style={{ opacity: 0.7 }}>&nbsp;({count})</span>}
@@ -1964,12 +1886,11 @@ export function CobranzaTab() {
             return (
               <Button
                 key={label}
-                small
-                inline
-                rounded
-                outline={!active}
+                size="xs"
+                radius="xl"
+                variant={active ? 'filled' : 'outline'}
+                color="indigo"
                 onClick={() => setMinMora(value)}
-                className="!w-auto"
               >
                 {label}
               </Button>
@@ -1977,12 +1898,11 @@ export function CobranzaTab() {
           })}
           <div style={{ width: 1, height: 18, background: C.border, margin: '0 6px' }} />
           <Button
-            small
-            inline
-            rounded
-            outline={!sortMora}
+            size="xs"
+            radius="xl"
+            variant={sortMora ? 'filled' : 'outline'}
+            color="indigo"
             onClick={() => setSortMora(s => !s)}
-            className="!w-auto"
             title="Ordenar por antigüedad de mora (mayor primero)"
           >
             {sortMora ? '↓ Mayor mora primero' : 'Ordenar por mora'}
@@ -2053,17 +1973,9 @@ export function CobranzaTab() {
               Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} de {total.toLocaleString('es-CO')}
             </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={page === 1}
-                style={{ padding: '6px 12px', border: `1px solid rgba(255,255,255,0.1)`, background: 'transparent', color: page === 1 ? C.faint : C.muted, cursor: page === 1 ? 'not-allowed' : 'pointer', fontFamily: C.SG, fontWeight: 600, fontSize: 11.5 }}
-              >← Anterior</button>
+              <Button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} variant="default" size="xs">← Anterior</Button>
               <span style={{ padding: '6px 10px', fontFamily: C.SG, fontSize: 12, color: C.text }}>{page} / {totalPages}</span>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-                style={{ padding: '6px 12px', border: `1px solid rgba(255,255,255,0.1)`, background: 'transparent', color: page >= totalPages ? C.faint : C.muted, cursor: page >= totalPages ? 'not-allowed' : 'pointer', fontFamily: C.SG, fontWeight: 600, fontSize: 11.5 }}
-              >Siguiente →</button>
+              <Button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} variant="default" size="xs">Siguiente →</Button>
             </div>
           </div>
         )}
@@ -2117,24 +2029,12 @@ export function CobranzaTab() {
               Si decides continuar, la responsabilidad del contacto adicional recae sobre el operador.
             </p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setLey2300Confirm(null)}
-                style={{
-                  padding: '8px 18px', border: `1px solid ${C.s4}`, background: 'transparent',
-                  color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
-                }}
-              >
+              <Button onClick={() => setLey2300Confirm(null)} variant="default" size="sm">
                 Cancelar
-              </button>
-              <button
-                onClick={handleForceLlamar}
-                style={{
-                  padding: '8px 18px', border: `1px solid ${C.orange}`, background: C.orangeBg,
-                  color: C.orange, fontFamily: C.SG, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                }}
-              >
+              </Button>
+              <Button onClick={handleForceLlamar} color="orange" variant="light" size="sm">
                 Llamar de todos modos
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -2254,32 +2154,29 @@ const DebtorRow = memo(function DebtorRow({
       <div onClick={e => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4 }}>
         {hover && (
           <>
-            <Button
-              small
-              inline
-              clear
+            <ActionIcon
+              variant="subtle"
+              color="green"
+              size="sm"
               title="Marcar pagado"
               onClick={() => onPagar(debtor)}
-              className="!w-auto !min-w-0 !px-2 !text-green-600"
-            >✓</Button>
-            <Button
-              small
-              inline
-              clear
+            >✓</ActionIcon>
+            <ActionIcon
+              variant="subtle"
+              color="indigo"
+              size="sm"
               title={debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar'}
               onClick={() => onPausar(debtor)}
-              className="!w-auto !min-w-0 !px-2"
-            >{debtor.estado === 'pausado' ? '▷' : '⏸'}</Button>
+            >{debtor.estado === 'pausado' ? '▷' : '⏸'}</ActionIcon>
           </>
         )}
         <Button
-          small
-          inline
-          rounded
-          tonal
+          size="xs"
+          radius="xl"
+          variant="light"
+          color="indigo"
           title="Llamar ahora"
           onClick={() => onLlamar(debtor)}
-          className="!w-auto"
         >
           📞 Llamar
         </Button>

@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../lib/apiFetch';
 
-// ─── Tokens (same palette as CobranzaTab) ──────────────────────────────────────
+// ─── Tokens — paleta "Ledger Navy + Deep Teal" (misma que CobranzaTab) ─────────
 const C = {
   bg: '#F6F6FB', s0: '#FFFFFF', s2: '#FAFAFC', s3: '#F2F2F8', s4: '#E3E3EC',
   text: '#34343F', muted: '#6B6B7A', faint: '#9696A6',
-  cyan: '#0EA5E9', cyanBg: 'rgba(14,165,233,0.08)',
-  green: '#15A56A', greenBg: '#E6F6EE', pink: '#E03E4C', pinkBg: '#FCE9EA',
-  orange: '#D97A06', orangeBg: '#FCF1E0', purple: '#4F46E5', purpleBg: '#EEEDFC',
+  cyan: '#3B6EA5', cyanBg: '#EAF0F7',
+  green: '#157F5B', greenBg: '#E5F0EA', pink: '#B91C3C', pinkBg: '#F7E5E8',
+  orange: '#B7791E', orangeBg: '#F7EEDC', purple: '#234876', purpleBg: '#E7ECF1',
   border: '#ECECF3',
   SG: "'Plus Jakarta Sans', system-ui, sans-serif",
 };
