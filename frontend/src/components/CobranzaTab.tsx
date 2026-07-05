@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
-import { Button } from '@heroui/react';
+import { Button } from 'konsta/react';
 import { apiFetch } from '../lib/apiFetch';
 import { DebtorsSoftSegurosTab } from './DebtorsSoftSegurosTab';
 
@@ -1919,12 +1919,12 @@ export function CobranzaTab() {
                         {!it.dentro_cupo && ' · fuera de cupo'}
                       </span>
                       <Button
-                        size="sm"
-                        radius="md"
-                        variant="light"
-                        color="danger"
+                        small
+                        inline
+                        clear
+                        onClick={() => excluirDeJornada(it)}
+                        className="!w-auto !text-red-500"
                         title="Excluir de la jornada (pausa el deudor; se reactiva desde la tabla)"
-                        onPress={() => excluirDeJornada(it)}
                       >✕ Excluir</Button>
                     </div>
                   );
@@ -1942,12 +1942,12 @@ export function CobranzaTab() {
             return (
               <Button
                 key={label}
-                size="sm"
-                radius="full"
-                color={active ? 'primary' : 'default'}
-                variant={active ? 'solid' : 'bordered'}
-                onPress={() => setEstadoFilter(value)}
-                className="capitalize"
+                small
+                inline
+                rounded
+                outline={!active}
+                onClick={() => setEstadoFilter(value)}
+                className="!w-auto capitalize"
               >
                 {label.charAt(0) + label.slice(1).toLowerCase()}
                 {count !== null && <span style={{ opacity: 0.7 }}>&nbsp;({count})</span>}
@@ -1964,11 +1964,12 @@ export function CobranzaTab() {
             return (
               <Button
                 key={label}
-                size="sm"
-                radius="full"
-                color={active ? 'warning' : 'default'}
-                variant={active ? 'solid' : 'bordered'}
-                onPress={() => setMinMora(value)}
+                small
+                inline
+                rounded
+                outline={!active}
+                onClick={() => setMinMora(value)}
+                className="!w-auto"
               >
                 {label}
               </Button>
@@ -1976,11 +1977,12 @@ export function CobranzaTab() {
           })}
           <div style={{ width: 1, height: 18, background: C.border, margin: '0 6px' }} />
           <Button
-            size="sm"
-            radius="full"
-            color={sortMora ? 'primary' : 'default'}
-            variant={sortMora ? 'solid' : 'bordered'}
-            onPress={() => setSortMora(s => !s)}
+            small
+            inline
+            rounded
+            outline={!sortMora}
+            onClick={() => setSortMora(s => !s)}
+            className="!w-auto"
             title="Ordenar por antigüedad de mora (mayor primero)"
           >
             {sortMora ? '↓ Mayor mora primero' : 'Ordenar por mora'}
@@ -2253,32 +2255,31 @@ const DebtorRow = memo(function DebtorRow({
         {hover && (
           <>
             <Button
-              isIconOnly
-              size="sm"
-              radius="sm"
-              variant="light"
-              color="success"
+              small
+              inline
+              clear
               title="Marcar pagado"
-              onPress={() => onPagar(debtor)}
+              onClick={() => onPagar(debtor)}
+              className="!w-auto !min-w-0 !px-2 !text-green-600"
             >✓</Button>
             <Button
-              isIconOnly
-              size="sm"
-              radius="sm"
-              variant="light"
-              color="primary"
+              small
+              inline
+              clear
               title={debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar'}
-              onPress={() => onPausar(debtor)}
+              onClick={() => onPausar(debtor)}
+              className="!w-auto !min-w-0 !px-2"
             >{debtor.estado === 'pausado' ? '▷' : '⏸'}</Button>
           </>
         )}
         <Button
-          size="sm"
-          radius="md"
-          color="primary"
-          variant="flat"
+          small
+          inline
+          rounded
+          tonal
           title="Llamar ahora"
-          onPress={() => onLlamar(debtor)}
+          onClick={() => onLlamar(debtor)}
+          className="!w-auto"
         >
           📞 Llamar
         </Button>
