@@ -156,6 +156,11 @@ interface Debtor {
   saldo_pendiente?: number;
   status_softseguros?: string;   // ya_vencidos | proximos_a_vencer
   last_synced?: string;
+  // Exclusión de la campaña (informe §2): entidades estatales las gestiona un
+  // humano — el bot nunca las marca. Editable (falsos positivos se liberan).
+  no_llamar?: boolean;
+  no_llamar_motivo?: string;
+  tipo_entidad?: 'estatal' | 'privada';
 }
 
 type EstadoFilter = Debtor['estado'] | null;
@@ -405,6 +410,25 @@ function DebtorModal({
         onClose();
       } else {
         showToast('Error al eliminar');
+      }
+    } catch { showToast('Error de conexión'); }
+    finally { setActing(false); }
+  };
+
+  const handleToggleNoLlamar = async () => {
+    const nuevo = !debtor.no_llamar;
+    setActing(true);
+    try {
+      const r = await apiFetch(`/api/cobranza/debtors/${debtor._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ no_llamar: nuevo }),
+      });
+      if (r.ok) {
+        onAction(debtor._id, { no_llamar: nuevo, tipo_entidad: nuevo ? 'estatal' : 'privada' });
+        showToast(nuevo ? 'Excluido: el bot no lo llamará' : 'Liberado: vuelve a la campaña');
+      } else {
+        showToast('Error al actualizar');
       }
     } catch { showToast('Error de conexión'); }
     finally { setActing(false); }
@@ -723,6 +747,13 @@ function DebtorModal({
                 { label: 'Marcar pagado', onClick: handlePagar, color: 'green' },
                 { label: debtor.estado === 'pausado' ? 'Reactivar' : 'Pausar', onClick: handlePausar, color: 'indigo' },
                 { label: 'Eliminar', onClick: handleEliminar, color: 'red' },
+                // Exclusión informe §2: entidades estatales / no llamar. Liberar
+                // un falso positivo del clasificador también pasa por aquí.
+                {
+                  label: debtor.no_llamar ? '🏛 Permitir llamadas' : '🏛 No llamar (estatal)',
+                  onClick: handleToggleNoLlamar,
+                  color: debtor.no_llamar ? 'green' : 'gray',
+                },
               ].map(({ label, onClick, color }) => (
                 <Button key={label} onClick={onClick} disabled={acting} variant="light" color={color} size="sm">
                   {label}
@@ -2098,6 +2129,14 @@ const DebtorRow = memo(function DebtorRow({
           {isSS && debtor.ramo_nombre && (
             <span style={{ fontFamily: C.SG, fontSize: 10, fontWeight: 700, color: C.teal, background: C.tealBg, borderRadius: 5, padding: '1px 6px' }}>
               {debtor.ramo_nombre}
+            </span>
+          )}
+          {debtor.no_llamar && (
+            <span
+              title="Entidad estatal / excluido — el bot no lo llama; gestión manual (informe §2). Se puede liberar desde el detalle."
+              style={{ fontFamily: C.SG, fontSize: 10, fontWeight: 700, color: C.muted, background: C.s3, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '1px 6px' }}
+            >
+              🏛 NO LLAMAR
             </span>
           )}
           {isSS && debtor.numero_poliza && <span>· {debtor.numero_poliza}</span>}

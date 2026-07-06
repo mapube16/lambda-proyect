@@ -902,6 +902,17 @@ async def run_cartera_sync(
                 if await debtor_crud.mark_debtor_paid_by_softseguros_pago_id(db, user_id, pid):
                     marked_paid += 1
 
+        # Entidades estatales (informe §2): clasificar lo nuevo/pendiente para
+        # que el dispatcher nunca las marque. Best-effort — un fallo del
+        # clasificador jamás tumba el sync.
+        try:
+            from cobranza.entidad_estatal import run_clasificacion
+            cls = await run_clasificacion(db, user_id)
+            if cls["clasificados"]:
+                logger.info("run_cartera_sync clasificacion estatal user=%s %s", user_id, cls)
+        except Exception:  # noqa: BLE001
+            logger.exception("clasificacion estatal fallo (no fatal) user_id=%s", user_id)
+
         now = _utcnow()
         await db.softseguros_sync_state.update_one(
             {"user_id": user_id},

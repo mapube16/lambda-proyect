@@ -238,6 +238,7 @@ async def plan_intentos_job() -> None:
             cursor = db.debtors.find({
                 "user_id": user_id,
                 "is_active": {"$ne": False},
+                "no_llamar": {"$ne": True},   # entidades estatales / opt-out (informe SS2)
                 "estado": {"$in": list(CALLABLE_ESTADOS)},
                 "proximo_intento_at": None,
             })
@@ -310,6 +311,7 @@ async def dispatch_intentos_job() -> None:
             due = await db.debtors.find({
                 "user_id": user_id,
                 "is_active": {"$ne": False},
+                "no_llamar": {"$ne": True},   # entidades estatales / opt-out (informe SS2)
                 "estado": {"$in": list(CALLABLE_ESTADOS)},
                 "proximo_intento_at": {"$lte": now},
             }).to_list(length=500)

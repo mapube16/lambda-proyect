@@ -67,6 +67,9 @@ class DebtorPatch(BaseModel):
     monto: Optional[float] = None
     vencimiento: Optional[str] = None  # "YYYY-MM-DD"
     notas: Optional[str] = None
+    # Override humano de la exclusión (informe §2): liberar un falso positivo
+    # del clasificador de entidades estatales, o excluir manualmente a alguien.
+    no_llamar: Optional[bool] = None
 
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -282,6 +285,7 @@ async def jornada_hoy(current_user: dict = Depends(get_current_user)):
         {
             "user_id": user_id,
             "is_active": {"$ne": False},
+            "no_llamar": {"$ne": True},  # entidades estatales / opt-out (informe §2)
             "estado": {"$in": list(CALLABLE_ESTADOS)},
         },
         {
@@ -620,6 +624,14 @@ async def patch_debtor_endpoint(
             )
     if body.notas is not None:
         patch["notas"] = body.notas
+    if body.no_llamar is not None:
+        # Decisión humana: queda estampada como manual para que el clasificador
+        # automático NUNCA la vuelva a tocar (run_clasificacion salta docs con
+        # tipo_entidad ya definido).
+        patch["no_llamar"] = body.no_llamar
+        patch["no_llamar_motivo"] = "manual" if body.no_llamar else None
+        patch["tipo_entidad"] = "estatal" if body.no_llamar else "privada"
+        patch["clasificado_por"] = "manual"
 
     try:
         updated = await update_debtor(db, user_id, debtor_id, patch)
