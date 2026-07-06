@@ -10,10 +10,11 @@ Clasificación en 2 capas, cacheada por deudor (se clasifica UNA vez):
   1. REGEX (gratis, determinista): patrones inequívocos de entidad pública
      colombiana (MUNICIPIO, ALCALDÍA, E.S.E., HOSPITAL, PERSONERÍA…).
   2. LLM juez (modelo barato): solo los nombres que el regex no resolvió, en
-     lotes. Va por OPENROUTER (mismo gateway que usa landa-agent-service —
-     modelo cambiable por env sin deploy) con fallback a Gemini directo
-     (GOOGLE_API_KEY, que ya existe en el Railway de voz). Sin ninguna key
-     los ambiguos quedan sin clasificar y se reintentan en el siguiente sync.
+     lotes. Va por GEMINI directo (GOOGLE_API_KEY, la misma key que usa ARIA
+     en voice_pipecat.py — ya existe en el Railway de voz) con fallback a
+     OPENROUTER (mismo gateway que usa landa-agent-service, útil si el día de
+     mañana la key de Gemini rota o se agota su cuota). Sin ninguna key los
+     ambiguos quedan sin clasificar y se reintentan en el siguiente sync.
 
 Resultado en el deudor:
   tipo_entidad: "estatal" | "privada"
@@ -107,45 +108,12 @@ def _parse_bools(text: str, n: int) -> Optional[list]:
     return None
 
 
-async def clasificar_lote_llm(nombres: list) -> Optional[list]:
-    """
-    Clasifica un lote de nombres → lista de bool (True = entidad estatal).
-    OpenRouter primero (OPENROUTER_API_KEY); fallback Gemini directo
-    (GOOGLE_API_KEY). Devuelve None sin key o si el request falla (los
-    deudores quedan sin clasificar y se reintentan en el siguiente sync).
-    """
-    if not nombres:
-        return None
-    import httpx
-
-    prompt = _prompt(nombres)
-
-    # ── Vía 1: OpenRouter (mismo gateway que landa-agent-service) ──────────────
-    or_key = os.getenv("OPENROUTER_API_KEY")
-    if or_key:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {or_key}"},
-                    json={
-                        "model": LLM_MODEL,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0,
-                    },
-                )
-                r.raise_for_status()
-                out = _parse_bools(r.json()["choices"][0]["message"]["content"], len(nombres))
-                if out is not None:
-                    return out
-                logger.warning("[estatal] OpenRouter devolvió JSON inválido — probando fallback")
-        except Exception as exc:  # noqa: BLE001 — clasificar no puede tumbar el sync
-            logger.warning("[estatal] OpenRouter failed: %s — probando fallback Gemini", exc)
-
-    # ── Vía 2: Gemini directo (key ya presente en el Railway de voz) ───────────
+async def _clasificar_gemini(prompt: str, n: int) -> Optional[list]:
+    """Vía primaria: Gemini directo (misma GOOGLE_API_KEY que usa ARIA en voz)."""
     g_key = os.getenv("GOOGLE_API_KEY")
     if not g_key:
         return None
+    import httpx
     gemini_model = LLM_MODEL.split("/", 1)[-1]
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -162,12 +130,50 @@ async def clasificar_lote_llm(nombres: list) -> Optional[list]:
                 },
             )
             r.raise_for_status()
-            return _parse_bools(
-                r.json()["candidates"][0]["content"]["parts"][0]["text"], len(nombres)
-            )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[estatal] Gemini fallback failed: %s", exc)
+            return _parse_bools(r.json()["candidates"][0]["content"]["parts"][0]["text"], n)
+    except Exception as exc:  # noqa: BLE001 — clasificar no puede tumbar el sync
+        logger.warning("[estatal] Gemini failed: %s — probando fallback OpenRouter", exc)
         return None
+
+
+async def _clasificar_openrouter(prompt: str, n: int) -> Optional[list]:
+    """Vía de respaldo: OpenRouter (mismo gateway que landa-agent-service)."""
+    or_key = os.getenv("OPENROUTER_API_KEY")
+    if not or_key:
+        return None
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {or_key}"},
+                json={
+                    "model": LLM_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                },
+            )
+            r.raise_for_status()
+            return _parse_bools(r.json()["choices"][0]["message"]["content"], n)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[estatal] OpenRouter fallback failed: %s", exc)
+        return None
+
+
+async def clasificar_lote_llm(nombres: list) -> Optional[list]:
+    """
+    Clasifica un lote de nombres → lista de bool (True = entidad estatal).
+    Gemini primero (GOOGLE_API_KEY); fallback OpenRouter (OPENROUTER_API_KEY).
+    Devuelve None sin ninguna key o si ambos requests fallan (los deudores
+    quedan sin clasificar y se reintentan en el siguiente sync).
+    """
+    if not nombres:
+        return None
+    prompt = _prompt(nombres)
+    out = await _clasificar_gemini(prompt, len(nombres))
+    if out is not None:
+        return out
+    return await _clasificar_openrouter(prompt, len(nombres))
 
 
 # ── Orquestación: clasifica lo pendiente y marca no_llamar ─────────────────────
