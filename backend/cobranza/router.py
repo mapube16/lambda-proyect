@@ -938,6 +938,12 @@ async def llamar_ahora(
     if debtor is None:
         raise HTTPException(status_code=404, detail="Debtor not found")
 
+    if debtor.get("no_llamar"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Este deudor no se gestiona por el bot ({debtor.get('no_llamar_motivo') or 'no_llamar'}).",
+        )
+
     if not (test and is_dev) and not force:
         # Ley 2300: one contact per day — return 409 so frontend can show modal
         if has_been_contacted_today(debtor):

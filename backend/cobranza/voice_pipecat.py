@@ -377,16 +377,6 @@ async def run_bot(
         required=["reason"],
     )
 
-    update_debtor_tool = FunctionSchema(
-        name="update_debtor",
-        description="Actualiza el estado o campos del deudor en la base de datos.",
-        properties={
-            "debtor_id": {"type": "string", "description": "ID del deudor"},
-            "estado": {"type": "string", "description": "Nuevo estado: promesa_de_pago, contactado, sin_contacto, escalado"},
-        },
-        required=["debtor_id", "estado"],
-    )
-
     send_whatsapp_tool = FunctionSchema(
         name="send_whatsapp",
         # SECURITY: the model does NOT choose the recipient. We always send to
@@ -433,7 +423,9 @@ async def run_bot(
             "Escala el caso a un asesor humano. Usala SIEMPRE que el deudor pida "
             "hablar con una persona, un humano, un asesor, un agente, o 'alguien "
             "de verdad' — o cuando tenga una situacion especial que tu no puedas "
-            "resolver (disputa del monto, reclamo legal, caso de salud). Despues "
+            "resolver (disputa del monto, reclamo legal, caso de salud), o pregunte "
+            "por las COBERTURAS de SU poliza especifica, cotizaciones de un seguro "
+            "nuevo, modificaciones, cancelaciones, o quejas/reclamaciones. Despues "
             "de llamarla, confirma al deudor que un asesor lo contactara, "
             "despidete, y llama end_call."
         ),
@@ -593,7 +585,7 @@ async def run_bot(
     )
 
     tools_schema = ToolsSchema(standard_tools=[
-        end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool,
+        end_call_tool, send_whatsapp_tool, verify_identity_tool,
         escalate_tool, get_policy_info_tool, search_knowledge_tool,
         notify_payment_claim_tool, reagendar_tool,
         solicitar_link_cupon_tool, registrar_opt_out_tool,
@@ -847,21 +839,6 @@ async def run_bot(
             await asyncio.sleep(POLL)
         logger.info("[VOICE] end_call: farewell done, cancelling pipeline (hard hangup)")
         await task.cancel()
-
-    async def _handle_update_debtor(params):
-        """update_debtor: patch debtor estado/fields via CobranzaOrchestrator."""
-        # Same as escalate: trust the in-scope debtor's _id, not the model's guess.
-        debtor_id = str(debtor.get("_id", "")) or params.arguments.get("debtor_id", "")
-        estado = params.arguments.get("estado", "")
-        logger.info("[VOICE] update_debtor: debtor_id=%s estado=%s", debtor_id, estado)
-        result = {"ok": False, "error": "orchestrator unavailable"}
-        if orchestrator and debtor_id:
-            try:
-                result = await orchestrator.update_debtor(debtor_id, {"estado": estado})
-            except Exception as exc:
-                logger.error("[VOICE] update_debtor error: %s", exc)
-                result = {"ok": False, "error": str(exc)[:100]}
-        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_send_whatsapp(params):
         """send_whatsapp: enqueue WhatsApp message to the DEBTOR via orchestrator.
@@ -1167,7 +1144,6 @@ async def run_bot(
     # search_knowledge, verify_identity) stay cancellable — re-running them is
     # harmless and aborting them frees the turn faster.
     llm.register_function("end_call", _handle_end_call, cancel_on_interruption=False)
-    llm.register_function("update_debtor", _handle_update_debtor, cancel_on_interruption=False)
     llm.register_function("send_whatsapp", _handle_send_whatsapp, cancel_on_interruption=False)
     llm.register_function("escalate", _handle_escalate, cancel_on_interruption=False)
     llm.register_function("verify_identity", _handle_verify_identity)

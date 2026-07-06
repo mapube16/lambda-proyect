@@ -239,6 +239,9 @@ async def plan_intentos_job() -> None:
                 "user_id": user_id,
                 "is_active": {"$ne": False},
                 "no_llamar": {"$ne": True},   # entidades estatales / opt-out (informe SS2)
+                # Sin tipo_entidad resuelto (regex+LLM) no sabemos si es estatal — no
+                # se planifica hasta que la clasificación termine (ver entidad_estatal.py).
+                "tipo_entidad": {"$ne": None},
                 "estado": {"$in": list(CALLABLE_ESTADOS)},
                 "proximo_intento_at": None,
             })
@@ -325,6 +328,8 @@ async def dispatch_intentos_job() -> None:
                 "user_id": user_id,
                 "is_active": {"$ne": False},
                 "no_llamar": {"$ne": True},   # entidades estatales / opt-out (informe SS2)
+                # Mismo criterio que el planner: sin clasificar todavía, no se marca.
+                "tipo_entidad": {"$ne": None},
                 "estado": {"$in": list(CALLABLE_ESTADOS)},
                 "proximo_intento_at": {"$lte": now},
             }).to_list(length=500)

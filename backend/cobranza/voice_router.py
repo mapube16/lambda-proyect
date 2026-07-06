@@ -273,7 +273,7 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
     """Update debtor status and save call history after Pipecat pipeline ends."""
     try:
         # El estado se relee de la DB: las tools de la llamada (reagendar_llamada,
-        # update_debtor→promesa, escalate, notify_payment_claim) escriben durante
+        # informar_fecha_pago, escalate, notify_payment_claim) escriben durante
         # la conversación y el dict en memoria quedó en 'llamando' — usarlo
         # pisaba esos estados con 'contactado' al colgar.
         debtor_oid = ObjectId(debtor["_id"]) if isinstance(debtor["_id"], str) else debtor["_id"]
