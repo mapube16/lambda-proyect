@@ -134,6 +134,26 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
             )
             return
 
+        # Gate por fecha_activacion — mismo re-check "justo antes de marcar"
+        # que el kill-switch de arriba (defensa en profundidad: una tarea
+        # pudo haber quedado encolada de un tick anterior al gate).
+        from cobranza.config_cache import get_tenant_config
+        _cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
+        _fecha_act = (_cfg.get("volumen") or {}).get("fecha_activacion")
+        if _fecha_act:
+            import pytz as _pytz_ac
+            _hoy = datetime.now(_pytz_ac.timezone("America/Bogota")).date().isoformat()
+            if _hoy < _fecha_act:
+                logger.warning(
+                    "[scheduler] fecha_activacion=%s aún no llega (hoy=%s) — abortando llamada a debtor %s",
+                    _fecha_act, _hoy, debtor["_id"],
+                )
+                await db.debtors.update_one(
+                    {"_id": debtor["_id"]},
+                    {"$set": {"estado": "pendiente", "updated_at": datetime.now(timezone.utc)}},
+                )
+                return
+
         # Paquete de minutos: sin saldo el tenant no marca (el job sigue vivo
         # para otros tenants; el deudor vuelve a pendiente).
         from cobranza.minutes import MinutesExhaustedError, require_saldo

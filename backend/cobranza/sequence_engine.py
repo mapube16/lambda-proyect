@@ -290,11 +290,19 @@ async def dispatch_intentos_job() -> None:
         try:
             cfg = await _cobranza_cfg(user_id)
             horarios, volumen = cfg.get("horarios") or {}, cfg.get("volumen") or {}
-            if not is_within_tenant_franjas(horarios, now):
-                continue
 
             today_local = now.astimezone(_tz(horarios)).date()
             fecha = today_local.isoformat()
+
+            # Gate DURO por fecha (independiente del kill-switch manual): antes
+            # de fecha_activacion, este tenant no marca a NADIE. Defensa en
+            # profundidad para "no llamar antes del día acordado con el cliente".
+            fecha_act = volumen.get("fecha_activacion")
+            if fecha_act and fecha < fecha_act:
+                continue
+
+            if not is_within_tenant_franjas(horarios, now):
+                continue
 
             # Cupo diario del tenant (jornada de arranque = mismo cupo, alto).
             stats = await db.cobranza_daily_stats.find_one({"user_id": user_id, "fecha": fecha})

@@ -137,6 +137,11 @@ class VolumenBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
     llamadas_por_dia: int = Field(30, ge=1, le=5000)
     distribucion: str = "uniforme"
+    # Gate DURO por fecha: antes de esta fecha, el dispatcher no marca a NADIE
+    # de este tenant — sin importar el kill-switch manual (defensa en
+    # profundidad: no depende de que alguien se acuerde de prender el switch
+    # el día correcto). None = sin gate (el kill-switch manual manda solo).
+    fecha_activacion: Optional[str] = None  # "YYYY-MM-DD"
 
 
 class EstrategiaBlock(BaseModel):
