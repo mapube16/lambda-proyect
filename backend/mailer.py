@@ -341,7 +341,7 @@ def _render_staff_summary(
 
 def _get_client():
     from mailersend import MailerSendClient
-  api_key = _env_clean("MAILERSEND_API_KEY")
+    api_key = _env_clean("MAILERSEND_API_KEY")
     if not api_key:
         raise RuntimeError("MAILERSEND_API_KEY not configured")
     return MailerSendClient(api_key=api_key)
@@ -361,10 +361,10 @@ def _send(
     """Send one email via MailerSend. Returns HTTP status code."""
     from mailersend import EmailBuilder, EmailContact
 
-  from_email = _validate_email(from_email, "MAILERSEND_FROM_EMAIL")
-  to_email = _validate_email(to_email, "to_email")
-  if reply_to_email:
-    reply_to_email = _validate_email(reply_to_email, "reply_to_email")
+    from_email = _validate_email(from_email, "MAILERSEND_FROM_EMAIL")
+    to_email = _validate_email(to_email, "to_email")
+    if reply_to_email:
+        reply_to_email = _validate_email(reply_to_email, "reply_to_email")
 
     builder = (
         EmailBuilder()
@@ -399,7 +399,7 @@ async def send_welcome_email(
     login_url: str = "http://localhost:5173",
 ) -> None:
     """Send onboarding welcome email to the new client."""
-  from_email = _env_clean("MAILERSEND_FROM_EMAIL", "noreply@isomorph.co")
+    from_email = _env_clean("MAILERSEND_FROM_EMAIL", "noreply@isomorph.co")
     from_name = "Isomorph"
     subject, html = _render_welcome(client_email, client_password, agents, campaign, business_summary, login_url)
     _send(from_email, from_name, client_email, campaign.get("nombre_remitente", ""), subject, html)
@@ -587,7 +587,7 @@ async def send_staff_summary(
     campaign: dict,
 ) -> None:
     """Send a configuration summary to the Isomorph staff email."""
-  from_email = _env_clean("MAILERSEND_FROM_EMAIL", "noreply@isomorph.co")
-  staff_email = _env_clean("MAILERSEND_STAFF_EMAIL", staff_email)
+    from_email = _env_clean("MAILERSEND_FROM_EMAIL", "noreply@isomorph.co")
+    staff_email = _env_clean("MAILERSEND_STAFF_EMAIL", staff_email)
     subject, html = _render_staff_summary(client_email, business_summary, agents, campaign)
     _send(from_email, "Isomorph Platform", staff_email, "Staff Isomorph", subject, html)
