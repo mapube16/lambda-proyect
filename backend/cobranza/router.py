@@ -399,6 +399,46 @@ async def atender_alerta(alerta_id: str, current_user: dict = Depends(get_curren
     return {"ok": True}
 
 
+# ── Reportes diario/semanal (informe §12) ───────────────────────────────────
+
+@router.get("/reportes/preview")
+async def preview_reporte(
+    tipo: str = Query("diario", pattern="^(diario|semanal)$"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Vista previa (sin enviar email) — métricas + síntesis reales del período."""
+    from datetime import timedelta
+    from cobranza import reports
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    if tipo == "diario":
+        hoy = datetime.now(reports.COLOMBIA_TZ).date()
+        start, end = reports._dia_utc_range(hoy)
+        metrics = await reports.aggregate_metrics(db, user_id, start, end, hoy)
+    else:
+        hoy = datetime.now(reports.COLOMBIA_TZ).date()
+        start, _ = reports._dia_utc_range(hoy - timedelta(days=6))
+        _, end = reports._dia_utc_range(hoy)
+        metrics = await reports.aggregate_metrics(db, user_id, start, end, hoy)
+    muestras = await reports._muestras_del_dia(db, user_id, start, end)
+    qualitative = await reports.synthesize_qualitative(muestras)
+    return {"metrics": metrics, "qualitative": qualitative}
+
+
+@router.post("/reportes/enviar-ahora")
+async def enviar_reporte_ahora(
+    tipo: str = Query("diario", pattern="^(diario|semanal)$"),
+    staff: dict = Depends(require_staff),
+):
+    """STAFF ONLY: dispara el reporte fuera del cron (prueba/recuperación de un envío perdido)."""
+    from cobranza import reports
+    user_id = str(staff["user_id"])
+    db = get_db()
+    if tipo == "diario":
+        return await reports.run_daily_report(db, user_id)
+    return await reports.run_weekly_report(db, user_id)
+
+
 @router.get("/killswitch")
 async def get_killswitch(current_user: dict = Depends(require_staff)):
     """Return the current state of the automated-dialing master switch."""

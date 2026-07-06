@@ -73,6 +73,8 @@ async def lifespan(app: FastAPI):
     from landa.scheduler import scheduler as _sched
     from cobranza.campaign_scheduler import register_cobranza_jobs
     register_cobranza_jobs(_sched)
+    from cobranza.report_scheduler import register_report_jobs
+    register_report_jobs(_sched)
 
     # Phase 18: SOFTSEGUROS daily sync scheduler (must run after init_db).
     try:

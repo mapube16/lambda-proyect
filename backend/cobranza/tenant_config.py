@@ -156,6 +156,7 @@ COBRANZA_BLOCK_KEYS = (
     "volumen",              # llamadas/día + distribución
     "estrategia",           # tono + guion (4 secciones)
     "alertas",              # canales de entrega + tabla routing §11 (área→responsable→tel→keywords)
+    "reportes",             # destinatarios (emails) + nombre de la empresa para el reporte §12
 )
 
 
