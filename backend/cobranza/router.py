@@ -373,6 +373,32 @@ async def staff_recargar_minutos(
     return saldo
 
 
+# ── Alertas tipadas (informe §7) ────────────────────────────────────────────
+
+@router.get("/alertas")
+async def get_alertas(
+    solo_pendientes: bool = Query(True),
+    current_user: dict = Depends(get_current_user),
+):
+    """Cola de alertas del tenant — lo que el colaborador revisa a diario (informe §12)."""
+    from cobranza.alerts import listar_alertas
+    items = await listar_alertas(get_db(), str(current_user["user_id"]), solo_pendientes=solo_pendientes)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/alertas/{alerta_id}/atender")
+async def atender_alerta(alerta_id: str, current_user: dict = Depends(get_current_user)):
+    """Marca una alerta como atendida (el colaborador ya la gestionó)."""
+    from cobranza.alerts import marcar_atendida
+    ok = await marcar_atendida(
+        get_db(), str(current_user["user_id"]), alerta_id,
+        actor=str(current_user.get("email") or current_user["user_id"]),
+    )
+    if not ok:
+        raise HTTPException(404, "Alerta no encontrada")
+    return {"ok": True}
+
+
 @router.get("/killswitch")
 async def get_killswitch(current_user: dict = Depends(require_staff)):
     """Return the current state of the automated-dialing master switch."""

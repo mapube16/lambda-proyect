@@ -150,6 +150,8 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
         unique=True, partialFilterExpression={"tipo": "consumo"},
     )
     await _safe_index(db.cobranza_minutos_ledger, [("user_id", 1), ("created_at", -1)])
+    # ── Alertas tipadas (informe §7) ──────────────────────────────────────────
+    await _safe_index(db.cobranza_alertas, [("user_id", 1), ("atendida", 1), ("created_at", -1)])
     # ── Phase 25: Agentic Multi-Tenant Architecture indexes ──────────────────
     await _safe_index(db.tenant_configs, "user_id", unique=True)
     await _safe_index(db.agent_instances, "user_id", unique=True)

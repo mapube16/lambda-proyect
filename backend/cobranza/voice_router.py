@@ -339,6 +339,15 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
         logger.info("[PostCall] %s -> estado=%s, intentos=%d, duration=%ds",
                      result.call_sid, new_estado, new_intentos, result.duration_seconds)
 
+        # Agotó los intentos sin contacto → alerta a cartera para seguimiento
+        # manual (informe §7: "cliente que no contestó ninguna llamada...").
+        if new_estado == "agotado":
+            try:
+                from cobranza.alerts import crear_alerta
+                await crear_alerta(db, str(debtor["user_id"]), debtor, "sin_contacto_agotado")
+            except Exception:
+                logger.exception("[PostCall] alerta sin_contacto_agotado falló (no fatal)")
+
         # Push real-time WebSocket event to dashboard
         try:
             await _ws_manager.send_to_user(

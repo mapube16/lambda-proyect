@@ -1451,6 +1451,41 @@ export function CobranzaTab() {
     } catch { /* noop */ }
   }, [addToast, fetchDebtors]);
 
+  // ── Alertas tipadas (informe §7/§12) ───────────────────────────────────────
+  type Alerta = {
+    _id: string; tipo: string; detalle?: string; debtor_nombre?: string;
+    debtor_telefono?: string; numero_poliza?: string; area?: string;
+    responsable?: string; created_at: string;
+  };
+  const ALERTA_TITULOS: Record<string, string> = {
+    asesor_humano: 'Pide un asesor', consulta_fuera_alcance: 'Consulta fuera de alcance',
+    oportunidad_comercial: 'Oportunidad comercial', pago_reportado: 'Reporta que ya pagó',
+    solicitud_link_cupon: 'Pide link/cupón', opt_out: 'No desea más llamadas',
+    numero_equivocado: 'Número equivocado', fecha_estimada_pago: 'Fecha estimada de pago',
+    sin_contacto_agotado: 'Agotó intentos sin contacto',
+  };
+  const [alertasOpen, setAlertasOpen] = useState(false);
+  const [alertas, setAlertas] = useState<Alerta[]>([]);
+  const [alertasLoading, setAlertasLoading] = useState(false);
+  const fetchAlertas = useCallback(async () => {
+    setAlertasLoading(true);
+    try {
+      const r = await apiFetch('/api/cobranza/alertas?solo_pendientes=true');
+      if (r.ok) setAlertas((await r.json()).items || []);
+    } catch { /* keep prev */ }
+    finally { setAlertasLoading(false); }
+  }, []);
+  useEffect(() => { fetchAlertas(); const id = window.setInterval(fetchAlertas, 60000); return () => window.clearInterval(id); }, [fetchAlertas]);
+  const atenderAlerta = useCallback(async (a: Alerta) => {
+    try {
+      const r = await apiFetch(`/api/cobranza/alertas/${a._id}/atender`, { method: 'POST' });
+      if (r.ok) {
+        setAlertas(prev => prev.filter(x => x._id !== a._id));
+        addToast({ id: `alerta-${a._id}`, message: 'Alerta marcada como atendida', ok: true });
+      }
+    } catch { /* noop */ }
+  }, [addToast]);
+
   // ── Whole-cartera counts per estado (KPIs) ─────────────────────────────────
   const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number } | null>(null);
   const fetchFunnel = useCallback(async () => {
@@ -1883,6 +1918,61 @@ export function CobranzaTab() {
                     </div>
                   );
                 })
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Alertas tipadas (informe §7) — link/cupón, ya pagó, opt-out, número
+            equivocado, fecha de pago, oportunidad comercial, agotó intentos */}
+        <div className="card" style={{ marginBottom: 18, overflow: 'hidden' }}>
+          <UnstyledButton
+            onClick={() => setAlertasOpen(o => !o)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '13px 18px', cursor: 'pointer',
+            }}
+          >
+            <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 13.5, color: C.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
+              🔔 Alertas
+              {alertas.length > 0 && (
+                <span style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 11, color: '#fff', background: C.pink, borderRadius: 999, padding: '1px 8px' }}>
+                  {alertas.length}
+                </span>
+              )}
+            </span>
+            <span style={{ color: C.faint, fontSize: 12 }}>
+              {alertasOpen ? '▲ ocultar' : '▼ revisar y validar'}
+            </span>
+          </UnstyledButton>
+          {alertasOpen && (
+            <div style={{ borderTop: `1px solid ${C.border}`, maxHeight: 380, overflowY: 'auto' }}>
+              {alertasLoading ? (
+                <div style={{ padding: 18, fontFamily: C.IN, fontSize: 12.5, color: C.muted }}>Cargando…</div>
+              ) : alertas.length === 0 ? (
+                <div style={{ padding: 18, fontFamily: C.IN, fontSize: 12.5, color: C.muted }}>
+                  Sin alertas pendientes.
+                </div>
+              ) : (
+                alertas.map(a => (
+                  <div key={a._id} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '9px 18px',
+                    borderBottom: `1px solid ${C.border}`,
+                  }}>
+                    <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 10, color: C.orange, background: C.orangeBg, borderRadius: 5, padding: '2px 7px', whiteSpace: 'nowrap' }}>
+                      {ALERTA_TITULOS[a.tipo] || a.tipo}
+                    </span>
+                    <span style={{ fontFamily: C.SG, fontWeight: 600, fontSize: 12.5, color: C.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {a.debtor_nombre || 'N/D'}
+                    </span>
+                    <span style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted, whiteSpace: 'nowrap', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {a.detalle || (a.responsable ? `→ ${a.responsable}` : '')}
+                    </span>
+                    <Button size="xs" variant="subtle" color="green" onClick={() => atenderAlerta(a)}>
+                      ✓ Atender
+                    </Button>
+                  </div>
+                ))
               )}
             </div>
           )}

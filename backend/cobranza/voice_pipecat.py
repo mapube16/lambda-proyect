@@ -532,10 +532,72 @@ async def run_bot(
         required=["fecha"],
     )
 
+    # ── Alertas tipadas del informe §7 (4 tools nuevas) ─────────────────────
+    solicitar_link_cupon_tool = FunctionSchema(
+        name="solicitar_link_cupon",
+        description=(
+            "Usala cuando el deudor pida explicitamente el LINK o el CUPON de pago "
+            "('mandeme el link', 'enviame el cupon', 'como hago para pagar'). Genera "
+            "una alerta inmediata al equipo de cartera para que lo envien manualmente "
+            "por WhatsApp (informe SS7). Luego confirma: 'Con mucho gusto. En breve "
+            "uno de nuestros colaboradores le enviara el {tipo} de pago a traves de "
+            "WhatsApp.'"
+        ),
+        properties={
+            "tipo": {"type": "string", "enum": ["link", "cupon"], "description": "Qué pidió: link o cupón"},
+        },
+        required=["tipo"],
+    )
+
+    registrar_opt_out_tool = FunctionSchema(
+        name="registrar_no_desea_llamadas",
+        description=(
+            "Usala SIEMPRE que el deudor diga EXPLICITAMENTE que no quiere que lo "
+            "vuelvan a llamar ('no me llame mas', 'dejeme en paz', 'no quiero que me "
+            "contacten'). Registra la solicitud, detiene TODAS las llamadas futuras a "
+            "este deudor, y alerta al equipo de DPG. Despues di: 'Entiendo senor, asi "
+            "lo hago. Que este bien.' y llama end_call."
+        ),
+        properties={},
+        required=[],
+    )
+
+    informar_fecha_pago_tool = FunctionSchema(
+        name="informar_fecha_pago",
+        description=(
+            "Usala cuando el deudor diga que VA A PAGAR en una fecha futura especifica "
+            "('pago el viernes', 'la proxima semana tengo la plata', 'pago el 15'). "
+            "Distinta de reagendar_llamada: esta es una PROMESA DE PAGO, no un cambio "
+            f"de horario de llamada. Hoy es {_hoy_co.isoformat()}; resuelve fechas "
+            "relativas ('el viernes') a la fecha exacta. Notifica a cartera."
+        ),
+        properties={
+            "fecha": {"type": "string", "description": "Fecha prometida de pago, formato YYYY-MM-DD"},
+        },
+        required=["fecha"],
+    )
+
+    oportunidad_comercial_tool = FunctionSchema(
+        name="registrar_oportunidad_comercial",
+        description=(
+            "Usala cuando el deudor manifieste interes en OTRO producto o poliza "
+            "('quiero asegurar otro carro', 'necesito un seguro de vida', 'cuanto "
+            "cuesta asegurar mi casa'), o detectes una oportunidad comercial en la "
+            "conversacion. Alerta al asesor comercial correspondiente. No interrumpe "
+            "el flujo de cobranza — sigue con el motivo original de la llamada."
+        ),
+        properties={
+            "detalle": {"type": "string", "description": "Que producto/interes manifesto el deudor, en sus palabras"},
+        },
+        required=["detalle"],
+    )
+
     tools_schema = ToolsSchema(standard_tools=[
         end_call_tool, update_debtor_tool, send_whatsapp_tool, verify_identity_tool,
         escalate_tool, get_policy_info_tool, search_knowledge_tool,
         notify_payment_claim_tool, reagendar_tool,
+        solicitar_link_cupon_tool, registrar_opt_out_tool,
+        informar_fecha_pago_tool, oportunidad_comercial_tool,
     ])
 
     # ── Gemini Live (STT + LLM + TTS all-in-one, 8kHz telephony) ────────
@@ -823,7 +885,12 @@ async def run_bot(
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_verify_identity(params):
-        """verify_identity: regex + LLM fallback identity check."""
+        """verify_identity: regex + LLM fallback identity check.
+
+        Si el resultado NIEGA explícitamente que sea el deudor ("numero
+        equivocado"), alerta a cartera para validar/actualizar el dato
+        (informe §7) — no solo queda como un dato de la llamada.
+        """
         utterance = params.arguments.get("utterance", "")
         debtor_name_arg = params.arguments.get("debtor_name", debtor_name)
         logger.info("[VOICE] verify_identity: utterance=%s", utterance[:50])
@@ -834,10 +901,30 @@ async def run_bot(
             except Exception as exc:
                 logger.error("[VOICE] verify_identity error: %s", exc)
                 result = {"confirmed": False, "error": str(exc)[:100]}
+        # confidence="high" en una negación = matcheó el regex DENY explícito
+        # ("no es aqui", "se equivoco", "numero incorrecto") — no una respuesta
+        # ambigua de baja confianza que solo cayó al fallback LLM.
+        if result.get("confirmed") is False and result.get("confidence") == "high":
+            await _fire_alerta("numero_equivocado", detalle=utterance[:200])
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
+    async def _fire_alerta(tipo: str, *, detalle: str = "", extra: dict = None) -> dict:
+        """Helper compartido: registra + envía una alerta tipada (informe §7/§11).
+        Nunca lanza — el llamador decide qué poner en el result_callback."""
+        if not user_id:
+            return {"ok": False, "error": "sin user_id"}
+        try:
+            from database import get_db
+            from cobranza.alerts import crear_alerta
+            doc = await crear_alerta(get_db(), user_id, debtor, tipo, detalle=detalle, extra=extra)
+            return {"ok": True, "alerta_id": doc.get("_id"), "area": doc.get("area"), "responsable": doc.get("responsable")}
+        except Exception as exc:
+            logger.error("[VOICE] _fire_alerta(%s) error: %s", tipo, exc)
+            return {"ok": False, "error": str(exc)[:100]}
+
     async def _handle_escalate(params):
-        """escalate: mark debtor escalado and notify dashboard."""
+        """escalate: mark debtor escalado, clasifica área (informe §11) y alerta
+        por WhatsApp al responsable — no solo cambia el estado en el dashboard."""
         # Gemini doesn't know the Mongo _id — always fall back to the in-scope
         # debtor. Whatever id the model passes is ignored in favor of the real one.
         debtor_id = str(debtor.get("_id", "")) or params.arguments.get("debtor_id", "")
@@ -850,15 +937,17 @@ async def run_bot(
             except Exception as exc:
                 logger.error("[VOICE] escalate error: %s", exc)
                 result = {"ok": False, "error": str(exc)[:100]}
+        alerta = await _fire_alerta("consulta_fuera_alcance", detalle=reason)
+        result = {**result, **{f"alerta_{k}": v for k, v in alerta.items()}}
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_notify_payment_claim(params):
         """notify_payment_claim: debtor says they already paid.
 
         Two side effects: (1) mark the debtor pago_reportado so the auto-dialer
-        stops calling while the team reviews; (2) WhatsApp the DPG team the claim
-        so a human verifies the comprobante. We do NOT mark the debt as paid —
-        only the team can confirm after seeing the receipt.
+        stops calling while the team reviews; (2) alerta real al equipo (informe
+        §7) para que un humano verifique el comprobante. We do NOT mark the debt
+        as paid — only the team can confirm after seeing the receipt.
         """
         detalle = params.arguments.get("detalle", "el deudor reporta que ya pago")
         debtor_id = str(debtor.get("_id", ""))
@@ -866,30 +955,8 @@ async def run_bot(
         result = {"ok": False, "error": "orchestrator unavailable"}
         if orchestrator and debtor_id:
             try:
-                # 1) Park the debtor while the team reviews the receipt.
                 await orchestrator.update_debtor(debtor_id, {"estado": "pago_reportado"})
-                # 2) Notify the team's WhatsApp so a human checks it.
-                # Per-tenant value — MUST come from MongoDB tenant_config, never
-                # hardcoded/env. Accept a few key aliases for resilience.
-                team_phone = str(
-                    tenant_config.get("notification_whatsapp")
-                    or tenant_config.get("team_whatsapp")
-                    or ""
-                ).strip()
-                if team_phone:
-                    msg = (
-                        f"📩 Reporte de pago — revisar comprobante\n"
-                        f"Deudor: {debtor.get('nombre', 'N/D')}\n"
-                        f"Teléfono: {debtor.get('telefono', 'N/D')}\n"
-                        f"Póliza: {debtor.get('numero_poliza', 'N/D')}\n"
-                        f"Detalle: {detalle}"
-                    )
-                    await orchestrator.send_whatsapp(team_phone, msg)
-                    result = {"ok": True, "notified_team": True}
-                else:
-                    # No team number configured in tenant_config — still parked, but flag it.
-                    logger.warning("[VOICE] notify_payment_claim: tenant_config.notification_whatsapp not set — debtor parked but team NOT notified")
-                    result = {"ok": True, "notified_team": False, "warning": "team whatsapp not configured"}
+                result = await _fire_alerta("pago_reportado", detalle=detalle)
             except Exception as exc:
                 logger.error("[VOICE] notify_payment_claim error: %s", exc)
                 result = {"ok": False, "error": str(exc)[:100]}
@@ -1042,6 +1109,58 @@ async def run_bot(
             result = {"ok": False, "error": str(exc)[:100]}
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
+    async def _handle_solicitar_link_cupon(params):
+        """solicitar_link_cupon: alerta a cartera con nombre/tel/poliza/tipo/hora (informe §7)."""
+        tipo = params.arguments.get("tipo", "link")
+        logger.info("[VOICE] solicitar_link_cupon: tipo=%s debtor=%s", tipo, debtor.get("_id"))
+        result = await _fire_alerta("solicitud_link_cupon", detalle=f"Solicitó {tipo} de pago", extra={"tipo": tipo})
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
+
+    async def _handle_registrar_opt_out(params):
+        """registrar_no_desea_llamadas: detiene TODAS las llamadas futuras (mismo
+        flag no_llamar que usa la exclusión de entidades estatales) + alerta."""
+        logger.info("[VOICE] registrar_no_desea_llamadas: debtor=%s", debtor.get("_id"))
+        result = {"ok": False, "error": "orchestrator unavailable"}
+        if orchestrator:
+            try:
+                await orchestrator.update_debtor(str(debtor["_id"]), {
+                    "no_llamar": True,
+                    "no_llamar_motivo": "opt_out",
+                    "clasificado_por": "manual",
+                })
+                result = await _fire_alerta("opt_out")
+            except Exception as exc:
+                logger.error("[VOICE] registrar_no_desea_llamadas error: %s", exc)
+                result = {"ok": False, "error": str(exc)[:100]}
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
+
+    async def _handle_informar_fecha_pago(params):
+        """informar_fecha_pago: promesa de pago a fecha futura — distinta de
+        reagendar_llamada (esa reprograma LA LLAMADA, esta registra la promesa)."""
+        fecha_s = str(params.arguments.get("fecha", "")).strip()
+        logger.info("[VOICE] informar_fecha_pago: fecha=%s debtor=%s", fecha_s, debtor.get("_id"))
+        result = {"ok": False, "error": "fecha invalida"}
+        try:
+            d = _date.fromisoformat(fecha_s[:10])
+            if orchestrator:
+                await orchestrator.update_debtor(str(debtor["_id"]), {
+                    "estado": "promesa_de_pago",
+                    "fecha_promesa": d.isoformat(),
+                })
+                result = await _fire_alerta("fecha_estimada_pago", detalle=f"Pagaría el {d.isoformat()}")
+        except Exception as exc:
+            logger.error("[VOICE] informar_fecha_pago error: %s", exc)
+            result = {"ok": False, "error": str(exc)[:100]}
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
+
+    async def _handle_oportunidad_comercial(params):
+        """registrar_oportunidad_comercial: interés en otro producto → alerta al
+        asesor comercial (informe §7/§11), sin interrumpir el flujo de cobranza."""
+        detalle = params.arguments.get("detalle", "interés comercial detectado")
+        logger.info("[VOICE] registrar_oportunidad_comercial: debtor=%s detalle=%s", debtor.get("_id"), detalle[:80])
+        result = await _fire_alerta("oportunidad_comercial", detalle=detalle)
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
+
     # cancel_on_interruption=False for any handler with REAL side effects: with
     # barge-in enabled, the caller speaking mid-execution must NOT abort a DB
     # write or an outbound WhatsApp half-way. Read-only tools (get_policy_info,
@@ -1066,6 +1185,12 @@ async def run_bot(
     llm.register_function(
         "reagendar_llamada", _handle_reagendar_llamada, cancel_on_interruption=False
     )
+    # Alertas tipadas del informe §7 — todas con side effects reales (insertan
+    # en cobranza_alertas + WhatsApp saliente), no cancelables.
+    llm.register_function("solicitar_link_cupon", _handle_solicitar_link_cupon, cancel_on_interruption=False)
+    llm.register_function("registrar_no_desea_llamadas", _handle_registrar_opt_out, cancel_on_interruption=False)
+    llm.register_function("informar_fecha_pago", _handle_informar_fecha_pago, cancel_on_interruption=False)
+    llm.register_function("registrar_oportunidad_comercial", _handle_oportunidad_comercial, cancel_on_interruption=False)
 
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")

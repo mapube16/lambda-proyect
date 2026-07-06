@@ -251,6 +251,11 @@ async def plan_intentos_job() -> None:
                         {"$set": {"estado": "agotado", "updated_at": datetime.now(timezone.utc)}},
                     )
                     agotados += 1
+                    try:
+                        from cobranza.alerts import crear_alerta
+                        await crear_alerta(db, user_id, debtor, "sin_contacto_agotado")
+                    except Exception:
+                        logger.exception("[plan] alerta sin_contacto_agotado falló (no fatal)")
                 elif verdict == "cita":
                     await db.debtors.update_one(
                         {"_id": debtor["_id"]},
