@@ -89,17 +89,17 @@ esta sesión: sin código colgante, sin otras referencias.
 
 ### 🔴 BLOQUEANTES — pendientes al momento de este handoff
 
-1. **Nada está desplegado todavía.** Railway (proyecto `vigilant-celebration`, entorno `production`, servicio
-   único `lambda-proyect` — sirve TODA la plataforma, prospección B2B + DPG cobranza, no hay servicio dedicado)
-   despliega automático SOLO desde la rama `master`. La rama `eval/dpg-cobranza-microservice` tiene 43 commits
-   sobre `origin/master` (ya pusheados a GitHub), pero master no los tiene. Para salir en vivo hace falta
-   **mergear a master y pushear** (dispara el auto-deploy de Railway), o `railway up` directo desde la rama
-   (des-sincroniza el deploy del git de master, no recomendado). **Esto afecta a TODOS los tenants del
-   servicio compartido — el usuario ya dio luz verde explícita para proceder ("sigue porfa con el deploy y
-   demás") en el mensaje que motivó este handoff.**
+1. ~~**Nada está desplegado todavía.**~~ **RESUELTO Y VERIFICADO esta sesión.** Se mergeó
+   `eval/dpg-cobranza-microservice` (43 commits + 1 commit final de esta sesión) a `master` con
+   `--no-ff` y se pusheó a origin. Railway detectó el push y desplegó — **confirmado `status: SUCCESS`**
+   vía `railway status --json`, `commitHash` del deploy = `3da93fb...` (coincide con el HEAD de master).
+   De paso, el compile-check completo del árbol antes de pushear encontró un bug PREEXISTENTE (no
+   relacionado a DPG) en `backend/mailer.py`: 3 líneas con indentación rota (2 espacios en vez de 4) que
+   rompían el parseo del archivo — el endpoint de staff "enviar bienvenida a cliente" llevaba tiempo
+   devolviendo 500 en cada uso. Corregido y desplegado también (commit separado, ya en master).
    - Comando de verificación de estado Railway: `railway status --json` (CLI ya autenticado como
      `m.pulido1@uniandes.edu.co`, `railway whoami` confirma).
-   - Deploy actual en master: commit `99ca4b576decea03ca6495a3a198ff980b97cf0d` ("fix deploy in railway").
+   - Deploy actual en master (verificado en vivo): commit `3da93fb00cdd075d656dc279ac897400df0b1aac`.
 
 2. **Cambios sin commitear en el working tree** (al momento de este handoff, de la sesión de eval/fixes):
    - `M backend/cobranza/prompt_builder.py` — fix real: preguntas sobre coberturas de la póliza ESPECÍFICA del
@@ -117,18 +117,26 @@ esta sesión: sin código colgante, sin otras referencias.
      (ver el commit más reciente de la rama). Si ves esto y el working tree ya está limpio, este punto está
      resuelto — confirmar con `git log -3` y `git status`.**
 
-3. ~~**92% de deudores de DPG sin clasificar `tipo_entidad`**~~ **RESUELTO esta sesión.** Se agregó
-   `"tipo_entidad": {"$ne": None}` a los dos filtros de selección en `sequence_engine.py` (líneas ~241 y
-   ~327-330, `plan_intentos_job` y el dispatcher) — ahora ningún deudor sin clasificar es elegible para
-   marcado, sin importar si la clasificación LLM llega a tiempo o no. Efecto colateral IMPORTANTE a vigilar:
-   con esto, mientras la capa LLM no corra sobre los 573 ambiguos, el pool de marcado real puede quedar en
-   CERO (los únicos 49 clasificados hoy son todos "estatal", ya excluidos por `no_llamar`). `run_clasificacion`
-   se dispara automáticamente al final de cada sync de Softseguros (`softseguros/sync.py` línea ~909, best
-   effort, nunca tumba el sync) usando Gemini (`GOOGLE_API_KEY`, confirmado SET en Railway) con fallback a
-   OpenRouter. **Acción pendiente real**: una vez desplegado, forzar un `POST /api/debtors/sync-now` contra
-   PRODUCCIÓN (no localhost) para que la clasificación de los 573 corra ya, en vez de esperar al cron nocturno
-   — si no, el miércoles puede arrancar sin nadie realmente marcable. Verificar después con la query de conteo
-   de la sección 4 de este documento (o repetir el chequeo de Mongo).
+3. ~~**92% de deudores de DPG sin clasificar `tipo_entidad`**~~ **RESUELTO Y EJECUTADO esta sesión, con
+   resultado final verificado.** Se agregó `"tipo_entidad": {"$ne": None}` a los dos filtros de selección en
+   `sequence_engine.py` (líneas ~241 y ~327-330) — ningún deudor sin clasificar es elegible para marcado. Y
+   además, en vez de esperar al cron nocturno, se disparó la clasificación real YA MISMO usando
+   `railway run --service lambda-proyect python ...` (ejecuta local pero con las env vars reales de Railway,
+   incluyendo `GOOGLE_API_KEY` — no requiere tocar la API ni credenciales de login). Se corrió
+   `entidad_estatal.run_clasificacion` contra la Mongo de producción en 4 pasadas (cada 503 transitorio de
+   Gemini cortaba el lote a medias, reintentar es idempotente y seguro — solo toca `tipo_entidad: None`).
+   **Resultado final confirmado en Mongo (2026-07-05):**
+   - `estatal` = 67, `privada` = 510, sin clasificar = 45 (los 45 son TODOS `is_active: False` — pólizas
+     inactivas/canceladas, ya excluidas de cualquier marcado por ese motivo, así que no importan).
+   - **Pool real marcable HOY (activo + no_llamar≠true + tipo_entidad resuelto + estado callable) = 509
+     deudores.** No son 49, ni 0 — el miedo inicial (~92% bloqueados) era por falta de la segunda capa LLM,
+     que ya corrió. La cartera de DPG es abrumadoramente privada (510/577 clasificados = 88% privada), como
+     es de esperar para una aseguradora.
+   - Hallazgo lateral: la `OPENROUTER_API_KEY` configurada en Railway devuelve 401 Unauthorized (inválida o
+     revocada) — el fallback de la capa 2 está roto en la práctica. No bloqueó nada esta vez porque Gemini
+     solo falló transitoriamente (503) y los reintentos manuales lo resolvieron, pero si Gemini tiene un corte
+     real algún día, la clasificación quedaría atascada sin aviso claro. Pendiente: rotar/arreglar la
+     `OPENROUTER_API_KEY` en Railway, o aceptar el riesgo dado que es solo un fallback de un fallback.
 
 4b. **Hallazgo nuevo, RESUELTO esta sesión — `llamar_ahora` (botón manual "llamar ahora" del dashboard) no
    chequeaba `no_llamar` en absoluto.** A diferencia del dispatcher automático, este endpoint
@@ -182,19 +190,23 @@ esta sesión: sin código colgante, sin otras referencias.
    placeholder (no hace falta reescribir el historial de git con force-push si el repo es privado y de
    confianza, pero sigue siendo buena práctica rotarlo ya que estuvo expuesto).
 
-### ✅ Ya confirmado en orden (auditoría 2026-07-05)
-- Railway: CLI autenticado, proyecto `vigilant-celebration`, 2 servicios (`Redis` + `lambda-proyect`), deploy
-  source = `master`, dominio `my.landatech.org`.
+### ✅ Ya confirmado en orden (auditoría 2026-07-05, actualizado tras el deploy y la clasificación real)
+- **Deploy en vivo confirmado**: `master` en Railway corriendo commit `3da93fb`, `status: SUCCESS`.
+- **Clasificación de entidades estatales COMPLETA y verificada**: 67 estatal (no_llamar), 510 privada
+  (marcable), 45 sin clasificar (todas inactivas, irrelevantes). **509 deudores realmente marcables hoy.**
 - Kill switch: sin override en Mongo, `COBRANZA_AUTOCALL_ENABLED=false` en Railway → deshabilitado por
   defecto (correcto para pre-lanzamiento — **no cambiar esto hasta que el usuario decida activar
   explícitamente**, es independiente de desplegar el código).
 - `fecha_activacion=2026-07-08` confirmado en Mongo y respetado por el código.
+- `ENV=production` seteado en Railway (nuevo esta sesión) — cierra el hueco de `/auth/dev-token` y el bypass
+  de Ley 2300 en `llamar_ahora` que llevaba tiempo activo sin querer.
 - `LAMBDA_PROYECT_INTERNAL_TOKEN` y `GOOGLE_API_KEY` sí están en Railway.
 - Alertas: `canales=['whatsapp_responsable']` y las 8 áreas de §11 pobladas en `tenant_configs` de DPG.
 - Las 12 tools registradas limpio, sin código colgante de `update_debtor`.
 - `.env` nunca commiteado (ni root ni backend/), bien cubierto por `.gitignore`.
 - Sin TODO/FIXME/HACK real en `backend/cobranza/*.py`.
-- Los 43 commits de la rama eval ya están pusheados a `origin/eval/dpg-cobranza-microservice`.
+- `mailer.py` corregido (bug preexistente de indentación, no relacionado a DPG) — ya en producción.
+- Compile-check completo del backend: limpio (`python -m py_compile` sobre todo el árbol).
 
 ### 🟡 No bloqueante (post-lanzamiento)
 - Borrar `webhooks.py` (Vapi legacy, montado pero sin uso real) y los 3 archivos muertos
@@ -209,18 +221,19 @@ esta sesión: sin código colgante, sin otras referencias.
   pertenece a otra feature de la plataforma; confirmar antes de asumir que bloquea algo de DPG.
 - Rotar la API key de OpenAI que se pegó en texto plano en una sesión de chat anterior (independiente de
   este lanzamiento) — recordatorio pendiente, no verificable programáticamente.
+- `OPENROUTER_API_KEY` en Railway devuelve 401 Unauthorized — el fallback de la capa 2 del clasificador
+  estatal está roto en la práctica (ver sección 3 arriba). No bloqueó nada esta vez, pero conviene
+  rotarla/revisarla.
 
 ## 5. Estado de git al momento de este handoff
 
-- Rama actual: `eval/dpg-cobranza-microservice`.
-- `git rev-list --left-right --count origin/master...eval/dpg-cobranza-microservice` → `0  43` (master no
-  tiene nada que la rama no tenga; la rama tiene 43 commits de más, sin divergencia — simple fast-forward
-  desde el punto de ramificación).
-- Working tree: 3 archivos modificados + 1 nuevo sin trackear (ver bloqueante #2 arriba) — **sin commitear
-  al momento de este handoff**.
-- Todos los commits ya existentes están pusheados (`0 ahead, 0 behind` contra
-  `origin/eval/dpg-cobranza-microservice`).
-- Últimos 25 commits sin marcadores WIP/temp — historial limpio.
+- **`master` YA TIENE el merge** (commit `d38ea15`, `--no-ff`) + el fix de `mailer.py` (`3da93fb`) encima.
+  Pusheado a `origin/master` y desplegado en Railway (`status: SUCCESS`).
+- La rama `eval/dpg-cobranza-microservice` sigue existiendo (43 commits + el commit final de fixes de esta
+  sesión, `04d5c74`) — ya mergeada a master, se puede borrar cuando se quiera (no urgente).
+- Working tree en `master`: limpio, sin cambios pendientes.
+- Repo local actualmente parado en la rama `master` (no en la eval branch) — si retomás trabajo nuevo de
+  cobranza, considerá crear una rama nueva desde `master` en vez de reusar la eval branch vieja.
 
 ## 6. Herramienta de evaluación (`backend/scripts/eval_aria.py`)
 
@@ -250,22 +263,24 @@ del script documenta esta limitación).
 
 ## 7. Próximos pasos concretos, en orden
 
-1. **Retomar el fix de `entidad_estatal` / `sequence_engine.py`** (bloqueante #3) — decidir e implementar el
-   default seguro (excluir de la selección a quien no tenga `tipo_entidad` resuelto), o confirmar que la
-   clasificación LLM completará a tiempo antes del miércoles.
-2. **Commitear** los 4 archivos pendientes (bloqueante #2) con mensaje claro. Correr
-   `python scripts/eval_aria.py` una vez más antes de commitear como último chequeo.
-3. **Mergear `eval/dpg-cobranza-microservice` a `master` y pushear** (bloqueante #1) — dispara el auto-deploy
-   de Railway del servicio compartido. El usuario ya autorizó esto explícitamente. Verificar el deploy
-   después con `railway status --json` / logs.
-4. **NO tocar `COBRANZA_AUTOCALL_ENABLED`** en Railway — debe seguir en `false` hasta que el usuario decida
-   activarlo explícitamente (independiente de desplegar el código).
-5. Decidir sobre las variables faltantes del puente Fase 6 (bloqueante #5) — requiere coordinar con el lado
+Ya resuelto esta sesión: fix + ejecución real de la clasificación estatal (509 marcables confirmados),
+commit, merge a master, deploy verificado, fix de `mailer.py`. Lo que queda:
+
+1. **NO tocar `COBRANZA_AUTOCALL_ENABLED`** en Railway — debe seguir en `false` hasta el miércoles 2026-07-08
+   o hasta que el usuario decida activarlo explícitamente (independiente de que el código ya esté desplegado).
+2. Decidir sobre las variables faltantes del puente Fase 6 (bloqueante #5) — requiere coordinar con el lado
    `landa-agent-service` para el valor exacto de `WA_TO_VOICE_TOKEN` y la URL de `LAMBDA_PROYECT_BASE_URL`.
-6. Decidir sobre llamadas entrantes (bloqueante #4) — mínimo viable: bloquear el número a entrantes con un
+3. Decidir sobre llamadas entrantes (bloqueante #4) — mínimo viable: bloquear el número a entrantes con un
    mensaje simple, hasta construir el entrypoint real.
-7. Rotar el token de Twilio expuesto en `WHATSAPP_BOT_READY_TO_TEST.md` (bloqueante #6, no urgente por ser
+4. Rotar el token de Twilio expuesto en `WHATSAPP_BOT_READY_TO_TEST.md` (bloqueante #6, no urgente por ser
    repo privado, pero pendiente).
+5. Rotar/revisar `OPENROUTER_API_KEY` en Railway (401 Unauthorized — fallback roto de la capa 2 del
+   clasificador estatal).
+6. Antes del miércoles: re-verificar que los ~45 deudores inactivos-sin-clasificar sigan siendo irrelevantes
+   (no reactivados), y que no hayan entrado deudores NUEVOS sin clasificar desde un sync más reciente —
+   correr de nuevo la query de conteo de la sección 4, o repetir `run_clasificacion` si hace falta (ver cómo
+   se hizo esta sesión: `railway run --service lambda-proyect python <script con run_clasificacion>`, ya que
+   usa las env vars reales sin necesitar tocar la API ni credenciales de login).
 
 ## 8. Contexto adicional / preferencias del usuario observadas esta sesión
 
