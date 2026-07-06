@@ -43,6 +43,7 @@ app.add_middleware(
 # Routers ligeros (ninguno importa pipecat/voz).
 from routers import auth as _auth_routes   # login/me
 from cobranza.router import router as cobranza_router
+from cobranza.wa_bridge_router import router as wa_bridge_router
 from routes.debtors import router as debtors_router
 
 app.include_router(_auth_routes.router)
@@ -53,6 +54,7 @@ for _name in ("misc", "staff"):
     except Exception as _e:  # noqa: BLE001 — routers opcionales para el demo
         print(f"[demo_app] skip router {_name}: {type(_e).__name__}")
 app.include_router(cobranza_router)
+app.include_router(wa_bridge_router)
 app.include_router(debtors_router)
 
 
