@@ -155,6 +155,7 @@ COBRANZA_BLOCK_KEYS = (
     "horarios",             # call windows, días hábiles, festivos, max contactos/día
     "volumen",              # llamadas/día + distribución
     "estrategia",           # tono + guion (4 secciones)
+    "alertas",              # canales de entrega + tabla routing §11 (área→responsable→tel→keywords)
 )
 
 
