@@ -32,7 +32,7 @@ from .adapter import (
     SoftSegurosAPIError,
     SoftSegurosNotFoundError,
 )
-from .classifier import classify_poliza
+from .classifier import classify_poliza, classify_cuota
 from cobranza import debtor_crud
 
 logger = logging.getLogger(__name__)
@@ -219,6 +219,132 @@ def _poliza_to_debtor_doc(p: dict, bucket: str) -> dict:
         "fecha_limite_pago": p.get("fecha_limite_pago"),
         "periodicidad": p.get("periodicidad"),
         "comicionada": bool(p.get("comicionada")),
+        "status_softseguros": bucket,
+        "is_active": True,
+    }
+
+
+# ── cartera real (cuota) → debtor doc mapping ─────────────────────────────────
+# The REAL endpoint (list_pagospolizas_filtro_paginados) returns one row per CUOTA
+# with its own fecha_pago / fecha_realizara_pago (compromiso) / edad_cartera (mora).
+# Everything below is driven by tenant_config — zero DPG hardcoding. See
+# CARTERA_ENDPOINT.md for the field contract.
+
+def _build_cartera_query(c: dict) -> list:
+    """Build the querystring (list of (key, value) tuples) for
+    list_pagospolizas_filtro_paginados from the tenant's `softseguros_cartera`
+    config. NOTHING is hardcoded: sede/estados/ramos/tipo/order all come from
+    config. `sede` is REQUIRED — without it the endpoint returns 504.
+    List filters (estados, ramos) become repeated tuples so httpx repeats the key.
+    """
+    if not c.get("sede"):
+        raise ValueError(
+            "softseguros_cartera.sede es obligatorio (sin sede el endpoint da 504)"
+        )
+    # tipo=cartera_por_cobrar = la vista "Por cobrar" de Softseguros (deuda viva,
+    # recaudado=False) — la MISMA que ve el equipo de cartera. La ventana de fecha
+    # (fecha_inicio/fecha_fin) filtra por la FECHA DE COMPROMISO (fecha_realizara_pago),
+    # que es el referente de gestión del informe §3. (consultar_nominas_pasadas = ya
+    # cobrados; cartera_por_pagar_compania = otra vista — NO usar para la cola.)
+    tipo = c.get("tipo", "cartera_por_cobrar")
+    q = [
+        ("sede", str(c["sede"])),
+        ("tipo", tipo),
+        ("fecha_a_buscar", c.get("fecha_a_buscar", tipo)),
+        ("order_by", c.get("order_by", "fecha_pago")),
+        ("sort_by", c.get("sort_by", "asc")),
+        ("dias_vencidos", str(c.get("dias_vencidos", -1))),
+        ("fecha_busqueda_pagos", str(c.get("fecha_busqueda_pagos", -1))),
+        ("search_in", c.get("search_in", "poliza_numero_poliza")),
+    ]
+    # Ventana de fecha (filtra por COMPROMISO en cartera_por_cobrar). API names them
+    # fecha_inicio/fecha_fin; config exposes them as fecha_desde/fecha_hasta.
+    #
+    # RÉGIMEN vs ARRANQUE: fecha_hasta fija sirve para la evacuación inicial, pero
+    # congela la cola (se drena con los pagos y no entra ningún compromiso nuevo).
+    # Con fecha_hasta_rodante_dias=N el cron recalcula el techo cada corrida:
+    # hoy + N días HÁBILES → los compromisos que van cayendo entran solos.
+    if c.get("fecha_desde"):
+        q.append(("fecha_inicio", str(c["fecha_desde"])))
+    rodante = c.get("fecha_hasta_rodante_dias")
+    if rodante is not None:
+        from cobranza.call_scheduler import add_business_days
+        hasta = add_business_days(_today(), int(rodante))
+        q.append(("fecha_fin", hasta.isoformat()))
+    elif c.get("fecha_hasta"):
+        q.append(("fecha_fin", str(c["fecha_hasta"])))
+    for eid in c.get("estadopolizas_selected", []) or []:
+        q.append(("estadopolizas_selected[]", str(eid)))
+    for rid in c.get("ramos_selected", []) or []:
+        q.append(("ramos_selected[]", str(rid)))
+    for k, v in (c.get("extra_filtros") or {}).items():
+        q.append((k, str(v)))
+    return q
+
+
+def _norm_phone_co(raw) -> str:
+    """poliza_cliente_celular is 10 digits (CO mobile). Twilio needs E.164 (+57…)."""
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return ""
+    if s.startswith("+"):
+        return "+" + digits
+    if len(digits) == 10:
+        return "+57" + digits
+    if len(digits) == 12 and digits.startswith("57"):
+        return "+" + digits
+    return "+" + digits  # best effort — already has a country code
+
+
+def _num(v) -> Optional[float]:
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _pago_to_debtor_doc(pago: dict, bucket: str, alias_aseguradoras: Optional[dict] = None) -> dict:
+    """Map a SOFTSEGUROS cuota (list_pagospolizas_filtro_paginados row) + bucket →
+    the $set payload for a debtor. ONE debtor == ONE cuota, keyed by
+    `softseguros_pago_id` (the global cuota id). See CARTERA_ENDPOINT.md §mapeo."""
+    aseg = pago.get("aseguradora_nombre") or None
+    if aseg and alias_aseguradoras:
+        aseg = alias_aseguradoras.get(aseg, aseg)
+    nombre = " ".join(
+        str(x) for x in (pago.get("poliza_cliente_nombres"), pago.get("poliza_cliente_apellidos")) if x
+    ).strip()
+    return {
+        # ── idempotency keys ──
+        "softseguros_pago_id": pago.get("id"),          # global cuota id (unique)
+        "softseguros_poliza_id": pago.get("poliza_id"),  # groups cuotas of a policy
+        # ── client ──
+        "nombre": nombre,
+        "telefono": _norm_phone_co(pago.get("poliza_cliente_celular")),
+        "cliente_documento": pago.get("poliza_cliente_numero_documento"),
+        "cliente_celular": pago.get("poliza_cliente_celular"),
+        # ── the two dates that drive the ARIA sequence (informe §3) ──
+        "vencimiento": pago.get("fecha_pago"),            # fecha de pago = vencimiento cuota
+        "fecha_pago": pago.get("fecha_pago"),
+        "fecha_compromiso": pago.get("fecha_realizara_pago"),  # fecha acordada con el cliente
+        "fecha_realizo_pago": pago.get("fecha_realizo_pago"),
+        "edad_cartera": pago.get("edad_cartera"),
+        "dias_mora": pago.get("edad_cartera"),
+        # ── money ──
+        "monto": _num(pago.get("valor_a_pagar")) or _num(pago.get("valor_neto_a_pagar")) or 0.0,
+        "valor_cuota": _num(pago.get("valor_a_pagar")),
+        "saldo_pendiente": _num(pago.get("saldo_pendiente")),
+        "numero_cuota": pago.get("numero_pago") or pago.get("pago_poliza_consecutivo"),
+        # ── policy ──
+        "numero_poliza": pago.get("poliza_numero_poliza"),
+        "ramo_nombre": pago.get("ramo_nombre"),
+        "ramo_id": pago.get("ramo_id"),
+        "aseguradora_nombre": aseg,
+        "forma_pago": (pago.get("poliza_forma_pago") or "").strip() or None,
+        "objeto_asegurado": pago.get("poliza_codio_objeto_asegurado"),
+        "recaudado": bool(pago.get("recaudado")),
         "status_softseguros": bucket,
         "is_active": True,
     }
@@ -664,4 +790,161 @@ async def run_sync(db, user_id: str, mode: str, import_filters: Optional[dict] =
     out = dict(log_doc)
     out.update(final)
     out["_id"] = str(log_id)
+    return out
+
+
+# ── CUOTA-model sync (the real cartera endpoint) ──────────────────────────────
+
+async def _check_cancel(db, user_id: str) -> None:
+    st = await db.softseguros_sync_state.find_one({"user_id": user_id}, {"cancel_requested": 1})
+    if st and st.get("cancel_requested"):
+        await db.softseguros_sync_state.update_one(
+            {"user_id": user_id}, {"$set": {"cancel_requested": False}}
+        )
+        raise SyncCancelledError("sync cancelled by user")
+
+
+async def run_cartera_sync(
+    db, user_id: str, mode: str = "cron_daily", override_filters: Optional[dict] = None,
+) -> dict:
+    """
+    SOFTSEGUROS cartera sync — CUOTA model (list_pagospolizas_filtro_paginados).
+
+    Pulls the live UNPAID cartera using the tenant's config (tipo=cartera_por_pagar_compania
+    + fecha/mora window), maps each cuota → a debtor keyed by softseguros_pago_id, and upserts.
+    NOTHING is hardcoded: sede/estados/ramos/window/tipo all come from tenant_config.
+
+    modes:
+      - "cron_daily" / "onboarding": standing tenant config. Runs the soft-delete sweep —
+        active cuota-debtors NOT seen this run (paid / fell out of window) → marked paid,
+        NEVER touching pinned debtors.
+      - "manual" / "reimport": may pass `override_filters` (custom window/mora) for a one-off
+        load. Imported debtors are PINNED so the daily sweep won't remove them, and NO sweep runs.
+
+    This replaces the póliza-based run_sync for cartera. Returns the sync_log dict.
+    """
+    if mode not in ("cron_daily", "onboarding", "manual", "reimport"):
+        raise ValueError(f"unsupported cartera sync mode: {mode!r}")
+
+    creds = await _credentials.get_credentials(db, user_id)
+    if not creds:
+        raise NoCredentialsError(f"no SOFTSEGUROS credentials for user_id={user_id}")
+    username, password = creds
+
+    # Resolve cartera scope from tenant_config (override for manual custom loads).
+    from cobranza.config_cache import get_tenant_config
+    cfg = await get_tenant_config(user_id)
+    cartera_cfg = dict(((cfg.get("cobranza") or {}).get("softseguros_cartera")) or {})
+    if override_filters:
+        cartera_cfg.update(override_filters)
+    if not cartera_cfg.get("sede"):
+        raise SoftSegurosAPIError("softseguros_cartera.sede no configurado para este tenant")
+
+    pinned = mode in ("manual", "reimport") and override_filters is not None
+    run_sweep = mode in ("cron_daily", "onboarding")
+    ventana = int(cartera_cfg.get("ventana_proximos_dias", 30))
+    alias = cartera_cfg.get("alias_aseguradoras") or {}
+    solo_no_recaudadas = cartera_cfg.get("solo_no_recaudadas", True)
+    today = _today()
+
+    started_at = _utcnow()
+    log_doc = {
+        "user_id": user_id, "mode": mode, "engine": "cartera", "started_at": started_at,
+        "completed_at": None, "status": "in_progress", "error_message": None,
+        "cuotas_scanned": 0, "total_count": 0, "debtors_created": 0, "debtors_updated": 0,
+        "debtors_marked_paid": 0, "debtors_skipped_recaudadas": 0, "total_requests": 0,
+        "duration_seconds": None, "pinned": pinned,
+    }
+    log_id = (await db.softseguros_sync_logs.insert_one(log_doc)).inserted_id
+
+    query = _build_cartera_query(cartera_cfg)
+    adapter = SoftSegurosAdapter(
+        username, password, base_url=cartera_cfg.get("base_url", "https://app.softseguros.com"),
+    )
+    seen: set = set()
+    ops: list = []
+    c = {"scanned": 0, "skipped": 0, "requests": 0, "total": 0}
+
+    def _handle(payload: dict):
+        for r in payload.get("results", []):
+            pid = r.get("id")
+            if pid is None:
+                continue
+            c["scanned"] += 1
+            if solo_no_recaudadas and r.get("recaudado"):
+                c["skipped"] += 1
+                continue
+            seen.add(pid)
+            bucket = classify_cuota(r.get("fecha_pago"), bool(r.get("recaudado")), today, ventana)
+            if bucket not in _COBRABLE_BUCKETS:
+                continue
+            doc = _pago_to_debtor_doc(r, bucket, alias)
+            ops.append(debtor_crud.build_softseguros_pago_upsert_op(user_id, pid, doc, pinned=pinned))
+
+    created = updated = marked_paid = 0
+    try:
+        await adapter.authenticate(); c["requests"] += 1
+        first = await adapter.list_pagos_filtrados(page=1, params=query); c["requests"] += 1
+        c["total"] = int(first.get("count") or 0)
+        last_page = max(1, math.ceil(c["total"] / PAGE_SIZE)) if c["total"] else 1
+        _handle(first)
+        for pg in range(2, last_page + 1):
+            await _check_cancel(db, user_id)
+            _handle(await adapter.list_pagos_filtrados(page=pg, params=query))
+            c["requests"] += 1
+
+        write_res = await debtor_crud.bulk_write_debtor_ops(db, ops) if ops else {"created": 0, "updated": 0}
+        created, updated = write_res["created"], write_res["updated"]
+
+        if run_sweep:
+            active = await debtor_crud.list_active_softseguros_pago_ids(db, user_id)  # excludes pinned
+            for pid in (active - seen):
+                if await debtor_crud.mark_debtor_paid_by_softseguros_pago_id(db, user_id, pid):
+                    marked_paid += 1
+
+        # Entidades estatales (informe §2): clasificar lo nuevo/pendiente para
+        # que el dispatcher nunca las marque. Best-effort — un fallo del
+        # clasificador jamás tumba el sync.
+        try:
+            from cobranza.entidad_estatal import run_clasificacion
+            cls = await run_clasificacion(db, user_id)
+            if cls["clasificados"]:
+                logger.info("run_cartera_sync clasificacion estatal user=%s %s", user_id, cls)
+        except Exception:  # noqa: BLE001
+            logger.exception("clasificacion estatal fallo (no fatal) user_id=%s", user_id)
+
+        now = _utcnow()
+        await db.softseguros_sync_state.update_one(
+            {"user_id": user_id},
+            {"$set": {"user_id": user_id, "last_cartera_sync_at": now,
+                      "last_total_count": c["total"], "updated_at": now}},
+            upsert=True,
+        )
+        status, error_message = "success", None
+    except NoCredentialsError:
+        raise
+    except SyncCancelledError:
+        status, error_message = "cancelled", None
+        logger.info("run_cartera_sync cancelled user_id=%s", user_id)
+    except Exception as exc:  # noqa: BLE001
+        status, error_message = "failed", _humanize_error(exc)
+        logger.exception("run_cartera_sync failed user_id=%s mode=%s", user_id, mode)
+    finally:
+        try:
+            await adapter.close()
+        except Exception:  # pragma: no cover
+            pass
+
+    completed_at = _utcnow()
+    final = {
+        "completed_at": completed_at, "status": status, "error_message": error_message,
+        "cuotas_scanned": c["scanned"], "total_count": c["total"],
+        "debtors_created": created, "debtors_updated": updated, "debtors_marked_paid": marked_paid,
+        "debtors_skipped_recaudadas": c["skipped"], "total_requests": c["requests"],
+        "duration_seconds": (completed_at - started_at).total_seconds(),
+    }
+    await db.softseguros_sync_logs.update_one({"_id": log_id}, {"$set": final})
+    if status == "failed":
+        raise SoftSegurosAPIError(f"cartera sync failed: {error_message}")
+    out = dict(log_doc); out.update(final); out["_id"] = str(log_id)
     return out

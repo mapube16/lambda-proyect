@@ -9,8 +9,8 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from auth import get_current_user, require_staff
 from database import get_db, get_client_profile
@@ -67,6 +67,9 @@ class DebtorPatch(BaseModel):
     monto: Optional[float] = None
     vencimiento: Optional[str] = None  # "YYYY-MM-DD"
     notas: Optional[str] = None
+    # Override humano de la exclusión (informe §2): liberar un falso positivo
+    # del clasificador de entidades estatales, o excluir manualmente a alguien.
+    no_llamar: Optional[bool] = None
 
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -89,6 +92,160 @@ async def cobranza_status(current_user: dict = Depends(get_current_user)):
     return {"enabled": enabled, "configured": configured, "_debug_user_id": user_id, "_debug_doc_exists": doc is not None}
 
 
+# ── Cobranza config (multi-tenant, editable desde UI) ─────────────────────────
+# Todos los parámetros del tenant viven en tenant_config.cobranza y se editan desde
+# aquí. CERO hardcode: sede/estados/ramos/mora/horarios/timings por tenant.
+
+class SoftsegurosCarteraBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sede: int
+    estadopolizas_selected: list[int] = Field(default_factory=list)
+    ramos_selected: list[int] = Field(default_factory=list)
+    tipo: str = "cartera_por_pagar_compania"
+    fecha_desde: Optional[str] = None   # "YYYY-MM-DD" — ventana de compromiso (deuda viva)
+    fecha_hasta: Optional[str] = None   # techo FIJO (solo arranque) …
+    # … o techo RODANTE: hoy + N días hábiles, recalculado en cada sync (régimen).
+    # Si se define, tiene prioridad sobre fecha_hasta.
+    fecha_hasta_rodante_dias: Optional[int] = Field(None, ge=0, le=30)
+    ventana_proximos_dias: int = Field(30, ge=0, le=365)
+    solo_no_recaudadas: bool = True
+    alias_aseguradoras: dict[str, str] = Field(default_factory=dict)
+    max_concurrency: int = Field(5, ge=1, le=20)
+    base_url: Optional[str] = None
+
+
+class TimingsBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    offsets_intentos_dias_habiles: list[int] = Field(default_factory=lambda: [-1, 0, 2])
+    frecuencia_dias: int = Field(1, ge=1, le=30)
+    max_intentos: int = Field(3, ge=1, le=10)
+    pre_vencimiento_dias: int = Field(1, ge=0, le=30)
+    agendar_por: str = "fecha_compromiso"  # o "fecha_pago"
+
+
+class HorariosBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    timezone: str = "America/Bogota"
+    dias_habiles: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5])
+    franjas: list[list[str]] = Field(default_factory=list)         # [["09:00","12:00"],["14:00","16:00"]]
+    franjas_sabado: list[list[str]] = Field(default_factory=list)
+    festivos: list[str] = Field(default_factory=list)              # ["YYYY-MM-DD"]
+    max_contactos_dia: int = Field(1, ge=1, le=10)
+
+
+class VolumenBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    llamadas_por_dia: int = Field(30, ge=1, le=5000)
+    distribucion: str = "uniforme"
+    # Gate DURO por fecha: antes de esta fecha, el dispatcher no marca a NADIE
+    # de este tenant — sin importar el kill-switch manual (defensa en
+    # profundidad: no depende de que alguien se acuerde de prender el switch
+    # el día correcto). None = sin gate (el kill-switch manual manda solo).
+    fecha_activacion: Optional[str] = None  # "YYYY-MM-DD"
+
+
+class EstrategiaBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tono: Optional[str] = None
+    guion: dict[str, str] = Field(default_factory=dict)
+
+
+class CobranzaConfigPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    softseguros_cartera: Optional[SoftsegurosCarteraBlock] = None
+    timings: Optional[TimingsBlock] = None
+    horarios: Optional[HorariosBlock] = None
+    volumen: Optional[VolumenBlock] = None
+    estrategia: Optional[EstrategiaBlock] = None
+
+
+class SincronizarBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Carga manual con ventana custom (fecha_desde/fecha_hasta/ventana_proximos_dias…).
+    # Si viene, corre en modo "manual" y PINEA los deudores (el sweep diario no los toca).
+    override_filters: Optional[dict] = None
+
+
+# Ley 2300 (Colombia) = techo legal duro. La UI nunca puede exceder esto.
+_LEY2300_LV = (7 * 60, 19 * 60)    # L-V 07:00–19:00
+_LEY2300_SAB = (8 * 60, 15 * 60)   # Sáb 08:00–15:00
+
+
+def _hhmm(s: str) -> int:
+    h, m = s.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _validate_franjas(franjas: list, legal: tuple, label: str) -> None:
+    lo, hi = legal
+    for fr in franjas or []:
+        if not isinstance(fr, (list, tuple)) or len(fr) != 2:
+            raise HTTPException(status_code=400, detail=f"{label}: cada franja debe ser [inicio, fin] HH:MM")
+        try:
+            a, b = _hhmm(fr[0]), _hhmm(fr[1])
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"{label}: hora inválida (usa HH:MM)")
+        if a >= b:
+            raise HTTPException(status_code=400, detail=f"{label}: {fr[0]} debe ser antes de {fr[1]}")
+        if a < lo or b > hi:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label}: {fr[0]}-{fr[1]} excede el límite legal (Ley 2300: {lo//60:02d}:00-{hi//60:02d}:00)",
+            )
+
+
+@router.get("/config")
+async def get_cobranza_config(current_user: dict = Depends(get_current_user)):
+    """Devuelve el bloque `cobranza` de tenant_config para pre-cargar la UI. {} si no está configurado."""
+    from cobranza.config_cache import get_tenant_config
+    user_id = str(current_user["user_id"])
+    cfg = await get_tenant_config(user_id)
+    return cfg.get("cobranza") or {}
+
+
+@router.patch("/config")
+async def patch_cobranza_config(
+    body: CobranzaConfigPatch,
+    current_user: dict = Depends(get_current_user),
+):
+    """Actualiza (parcial) la config de cobranza del tenant. Clampa horarios contra Ley 2300."""
+    from cobranza.tenant_config import set_cobranza_config
+    from cobranza.config_cache import get_tenant_config
+    user_id = str(current_user["user_id"])
+    if body.horarios is not None:
+        _validate_franjas(body.horarios.franjas, _LEY2300_LV, "franjas (L-V)")
+        _validate_franjas(body.horarios.franjas_sabado, _LEY2300_SAB, "franjas (Sáb)")
+    block = body.model_dump(exclude_none=True)
+    if not block:
+        raise HTTPException(status_code=400, detail="No hay bloques de config para actualizar.")
+    await set_cobranza_config(user_id, block)
+    cfg = await get_tenant_config(user_id)
+    return {"saved": True, "cobranza": cfg.get("cobranza") or {}}
+
+
+@router.post("/sincronizar")
+async def cobranza_sincronizar(
+    body: Optional[SincronizarBody],
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """Dispara un sync de la cartera Softseguros en background. Sin `override_filters`
+    = refresh con la config estándar. Con `override_filters` = carga manual (pinned)."""
+    user_id = str(current_user["user_id"])
+    override = body.override_filters if body else None
+    mode = "manual" if override else "cron_daily"
+
+    async def _run():
+        try:
+            from softseguros.sync import run_cartera_sync
+            await run_cartera_sync(get_db(), user_id, mode=mode, override_filters=override)
+        except Exception:  # noqa: BLE001
+            logger.exception("cobranza sincronizar failed user_id=%s mode=%s", user_id, mode)
+
+    background_tasks.add_task(_run)
+    return {"sync_started": True, "mode": mode, "pinned": override is not None}
+
+
 # ── EMERGENCY KILL-SWITCH (master ON/OFF for automated dialing) ────────────────
 #
 # Hot switch with immediate effect — no redeploy, no worker restart. Flips the
@@ -101,6 +258,190 @@ async def cobranza_status(current_user: dict = Depends(get_current_user)):
 
 class KillSwitchPayload(BaseModel):
     enabled: bool
+
+
+# ── Jornada de hoy (informe §2.1: revisión previa del colaborador) ─────────────
+
+@router.get("/jornada-hoy")
+async def jornada_hoy(current_user: dict = Depends(get_current_user)):
+    """
+    Llamadas PROGRAMADAS para hoy, en el orden real de marcación (prioridad del
+    informe: vencen hoy → preventivas → mayor mora). Es la lista que el
+    colaborador de cartera revisa ANTES de la jornada para excluir clientes
+    (botón pausar). Se calcula en vivo con la misma lógica del dispatcher, así
+    que refleja exactamente lo que el bot va a hacer.
+    """
+    from cobranza.sequence_engine import (
+        CALLABLE_ESTADOS, _parse_festivos, _tz,
+        compute_proximo_intento, prioridad_informe,
+    )
+    user_id = str(current_user["user_id"])
+    db = get_db()
+
+    from cobranza.config_cache import get_tenant_config
+    cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
+    timings, horarios = cfg.get("timings") or {}, cfg.get("horarios") or {}
+    volumen = cfg.get("volumen") or {}
+    tz = _tz(horarios)
+    today_local = datetime.now(timezone.utc).astimezone(tz).date()
+    extra_fest = _parse_festivos(horarios)
+
+    cursor = db.debtors.find(
+        {
+            "user_id": user_id,
+            "is_active": {"$ne": False},
+            "no_llamar": {"$ne": True},  # entidades estatales / opt-out (informe §2)
+            "estado": {"$in": list(CALLABLE_ESTADOS)},
+        },
+        {
+            "nombre": 1, "telefono": 1, "numero_poliza": 1, "ramo_nombre": 1,
+            "dias_mora": 1, "edad_cartera": 1, "vencimiento": 1, "fecha_pago": 1,
+            "fecha_compromiso": 1, "fecha_reagendada": 1, "estado": 1, "monto": 1,
+            "intentos": 1, "proximo_intento_at": 1, "ultimo_contacto_fecha": 1,
+        },
+    )
+    programados = []
+    async for d in cursor:
+        at = d.get("proximo_intento_at")
+        if at is None:
+            # sin cita persistida (p.ej. planner aún no corre) → misma cuenta pura
+            verdict, at = compute_proximo_intento(d, timings, horarios, today=today_local)
+            if verdict != "cita":
+                continue
+        if at.tzinfo is None:
+            from datetime import timezone as _tzu
+            at = at.replace(tzinfo=_tzu.utc)
+        at_local = at.astimezone(tz)
+        if at_local.date() > today_local:
+            continue  # cita futura — no es de hoy
+        grupo, _ = prioridad_informe(d, today_local, extra_fest)
+        programados.append({
+            "_id": str(d["_id"]),
+            "nombre": d.get("nombre"),
+            "telefono": d.get("telefono"),
+            "numero_poliza": d.get("numero_poliza"),
+            "ramo_nombre": d.get("ramo_nombre"),
+            "estado": d.get("estado"),
+            "monto": d.get("monto"),
+            "dias_mora": d.get("dias_mora") or d.get("edad_cartera") or 0,
+            "intento": int(d.get("intentos") or 0) + 1,
+            "hora": at_local.strftime("%H:%M"),
+            "grupo": ["vence_hoy", "preventiva", "backlog"][grupo],
+            "_orden": prioridad_informe(d, today_local, extra_fest),
+        })
+
+    programados.sort(key=lambda x: x["_orden"])
+    cupo = int(volumen.get("llamadas_por_dia") or 30)
+    for i, p in enumerate(programados):
+        p.pop("_orden", None)
+        p["dentro_cupo"] = i < cupo
+    return {
+        "fecha": today_local.isoformat(),
+        "total": len(programados),
+        "cupo_diario": cupo,
+        "items": programados,
+    }
+
+
+# ── Paquete de minutos ─────────────────────────────────────────────────────────
+
+@router.get("/minutos")
+async def get_minutos(current_user: dict = Depends(get_current_user)):
+    """Saldo del paquete de minutos del tenant (solo lectura — recargas vía staff)."""
+    from cobranza.minutes import get_saldo
+    return await get_saldo(get_db(), str(current_user["user_id"]))
+
+
+class MinutosRecarga(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    minutos: int
+    nota: str = ""
+    tipo: str = "compra"  # "compra" (>0) o "ajuste" (+/-)
+
+
+@router.post("/minutos/{client_id}")
+async def staff_recargar_minutos(
+    client_id: str,
+    body: MinutosRecarga,
+    staff: dict = Depends(require_staff),
+):
+    """STAFF ONLY: registrar compra/ajuste de minutos para un tenant (ledger auditable)."""
+    from cobranza.minutes import record_purchase
+    try:
+        saldo = await record_purchase(
+            get_db(), client_id, body.minutos,
+            nota=body.nota, actor=str(staff.get("email") or staff.get("user_id")),
+            tipo=body.tipo,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return saldo
+
+
+# ── Alertas tipadas (informe §7) ────────────────────────────────────────────
+
+@router.get("/alertas")
+async def get_alertas(
+    solo_pendientes: bool = Query(True),
+    current_user: dict = Depends(get_current_user),
+):
+    """Cola de alertas del tenant — lo que el colaborador revisa a diario (informe §12)."""
+    from cobranza.alerts import listar_alertas
+    items = await listar_alertas(get_db(), str(current_user["user_id"]), solo_pendientes=solo_pendientes)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/alertas/{alerta_id}/atender")
+async def atender_alerta(alerta_id: str, current_user: dict = Depends(get_current_user)):
+    """Marca una alerta como atendida (el colaborador ya la gestionó)."""
+    from cobranza.alerts import marcar_atendida
+    ok = await marcar_atendida(
+        get_db(), str(current_user["user_id"]), alerta_id,
+        actor=str(current_user.get("email") or current_user["user_id"]),
+    )
+    if not ok:
+        raise HTTPException(404, "Alerta no encontrada")
+    return {"ok": True}
+
+
+# ── Reportes diario/semanal (informe §12) ───────────────────────────────────
+
+@router.get("/reportes/preview")
+async def preview_reporte(
+    tipo: str = Query("diario", pattern="^(diario|semanal)$"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Vista previa (sin enviar email) — métricas + síntesis reales del período."""
+    from datetime import timedelta
+    from cobranza import reports
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    if tipo == "diario":
+        hoy = datetime.now(reports.COLOMBIA_TZ).date()
+        start, end = reports._dia_utc_range(hoy)
+        metrics = await reports.aggregate_metrics(db, user_id, start, end, hoy)
+    else:
+        hoy = datetime.now(reports.COLOMBIA_TZ).date()
+        start, _ = reports._dia_utc_range(hoy - timedelta(days=6))
+        _, end = reports._dia_utc_range(hoy)
+        metrics = await reports.aggregate_metrics(db, user_id, start, end, hoy)
+    muestras = await reports._muestras_del_dia(db, user_id, start, end)
+    qualitative = await reports.synthesize_qualitative(muestras)
+    return {"metrics": metrics, "qualitative": qualitative}
+
+
+@router.post("/reportes/enviar-ahora")
+async def enviar_reporte_ahora(
+    tipo: str = Query("diario", pattern="^(diario|semanal)$"),
+    staff: dict = Depends(require_staff),
+):
+    """STAFF ONLY: dispara el reporte fuera del cron (prueba/recuperación de un envío perdido)."""
+    from cobranza import reports
+    user_id = str(staff["user_id"])
+    db = get_db()
+    if tipo == "diario":
+        return await reports.run_daily_report(db, user_id)
+    return await reports.run_weekly_report(db, user_id)
 
 
 @router.get("/killswitch")
@@ -216,14 +557,19 @@ async def create_debtor_endpoint(
 async def list_debtors(
     estado: Optional[str] = Query(None),
     group: Optional[str] = Query(None, description="atencion | pendientes | gestion | resueltos"),
+    min_mora: Optional[int] = Query(None, ge=0, description="Solo deudores con dias_mora >= este valor"),
+    sort: Optional[str] = Query(None, description="'mora' = mayor mora primero; por defecto, más reciente"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
 ):
-    """Paginated debtors for the authenticated user, filterable by estado or group."""
+    """Paginated debtors for the authenticated user, filterable by estado, group or min_mora."""
     user_id = str(current_user["user_id"])
     db = get_db()
-    return await get_debtors(db, user_id, estado=estado, group=group, page=page, page_size=page_size)
+    return await get_debtors(
+        db, user_id, estado=estado, group=group,
+        min_mora=min_mora, sort=sort, page=page, page_size=page_size,
+    )
 
 
 # ── Today's activity summary (the 5 KPIs at the top of the cobranza panel) ──────
@@ -238,7 +584,9 @@ async def today_summary(current_user: dict = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    base = {"user_id": user_id}
+    # is_active != False: excluye deudores archivados por el sync (pagados upstream /
+    # fuera de la ventana) para que no inflen los contadores de la cola activa.
+    base = {"user_id": user_id, "is_active": {"$ne": False}}
 
     # Llamando ahora (live, not date-bound)
     llamando = await db.debtors.count_documents({**base, "estado": "llamando"})
@@ -286,7 +634,7 @@ async def funnel(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["user_id"])
     db = get_db()
     pipeline = [
-        {"$match": {"user_id": user_id}},
+        {"$match": {"user_id": user_id, "is_active": {"$ne": False}}},
         {"$group": {"_id": "$estado", "n": {"$sum": 1}}},
     ]
     counts: dict[str, int] = {}
@@ -347,6 +695,14 @@ async def patch_debtor_endpoint(
             )
     if body.notas is not None:
         patch["notas"] = body.notas
+    if body.no_llamar is not None:
+        # Decisión humana: queda estampada como manual para que el clasificador
+        # automático NUNCA la vuelva a tocar (run_clasificacion salta docs con
+        # tipo_entidad ya definido).
+        patch["no_llamar"] = body.no_llamar
+        patch["no_llamar_motivo"] = "manual" if body.no_llamar else None
+        patch["tipo_entidad"] = "estatal" if body.no_llamar else "privada"
+        patch["clasificado_por"] = "manual"
 
     try:
         updated = await update_debtor(db, user_id, debtor_id, patch)
@@ -518,11 +874,16 @@ async def _initiate_call_and_update(db, user_id: str, debtor: dict, config: dict
         if not all([account_sid, auth_token, from_number]):
             raise RuntimeError("Twilio not configured")
 
+        from cobranza.minutes import require_saldo  # lanza si el paquete se agotó
+        await require_saldo(db, user_id)
+
+        from cobranza.minutes import call_status_kwargs
         client = Client(account_sid, auth_token)
         to_number = debtor.get("telefono")
         call = client.calls.create(
             to=to_number, from_=from_number,
             url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+            **call_status_kwargs(),
         )
         call_sid = call.sid
         logger.info("[llamar-ahora] Twilio call %s -> %s", call_sid, to_number)
@@ -577,6 +938,12 @@ async def llamar_ahora(
     if debtor is None:
         raise HTTPException(status_code=404, detail="Debtor not found")
 
+    if debtor.get("no_llamar"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Este deudor no se gestiona por el bot ({debtor.get('no_llamar_motivo') or 'no_llamar'}).",
+        )
+
     if not (test and is_dev) and not force:
         # Ley 2300: one contact per day — return 409 so frontend can show modal
         if has_been_contacted_today(debtor):
@@ -602,6 +969,15 @@ async def llamar_ahora(
     if not all([account_sid, auth_token, from_number]):
         raise HTTPException(500, "Twilio not configured")
 
+    # Paquete de minutos: sin saldo no se marca (402 = payment required).
+    from cobranza.minutes import MinutesExhaustedError, require_saldo
+    try:
+        await require_saldo(db, user_id)
+    except MinutesExhaustedError as e:
+        await update_debtor(db, user_id, debtor_id, {"estado": debtor.get("estado", "pendiente")})
+        raise HTTPException(402, str(e))
+
+    from cobranza.minutes import call_status_kwargs
     twilio_client = TwilioClient(account_sid, auth_token)
     to_number = debtor.get("telefono")
     call = twilio_client.calls.create(
@@ -610,6 +986,7 @@ async def llamar_ahora(
         record=True,
         recording_status_callback=f"{webhook_url}/api/cobranza/voice/recording-callback",
         recording_status_callback_method="POST",
+        **call_status_kwargs(),
     )
     call_sid = call.sid
     logger.info("[llamar-ahora] Twilio call %s -> %s", call_sid, to_number)

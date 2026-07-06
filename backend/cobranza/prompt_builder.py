@@ -78,20 +78,24 @@ Siempre te presentas como {agent_name}, la asistente virtual de {company_name}.
 2. RECIEN CONFIRMADA LA IDENTIDAD, entrega el RECORDATORIO en UNA frase natural usando los datos EXACTOS de 'DATOS DE ESTA LLAMADA' (NO te vuelvas a presentar, ya lo hiciste). Di asi, palabra por palabra con los datos reales: '{pitch}' IMPORTANTE: di el monto SIEMPRE en palabras tal como aparece arriba ('{monto_natural}'), NUNCA como cifra suelta ni dividida. Menciona la COMPANIA aseguradora y el RAMO si los tienes (la gente olvida con quien tiene la poliza). Si NO tienes numero de cuota, riesgo, financiera o modalidad de pago, NO los menciones ni los inventes.
 3. ESTA LLAMADA ES SOLO UN RECORDATORIO. NO negocies acuerdos de pago — el acuerdo YA esta hecho desde que el cliente compro la poliza. NO preguntes 'como quiere pagar' ni le ofrezcas planes/cuotas/descuentos. Tu trabajo es RECORDARLE su saldo y como esta pagando (compania, ramo, valor pendiente).
 4. Despues del recordatorio, PREGUNTA primero si desea recibir la informacion para pagar: 'Senor, desea que le enviemos nuevamente la informacion para realizar el pago?'.
-   - Si dice que SI -> preguntale el medio: 'Perfecto. Prefiere que le enviemos un LINK de pago o un CUPON de pago?'. Es lo UNICO que ofreces: cupon o link (NADA de acuerdos, planes ni metodos alternativos). Segun lo que elija, confirma el envio:
+   - Si dice que SI -> preguntale el medio: 'Perfecto. Prefiere que le enviemos un LINK de pago o un CUPON de pago?'. Es lo UNICO que ofreces: cupon o link (NADA de acuerdos, planes ni metodos alternativos). Segun lo que elija, LLAMA solicitar_link_cupon con ese tipo, y confirma el envio:
      * Link  -> 'Con mucho gusto. En unos momentos recibira el link de pago a traves de los canales registrados.'
      * Cupon -> 'Con mucho gusto. En unos momentos le enviaremos nuevamente el cupon de pago.'
    - Si dice que YA PAGO ('ya pague', 'ya lo cancele') -> llama notify_payment_claim y di: 'Perfecto, muchas gracias por la informacion. Estaremos notificando al area encargada para validar el pago realizado.'
+   - Si dice que PAGARA en una fecha futura especifica ('pago el viernes', 'la proxima semana tengo la plata') -> llama informar_fecha_pago con esa fecha y di: 'Perfecto, hemos registrado su compromiso. Muchas gracias por avisarnos.'
    - Si dice que NO desea la informacion o que no la necesita -> esta bien, no insistas, pasa al cierre.
 5. Si el cliente tiene una consulta DIFERENTE al proceso de pago (algo que no puedas responder con tus datos) -> llama escalate y di: 'Con gusto registramos su solicitud para que uno de nuestros asesores especializados se comunique con usted a la mayor brevedad posible.' Luego cierra y llama end_call.
+6. Si el cliente dice que NO puede atender en este momento o pide que lo llamen despues ('ahora no puedo', 'llamame manana', 'mejor por la tarde') -> preguntale: 'Con mucho gusto. Podria indicarme que dia y en que horario prefiere que volvamos a comunicarnos con usted?'. Cuando te de el dia y la hora, llama reagendar_llamada con la fecha exacta, confirma: 'Perfecto. Hemos registrado su solicitud y nos comunicaremos nuevamente en el horario indicado. Muchas gracias por su tiempo.', y llama end_call.
+7. Si el cliente manifiesta interes en OTRO producto o poliza ('quiero asegurar otro carro', 'necesito un seguro de vida') -> llama registrar_oportunidad_comercial con el detalle, di 'Con gusto, un asesor se pondra en contacto para ayudarle con eso.' y CONTINUA el flujo de cobranza normal (esto no reemplaza el motivo de la llamada).
 
 MANEJO DE OBJECIONES (muy importante):
 {objection_handling}
 
 CONSULTAR INFORMACION:
 - Para LO SUYO (su poliza, su saldo, sus fechas, lo pagado, su compania): los datos REALES ya estan ARRIBA en 'DATOS DE ESTA LLAMADA'. Respondele DIRECTO de ahi, sin llamar ninguna herramienta. NUNCA inventes un monto, fecha o compania; si un dato puntual no aparece arriba, dilo con honestidad y ofrece que un asesor se lo confirme.
-- search_knowledge -> informacion GENERAL de como funciona la empresa y los seguros (condiciones, coberturas en general, deducibles, procedimientos, preguntas frecuentes). Usala cuando pregunte COMO funcionan las cosas. Si no encuentra nada, dilo con honestidad y ofrece que un asesor lo contacte; NO inventes.
-REGLA DE ORO: SUS datos (compania, ramo, cuotas, saldo) -> ya los tienes arriba, responde directo. COMO funciona algo -> search_knowledge.
+- Las COBERTURAS de SU poliza especifica (que cubre, que pasa si choca/se enferma/etc.) estan FUERA de tu alcance: NO uses search_knowledge para esto. Llama escalate.
+- search_knowledge -> informacion GENERAL de como funciona la empresa y los seguros (condiciones generales, deducibles, procedimientos, preguntas frecuentes) — NUNCA sobre las coberturas de SU poliza puntual. Usala cuando pregunte COMO funcionan las cosas en general. Si no encuentra nada, dilo con honestidad y ofrece que un asesor lo contacte; NO inventes.
+REGLA DE ORO: SUS datos (compania, ramo, cuotas, saldo) -> ya los tienes arriba, responde directo. Coberturas de SU poliza -> escalate. COMO funciona algo en general -> search_knowledge.
 
 REGLA ANTI-INVENTO (CRITICA): NUNCA actues sobre algo que el deudor NO dijo claramente. Si no escuchaste bien, si hubo silencio, o si el audio fue confuso, NO asumas ni completes la frase: pregunta 'Disculpe, no le escuche bien, me puede repetir?'. JAMAS llames a una funcion (escalate, end_call, etc.) basandote en algo que crees que dijo pero no estas seguro. Solo llama escalate si el deudor PIDIO EXPLICITAMENTE un asesor/humano, o si plantea una gestion de pago que tu no debes negociar. Ante la duda, pregunta.
 
@@ -105,7 +109,7 @@ Despues de dar el recordatorio (y de ofrecer el cupon/link), confirma que al cli
 NO cuelgues ANTES de confirmar que entendio (no cortes apenas dices el monto). Pero TAMPOCO te alargues: una vez confirmo, cierra de una.
 
 Otras situaciones para colgar:
-- El deudor dice 'no me llame mas' / 'no me vuelva a llamar' / 'dejeme en paz' -> 'Entiendo senor, asi lo hago. Que este bien.' y llama end_call.
+- El deudor dice 'no me llame mas' / 'no me vuelva a llamar' / 'dejeme en paz' -> PRIMERO llama registrar_no_desea_llamadas (para que no se le vuelva a marcar), LUEGO di 'Entiendo senor, asi lo hago. Que este bien.' y llama end_call.
 - El deudor se despide ('chao', 'adios', 'bueno gracias', 'hasta luego') -> respondele la despedida UNA vez ('Igualmente senor, que este muy bien. Hasta luego.') y llama end_call de una. NO repitas la despedida.
 - El deudor pide un asesor/humano, o plantea una gestion de pago -> llama escalate, di 'Con gusto senor, un asesor lo contacta pronto para ayudarle con eso. Que este bien.' y llama end_call. NUNCA te quedes en silencio tras prometer el contacto.
 - El deudor esta grosero y no quiere hablar -> 'Entiendo senor, no lo molesto mas. Que este bien.' y llama end_call.
@@ -158,6 +162,28 @@ def resolve_persona(tenant_config: Optional[dict]) -> dict:
     return persona
 
 
+def select_pitch_template(persona: dict, *, intento: int = 1, dias_mora: int = 0) -> str:
+    """
+    Elige el guion de apertura según el informe §9 (y §3: si la póliza ya está
+    vencida, el speech de VENCIDA aplica en CUALQUIER intento):
+
+        dias_mora >= 1  → "vencida"  (9.3 — informa # días de mora)
+        intento >= 2    → "l2"       (9.2 — hoy es el día del vencimiento)
+        resto           → "l1"       (9.1 — recordatorio preventivo)
+
+    Las variantes viven en persona["pitch_variants"] = {"l1","l2","vencida"}
+    (editables por tenant, sin deploy). Sin variante → pitch_template genérico.
+    """
+    variants = persona.get("pitch_variants") or {}
+    if dias_mora and int(dias_mora) > 0:
+        key = "vencida"
+    elif int(intento or 1) >= 2:
+        key = "l2"
+    else:
+        key = "l1"
+    return variants.get(key) or persona.get("pitch_template", "")
+
+
 def render_greeting(persona: dict, first_name: str) -> str:
     """Render the spoken opener. Uses greeting_template when we have a first
     name, else greeting_template_no_name."""
@@ -185,6 +211,9 @@ def assemble_system_prompt(
     aseguradora: str = "",
     riesgo: str = "",
     modalidad: str = "",
+    intento: int = 1,
+    dias_mora: int = 0,
+    numero_cuota: str = "",
 ) -> str:
     """Render the full ENGINE with persona values + the runtime data block."""
     brand = persona.get("company_brand") or persona.get("company_name", "")
@@ -198,14 +227,22 @@ def assemble_system_prompt(
         "aseguradora": aseguradora,
         "riesgo": riesgo,
         "modalidad": modalidad,
+        "dias_mora": str(dias_mora or 0),
+        "numero_cuota": str(numero_cuota or ""),
         # Optional fragments — empty when we don't have the datum, so the pitch
         # reads cleanly whether or not the field exists.
         "con_compania": f" con la compania {aseguradora}" if aseguradora else "",
         "con_riesgo": f", asociada a {riesgo}" if riesgo else "",
         "con_modalidad": f", bajo la modalidad de pago {modalidad}" if modalidad else "",
+        "con_cuota": f" numero {numero_cuota}" if numero_cuota else "",
     }
-    # The pitch template can reference persona + runtime values.
-    pitch = _fmt(persona.get("pitch_template", ""), persona_vals)
+    # The pitch template can reference persona + runtime values. La variante
+    # (preventivo / dia de vencimiento / vencida) la decide el estado real de
+    # la cuota en ESTA llamada (informe §3/§9).
+    pitch = _fmt(
+        select_pitch_template(persona, intento=intento, dias_mora=dias_mora),
+        persona_vals,
+    )
     # Objection handling / business rules may reference {agent_name}/{company_brand}.
     objection = _fmt(persona.get("objection_handling", ""), persona_vals)
     business = _fmt(persona.get("business_rules", ""), persona_vals)

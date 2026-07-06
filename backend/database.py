@@ -99,22 +99,25 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     )
     # ── Phase 18: SOFTSEGUROS credentials per user ───────────────────────────
     await _safe_index(db.softseguros_credentials, "user_id", unique=True)
-    # ── Phase 18: SOFTSEGUROS sync engine indexes ────────────────────────────
-    # Idempotency: a póliza id maps to exactly one debtor per user.
-    # partialFilterExpression (not sparse) so the uniqueness only applies to
-    # docs with source=="softseguros" — Phase 17 manual debtors (which may carry
-    # softseguros_poliza_id=null) are excluded entirely. A prior boot may have
-    # created this index with sparse=True; drop the stale one before recreating.
+    # ── SOFTSEGUROS sync engine indexes (CUOTA model) ────────────────────────
+    # Idempotency is per CUOTA: one debtor == one softseguros_pago_id. A financed
+    # póliza has N cuotas, so the OLD unique (user_id, softseguros_poliza_id) index
+    # was WRONG (it collapsed N cuotas of a póliza into a single debtor / raised
+    # E11000). Drop it. The póliza id keeps only a NON-unique index (to group the
+    # cuotas of a póliza). Legacy poliza-model debtors are retagged
+    # source="softseguros_legacy" so they fall outside this partial index.
     try:
         await db.debtors.drop_index("user_id_1_softseguros_poliza_id_1")
     except Exception:
         pass  # index doesn't exist yet, or has a different name — fine
     await _safe_index(
         db.debtors,
-        [("user_id", 1), ("softseguros_poliza_id", 1)],
+        [("user_id", 1), ("softseguros_pago_id", 1)],
         unique=True,
-        partialFilterExpression={"source": "softseguros"},
+        partialFilterExpression={"source": "softseguros", "softseguros_pago_id": {"$exists": True}},
     )
+    # Non-unique: group all cuotas belonging to the same póliza.
+    await _safe_index(db.debtors, [("user_id", 1), ("softseguros_poliza_id", 1)])
     await _safe_index(db.softseguros_sync_state, "user_id", unique=True)
     await _safe_index(db.softseguros_sync_logs, [("user_id", 1), ("completed_at", -1)])
     # ── Email OAuth + Events ──────────────────────────────────────────────────
@@ -136,6 +139,19 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     await _safe_index(db.cobranza_calls_in_progress, [("started_at", 1)], expireAfterSeconds=3600)
     await _safe_index(db.cobranza_calls, [("user_id", 1), ("created_at", -1)])
     await _safe_index(db.cobranza_calls, "call_id", unique=True)
+    # ── Máquina de intentos (sequence_engine) ────────────────────────────────
+    await _safe_index(db.debtors, [("user_id", 1), ("proximo_intento_at", 1)])
+    await _safe_index(db.cobranza_daily_stats, [("user_id", 1), ("fecha", 1)], unique=True)
+    # ── Paquete de minutos (ledger append-only, facturación) ─────────────────
+    # Único parcial por call_sid: un status-callback reenviado por Twilio no
+    # puede descontar la misma llamada dos veces.
+    await _safe_index(
+        db.cobranza_minutos_ledger, "call_sid",
+        unique=True, partialFilterExpression={"tipo": "consumo"},
+    )
+    await _safe_index(db.cobranza_minutos_ledger, [("user_id", 1), ("created_at", -1)])
+    # ── Alertas tipadas (informe §7) ──────────────────────────────────────────
+    await _safe_index(db.cobranza_alertas, [("user_id", 1), ("atendida", 1), ("created_at", -1)])
     # ── Phase 25: Agentic Multi-Tenant Architecture indexes ──────────────────
     await _safe_index(db.tenant_configs, "user_id", unique=True)
     await _safe_index(db.agent_instances, "user_id", unique=True)

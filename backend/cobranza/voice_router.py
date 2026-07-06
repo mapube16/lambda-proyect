@@ -22,7 +22,7 @@ from cobranza.debtor_crud import get_debtor_by_id, update_debtor
 from cobranza.voice_pipecat import run_bot, CallResult
 from services.connection_manager import manager as _ws_manager
 
-_TERMINAL_ESTADOS = {"promesa_de_pago", "escalado", "pagado"}
+_TERMINAL_ESTADOS = {"promesa_de_pago", "escalado", "pagado", "reagendado", "disputa", "pago_reportado", "pausado"}
 
 logger = logging.getLogger("cobranza.voice")
 
@@ -72,6 +72,49 @@ async def twilio_webhook(request: Request):
     )
     logger.info("[Webhook] TwiML -> Stream %s", ws_url)
     return PlainTextResponse(twiml, media_type="application/xml")
+
+
+# ── Call Status Callback (consumo del paquete de minutos) ───────────────────
+
+
+def _twilio_signature_ok(request: Request, form: dict, path: str) -> bool:
+    """
+    Valida X-Twilio-Signature contra la URL pública. El ledger de minutos es
+    ruta de facturación: un callback forjado inflaría el consumo del cliente.
+    Sin TWILIO_AUTH_TOKEN (dev local) no se valida.
+    """
+    token = os.getenv("TWILIO_AUTH_TOKEN")
+    if not token:
+        return True
+    try:
+        from twilio.request_validator import RequestValidator
+        url = f"{os.getenv('VOICE_WEBHOOK_HOST', 'http://localhost:8002')}{path}"
+        signature = request.headers.get("X-Twilio-Signature", "")
+        return RequestValidator(token).validate(url, form, signature)
+    except Exception:
+        logger.exception("[CallStatus] signature validation error")
+        return False
+
+
+@router.post("/call-status")
+async def call_status_callback(request: Request):
+    """
+    Twilio lo llama al terminar la llamada (evento 'completed') con CallDuration.
+    Registra el consumo del paquete de minutos (idempotente por CallSid).
+    """
+    form = dict(await request.form())
+    if not _twilio_signature_ok(request, form, "/api/cobranza/voice/call-status"):
+        raise HTTPException(403, "Invalid Twilio signature")
+
+    call_sid = form.get("CallSid", "")
+    call_status = form.get("CallStatus", "")
+    duration = int(form.get("CallDuration") or 0)
+    logger.info("[CallStatus] %s status=%s duration=%ss", call_sid, call_status, duration)
+
+    if call_status == "completed":
+        from cobranza import minutes
+        await minutes.record_call_consumption(get_db(), call_sid, duration)
+    return PlainTextResponse("OK")
 
 
 # ── Recording Callback ──────────────────────────────────────────────────────
@@ -229,7 +272,15 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
 async def _process_call_ended(db, debtor: dict, result: CallResult):
     """Update debtor status and save call history after Pipecat pipeline ends."""
     try:
-        current_estado = debtor.get("estado", "pendiente")
+        # El estado se relee de la DB: las tools de la llamada (reagendar_llamada,
+        # informar_fecha_pago, escalate, notify_payment_claim) escriben durante
+        # la conversación y el dict en memoria quedó en 'llamando' — usarlo
+        # pisaba esos estados con 'contactado' al colgar.
+        debtor_oid = ObjectId(debtor["_id"]) if isinstance(debtor["_id"], str) else debtor["_id"]
+        fresh = await db.debtors.find_one({"_id": debtor_oid}, {"estado": 1})
+        current_estado = (fresh or {}).get("estado") or debtor.get("estado", "pendiente")
+        if current_estado == "llamando":
+            current_estado = debtor.get("estado_previo") or "pendiente"
 
         # Determine new estado
         if current_estado in _TERMINAL_ESTADOS:
@@ -242,9 +293,16 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
         else:
             new_estado = "sin_contacto"
 
-        # Check max intentos
+        # Check max intentos — manda la config del tenant (informe: 3), con el
+        # max del deudor como fallback para cargas manuales.
+        try:
+            from cobranza.config_cache import get_tenant_config
+            cfg = await get_tenant_config(str(debtor["user_id"]))
+            timings = ((cfg or {}).get("cobranza") or {}).get("timings") or {}
+            max_intentos = int(timings.get("max_intentos") or debtor.get("max_intentos", 3))
+        except Exception:
+            max_intentos = debtor.get("max_intentos", 3)
         current_intentos = debtor.get("intentos", 0)
-        max_intentos = debtor.get("max_intentos", 5)
         new_intentos = current_intentos + 1
         if new_intentos >= max_intentos and new_estado not in _TERMINAL_ESTADOS:
             new_estado = "agotado"
@@ -272,12 +330,23 @@ async def _process_call_ended(db, debtor: dict, result: CallResult):
                 },
                 "$inc": {"intentos": 1},
                 "$push": {"historial_llamadas": call_record},
-                "$unset": {"vapi_call_id": ""},
+                # proximo_intento_at se borra para que el planner de la secuencia
+                # recalcule el siguiente intento con el nuevo conteo (offset L2/L3).
+                "$unset": {"vapi_call_id": "", "proximo_intento_at": "", "proximo_intento_numero": ""},
             },
         )
 
         logger.info("[PostCall] %s -> estado=%s, intentos=%d, duration=%ds",
                      result.call_sid, new_estado, new_intentos, result.duration_seconds)
+
+        # Agotó los intentos sin contacto → alerta a cartera para seguimiento
+        # manual (informe §7: "cliente que no contestó ninguna llamada...").
+        if new_estado == "agotado":
+            try:
+                from cobranza.alerts import crear_alerta
+                await crear_alerta(db, str(debtor["user_id"]), debtor, "sin_contacto_agotado")
+            except Exception:
+                logger.exception("[PostCall] alerta sin_contacto_agotado falló (no fatal)")
 
         # Push real-time WebSocket event to dashboard
         try:
@@ -325,6 +394,13 @@ async def initiate_call_v2(
     if has_been_contacted_today(debtor):
         raise HTTPException(400, "Ya fue contactado hoy (Ley 2300)")
 
+    # Paquete de minutos: sin saldo no se marca (402 = payment required).
+    from cobranza.minutes import MinutesExhaustedError, require_saldo
+    try:
+        await require_saldo(db, user_id)
+    except MinutesExhaustedError as e:
+        raise HTTPException(402, str(e))
+
     # ── Concurrency cap (Etapa 1 of scaling plan) ─────────────────────────
     # One uvicorn process degrades visibly with 2+ simultaneous Gemini Live
     # pipelines (observed: zombie voicemail call starved a real call — slow
@@ -371,6 +447,7 @@ async def initiate_call_v2(
             from_=from_number,
             url=f"{webhook_url}/api/cobranza/voice/webhook",
             method="POST",
+            **call_status_kwargs(),
         )
         if amd_enabled:
             # "DetectMessageEnd" is more conservative than "Enable": it waits for

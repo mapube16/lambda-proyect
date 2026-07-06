@@ -94,7 +94,10 @@ async def login(user: UserCreate, request: Request):
 
 @router.post("/auth/dev-token")
 async def dev_token():
-    """Development endpoint: returns a token for dpg.seguros@gmail.com without rate limiting"""
+    """Development endpoint: returns a token for dpg.seguros@gmail.com without rate limiting.
+    Blocked in production — this mints a valid token with zero authentication."""
+    if os.getenv("ENV", "development") == "production":
+        raise HTTPException(status_code=404, detail="Not found")
     from datetime import timedelta
     user_id = "6a1aec6e89dbf2987cef054e"
     role = "client"

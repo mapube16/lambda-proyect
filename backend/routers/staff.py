@@ -277,6 +277,40 @@ async def staff_disable_cobranza(client_id: str, _staff=Depends(require_staff)):
     return {"ok": True, "client_id": client_id, "cobranza_enabled": False}
 
 
+# ── Dashboard modules override (gates ClientDashboard sidebar sections) ──────────
+
+VALID_MODULES = {"leads", "cobranza", "email", "canales"}
+
+
+class ModulesRequest(BaseModel):
+    modules_enabled: list[str]
+
+
+@router.post("/api/staff/clients/{client_id}/modules", status_code=200)
+async def staff_set_modules(client_id: str, request: ModulesRequest, _staff=Depends(require_staff)):
+    """
+    Explicit override of which ClientDashboard sections this tenant sees.
+    Used for single-purpose tenants (e.g. DPG: modules_enabled=["cobranza"]) —
+    everything else shows locked with a "contact Landa" modal. Does NOT bypass
+    the real cobranza_enabled permission check on the API side; this only
+    controls sidebar visibility.
+    """
+    invalid = [m for m in request.modules_enabled if m not in VALID_MODULES]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid modules: {invalid}. Valid values: {sorted(VALID_MODULES)}")
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.company_voice.update_one(
+        {"user_id": client_id},
+        {
+            "$set": {"modules_enabled": request.modules_enabled, "updated_at": now},
+            "$setOnInsert": {"user_id": client_id, "created_at": now},
+        },
+        upsert=True,
+    )
+    return {"ok": True, "client_id": client_id, "modules_enabled": request.modules_enabled}
+
+
 # ── Tenant provisioning (one POST = one fully-configured client) ────────────────
 
 class VoicePersonaModel(BaseModel):

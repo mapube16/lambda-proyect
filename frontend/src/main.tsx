@@ -1,5 +1,8 @@
+import '@mantine/core/styles.css';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MantineProvider } from '@mantine/core';
+import { theme } from './mantineTheme';
 import App from './App';
 
 // Create QueryClient instance with optimized defaults
@@ -19,6 +22,8 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={queryClient}>
-    <App />
+    <MantineProvider theme={theme}>
+      <App />
+    </MantineProvider>
   </QueryClientProvider>
 );

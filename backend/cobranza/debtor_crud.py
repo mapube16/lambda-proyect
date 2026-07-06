@@ -41,7 +41,7 @@ async def create_debtor(db, user_id: str, data: dict) -> dict:
         "estado": "pendiente",
         "vapi_call_id": data.get("vapi_call_id"),
         "intentos": 0,
-        "max_intentos": data.get("max_intentos", 5),
+        "max_intentos": data.get("max_intentos", 3),
         "historial_llamadas": data.get("historial_llamadas", []),
         "escalado": False,
         "notas": data.get("notas"),
@@ -77,7 +77,7 @@ async def bulk_create_debtors(db, user_id: str, debtors: list[dict]) -> dict:
             "estado": data.get("estado", "pendiente"),
             "vapi_call_id": data.get("vapi_call_id"),
             "intentos": int(data.get("intentos", 0)),
-            "max_intentos": int(data.get("max_intentos", 5)),
+            "max_intentos": int(data.get("max_intentos", 3)),
             "historial_llamadas": data.get("historial_llamadas", []),
             "escalado": bool(data.get("escalado", False)),
             "notas": data.get("notas"),
@@ -133,7 +133,7 @@ async def bulk_upsert_debtors(db, user_id: str, debtors: list[dict]) -> dict:
             "estado": "pendiente",
             "vapi_call_id": None,
             "intentos": 0,
-            "max_intentos": int(data.get("max_intentos", 5)),
+            "max_intentos": int(data.get("max_intentos", 3)),
             "historial_llamadas": [],
             "escalado": False,
             "ultimo_contacto_fecha": None,
@@ -166,6 +166,8 @@ async def get_debtors(
     user_id: str,
     estado: Optional[str] = None,
     group: Optional[str] = None,
+    min_mora: Optional[int] = None,
+    sort: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict:
@@ -187,10 +189,26 @@ async def get_debtors(
     elif group is not None and group in ESTADO_GROUPS:
         query["estado"] = {"$in": ESTADO_GROUPS[group]}
 
+    # Exclude debtors the SOFTSEGUROS sync archived (is_active=False: paid upstream /
+    # fell out of the configured window) from the ACTIVE-queue views, so they don't
+    # inflate "Pendiente". A resolved-state query (pagado/pausado) still sees them.
+    resolved_view = estado in ("pagado", "pausado") or group == "resueltos"
+    if not resolved_view:
+        query["is_active"] = {"$ne": False}
+
+    # Filtro por antigüedad de mora (edad_cartera de Softseguros). Deudores sin el
+    # campo (cargas manuales) quedan fuera cuando se pide un umbral > 0.
+    if min_mora is not None:
+        query["dias_mora"] = {"$gte": min_mora}
+
+    # sort="mora" prioriza mayor mora primero (para llamar a los más críticos);
+    # por defecto, actividad más reciente. Los docs sin dias_mora caen al final.
+    sort_field = "dias_mora" if sort == "mora" else "updated_at"
+
     total = await db.debtors.count_documents(query)
     cursor = (
         db.debtors.find(query)
-        .sort("updated_at", -1)
+        .sort(sort_field, -1)
         .skip((page - 1) * page_size)
         .limit(page_size)
     )
@@ -295,7 +313,7 @@ async def upsert_debtor_by_softseguros_poliza_id(
         "softseguros_poliza_id": softseguros_poliza_id,
         "estado": "pendiente",
         "intentos": 0,
-        "max_intentos": int(doc.get("max_intentos", 5)),
+        "max_intentos": int(doc.get("max_intentos", 3)),
         "historial_llamadas": [],
         "escalado": False,
         "vapi_call_id": None,
@@ -336,7 +354,7 @@ def build_softseguros_upsert_op(user_id: str, softseguros_poliza_id: int, doc: d
         "softseguros_poliza_id": softseguros_poliza_id,
         "estado": "pendiente",
         "intentos": 0,
-        "max_intentos": int(doc.get("max_intentos", 5)),
+        "max_intentos": int(doc.get("max_intentos", 3)),
         "historial_llamadas": [],
         "escalado": False,
         "vapi_call_id": None,
@@ -434,3 +452,72 @@ async def list_active_softseguros_poliza_ids(db, user_id: str) -> set:
     )
     docs = await cursor.to_list(length=None)
     return {d["softseguros_poliza_id"] for d in docs if d.get("softseguros_poliza_id") is not None}
+
+
+# ── CUOTA model helpers (the real cartera: one debtor == one softseguros_pago_id) ──
+# The póliza-keyed helpers above are the legacy model. The cartera endpoint
+# (list_pagospolizas_filtro_paginados) returns one row per CUOTA, so a financed
+# póliza yields N debtors. Everything below keys on softseguros_pago_id.
+# `_pago_to_debtor_doc` (sync.py) already produces only SOFTSEGUROS-owned fields,
+# so we $set the whole doc on each sync and $setOnInsert the Phase-17 invariants.
+
+def build_softseguros_pago_upsert_op(
+    user_id: str, softseguros_pago_id, doc: dict, *, pinned: bool = False,
+) -> dict:
+    """
+    Build the (filter, update) upsert spec keyed by (user_id, softseguros_pago_id).
+    On insert: seeds cobranza invariants (estado='pendiente', intentos=0, …), source,
+    and `pinned`. On update: all SOFTSEGUROS-owned fields refresh; Phase-17 call state
+    is preserved. When `pinned=True` (manual custom load) the debtor is pinned so the
+    daily sweep never deactivates it — even if it re-pins an existing doc.
+    """
+    now = _utcnow()
+    set_payload = {k: v for k, v in doc.items() if k != "softseguros_pago_id"}
+    set_payload["last_synced"] = now
+    set_payload["updated_at"] = now
+    if pinned:
+        set_payload["pinned"] = True  # manual load pins new AND existing docs
+    on_insert = {
+        "user_id": user_id,
+        "source": "softseguros",
+        "softseguros_pago_id": softseguros_pago_id,
+        "estado": "pendiente",
+        "intentos": 0,
+        "max_intentos": int(doc.get("max_intentos", 3)),
+        "historial_llamadas": [],
+        "escalado": False,
+        "vapi_call_id": None,
+        "ultimo_contacto_fecha": None,
+        "created_at": now,
+    }
+    if not pinned:
+        on_insert["pinned"] = False  # daily sync: default unpinned on insert only
+    for k in list(set_payload):
+        if k in on_insert:
+            on_insert.pop(k, None)
+    return {
+        "filter": {"user_id": user_id, "softseguros_pago_id": softseguros_pago_id},
+        "update": {"$set": set_payload, "$setOnInsert": on_insert},
+    }
+
+
+async def list_active_softseguros_pago_ids(db, user_id: str, *, include_pinned: bool = False) -> set:
+    """Active SOFTSEGUROS cuota-debtors' pago ids. Pinned ones are excluded by default
+    so the daily soft-delete sweep never touches a manually-pinned load."""
+    q = {"user_id": user_id, "source": "softseguros", "is_active": True,
+         "softseguros_pago_id": {"$exists": True}}
+    if not include_pinned:
+        q["pinned"] = {"$ne": True}
+    cursor = db.debtors.find(q, {"softseguros_pago_id": 1})
+    docs = await cursor.to_list(length=None)
+    return {d["softseguros_pago_id"] for d in docs if d.get("softseguros_pago_id") is not None}
+
+
+async def mark_debtor_paid_by_softseguros_pago_id(db, user_id: str, softseguros_pago_id) -> bool:
+    """Soft-mark a cuota-debtor as resolved (paid / fell out of the unpaid window)."""
+    result = await db.debtors.update_one(
+        {"user_id": user_id, "softseguros_pago_id": softseguros_pago_id},
+        {"$set": {"status_softseguros": "pagado", "is_active": False,
+                  "recaudado": True, "updated_at": _utcnow()}},
+    )
+    return result.matched_count > 0

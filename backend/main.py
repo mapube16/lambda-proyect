@@ -73,6 +73,8 @@ async def lifespan(app: FastAPI):
     from landa.scheduler import scheduler as _sched
     from cobranza.campaign_scheduler import register_cobranza_jobs
     register_cobranza_jobs(_sched)
+    from cobranza.report_scheduler import register_report_jobs
+    register_report_jobs(_sched)
 
     # Phase 18: SOFTSEGUROS daily sync scheduler (must run after init_db).
     try:
@@ -205,9 +207,11 @@ app.include_router(landa.router)
 from cobranza.router import router as cobranza_router
 from cobranza.webhooks import vapi_router as _vapi_router
 from cobranza.voice_router import router as voice_router
+from cobranza.wa_bridge_router import router as wa_bridge_router
 app.include_router(cobranza_router)
 app.include_router(_vapi_router)
 app.include_router(voice_router)
+app.include_router(wa_bridge_router)
 
 # ── Phase 25: Multi-tenant admin API ──────────────────────────────────────────
 from routers.tenant_admin import router as tenant_admin_router

@@ -6,6 +6,15 @@ import { apiFetch } from '../lib/apiFetch';
 
 const LeadDossierModal = lazy(() => import('./LeadDossierModal').then(m => ({ default: m.LeadDossierModal })));
 const CobranzaTab = lazy(() => import('./CobranzaTab').then(m => ({ default: m.CobranzaTab })));
+import { FeatureLockedModal } from './FeatureLockedModal';
+
+// Módulos del dashboard y su nombre visible en el modal de bloqueo.
+const MODULE_LABELS: Record<DashboardSection, string> = {
+  leads: 'Prospección (Pipeline)',
+  cobranza: 'Cobranza',
+  email: 'Email masivo',
+  canales: 'Canales',
+};
 
 const API = '';
 
@@ -369,8 +378,8 @@ const SidebarLabel = React.memo(function SidebarLabel({ text }: { text: string }
 });
 
 // ─── Nav item ──────────────────────────────────────────────────────────────────
-const NavItem = React.memo(function NavItem({ icon, text, active, count, accent, onClick }: {
-  icon: React.ReactNode; text: string; active: boolean; count?: number; accent?: string; onClick: () => void;
+const NavItem = React.memo(function NavItem({ icon, text, active, count, accent, locked, onClick }: {
+  icon: React.ReactNode; text: string; active: boolean; count?: number; accent?: string; locked?: boolean; onClick: () => void;
 }) {
   const [hov, setHov] = useState(false);
   const color = accent || C.cyan;
@@ -392,6 +401,7 @@ const NavItem = React.memo(function NavItem({ icon, text, active, count, accent,
         borderRadius: 8,
         position: 'relative',
         overflow: 'hidden',
+        opacity: locked ? 0.55 : 1,
       }}
     >
       {/* Subtle glow on active */}
@@ -419,6 +429,7 @@ const NavItem = React.memo(function NavItem({ icon, text, active, count, accent,
         transition: 'color 0.2s',
         flex: 1,
       }}>{text}</span>
+      {locked && <span style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>🔒</span>}
       {count !== undefined && count > 0 && (
         <span style={{
           background: active ? `${color}20` : 'rgba(255,255,255,0.06)',
@@ -503,18 +514,31 @@ export function ClientDashboard({
     enabled: isAuthenticated,
   });
 
-  // ── React Query: Cobranza status ───────────────────────────────────────────────
-  const { data: cobranzaData } = useQuery({
-    queryKey: ['cobranza-status'],
+  // ── React Query: Enabled modules (gates sidebar sections not in the client's plan) ─
+  // Single source of truth for which DashboardSections this tenant can access.
+  // The backend already folds the legacy `cobranza_enabled` flag into this list.
+  const { data: modulesData } = useQuery({
+    queryKey: ['enabled-modules'],
     queryFn: async () => {
-      const r = await apiFetch(`${API}/api/cobranza/status`);
+      const r = await apiFetch(`${API}/api/client/modules`);
       return r.ok ? await r.json() : null;
     },
     enabled: isAuthenticated,
-    refetchInterval: 30000, // Auto-refresh every 30s (status only; was 5s — too chatty)
+    staleTime: 60000,
   });
 
-  const cobranzaEnabled = cobranzaData?.enabled ?? false;
+  // While loading, keep every section locked rather than briefly granting access.
+  const enabledModules = new Set<DashboardSection>(modulesData?.modules_enabled ?? []);
+  const [lockedFeature, setLockedFeature] = useState<DashboardSection | null>(null);
+
+  function goToSection(target: DashboardSection, extra?: () => void) {
+    if (!enabledModules.has(target)) {
+      setLockedFeature(target);
+      return;
+    }
+    setSection(target);
+    extra?.();
+  }
 
   // Apply initial section once; if cobranza isn't enabled, fall back to leads.
   const appliedInitialSection = useRef(false);
@@ -526,16 +550,16 @@ export function ClientDashboard({
     }
 
     if (initialSection === 'cobranza') {
-      // Wait until cobranza status resolves (null or object) before deciding.
-      if (cobranzaData === undefined) return;
-      setSection(cobranzaEnabled ? 'cobranza' : 'leads');
+      // Wait until the modules list resolves before deciding.
+      if (modulesData === undefined) return;
+      setSection(enabledModules.has('cobranza') ? 'cobranza' : 'leads');
       appliedInitialSection.current = true;
       return;
     }
 
     setSection(initialSection);
     appliedInitialSection.current = true;
-  }, [initialSection, cobranzaData, cobranzaEnabled]);
+  }, [initialSection, modulesData, enabledModules]);
 
   // ── React Query: Email status ──────────────────────────────────────────────────
   const { data: emailData } = useQuery({
@@ -755,20 +779,16 @@ export function ClientDashboard({
         <nav style={{ flex: 1, paddingTop: 4, overflowY: 'auto', overflowX: 'hidden' }}>
           {/* Main sections */}
           <SidebarLabel text="Gestión" />
-          <NavItem icon={<BarChartIcon />} text="Pipeline"    active={section === 'leads' && tab === 'pending'}  count={pending.length}  onClick={() => { setSection('leads'); setTab('pending'); }}  />
-          <NavItem icon={<CheckIcon />}    text="Aprobados"   active={section === 'leads' && tab === 'approved'} count={approved.length} accent={C.green} onClick={() => { setSection('leads'); setTab('approved'); }} />
-          <NavItem icon={<XIcon />}        text="Descartados" active={section === 'leads' && tab === 'rejected'} count={rejected.length} accent={C.pink}  onClick={() => { setSection('leads'); setTab('rejected'); }} />
+          <NavItem icon={<BarChartIcon />} text="Pipeline"    active={section === 'leads' && tab === 'pending'}  count={pending.length}  locked={!enabledModules.has('leads')} onClick={() => goToSection('leads', () => setTab('pending'))}  />
+          <NavItem icon={<CheckIcon />}    text="Aprobados"   active={section === 'leads' && tab === 'approved'} count={approved.length} accent={C.green} locked={!enabledModules.has('leads')} onClick={() => goToSection('leads', () => setTab('approved'))} />
+          <NavItem icon={<XIcon />}        text="Descartados" active={section === 'leads' && tab === 'rejected'} count={rejected.length} accent={C.pink}  locked={!enabledModules.has('leads')} onClick={() => goToSection('leads', () => setTab('rejected'))} />
 
-          {cobranzaEnabled && (
-            <>
-              <SidebarLabel text="Cobros" />
-              <NavItem icon={<DollarIcon />} text="Cobranza" active={section === 'cobranza'} accent="#fc9867" onClick={() => setSection('cobranza')} />
-            </>
-          )}
+          <SidebarLabel text="Cobros" />
+          <NavItem icon={<DollarIcon />} text="Cobranza" active={section === 'cobranza'} accent="#fc9867" locked={!enabledModules.has('cobranza')} onClick={() => goToSection('cobranza')} />
 
           <SidebarLabel text="Comunicación" />
-          <NavItem icon={<MailIcon />}  text="Email"   active={section === 'email'}   onClick={() => setSection('email')} />
-          <NavItem icon={<ShareIcon />} text="Canales"  active={section === 'canales'} accent={C.green} onClick={() => setSection('canales')} />
+          <NavItem icon={<MailIcon />}  text="Email"   active={section === 'email'}   locked={!enabledModules.has('email')} onClick={() => goToSection('email')} />
+          <NavItem icon={<ShareIcon />} text="Canales"  active={section === 'canales'} accent={C.green} locked={!enabledModules.has('canales')} onClick={() => goToSection('canales')} />
 
           {/* Spacer */}
           <div style={{ flex: 1, minHeight: 24 }} />
@@ -1411,6 +1431,14 @@ export function ClientDashboard({
             onApplyStatus={applyStatus}
           />
         </Suspense>
+      )}
+
+      {/* ── Feature-locked modal ────────────────────────────────────────────── */}
+      {lockedFeature && (
+        <FeatureLockedModal
+          featureName={MODULE_LABELS[lockedFeature]}
+          onClose={() => setLockedFeature(null)}
+        />
       )}
 
       {/* ── Toast stack ─────────────────────────────────────────────────────── */}
