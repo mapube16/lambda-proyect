@@ -283,18 +283,21 @@ async def send_via_resend(to: list, subject: str, html: str) -> dict:
     if not api_key or not to:
         logger.warning("[reports] sin MAILERSEND_API_KEY o destinatarios — reporte generado pero NO enviado")
         return {"ok": False, "sent": False, "reason": "sin_key_o_destinatarios"}
-    try:
-        from mailer import _send as _mailersend_send
-        for to_email in to:
+    from mailer import _send as _mailersend_send
+    enviados, fallidos = [], []
+    for to_email in to:
+        try:
             # _send es síncrono (llamada bloqueante al SDK de MailerSend) — se
-            # corre en un thread para no congelar el event loop.
+            # corre en un thread para no congelar el event loop. Por destinatario:
+            # un fallo (ej. límite de cuenta trial) no debe tumbar a los demás.
             await asyncio.to_thread(
                 _mailersend_send, from_addr, "ARIA — Landa Tech", to_email, "", subject, html,
             )
-        return {"ok": True, "sent": True}
-    except Exception as exc:
-        logger.exception("[reports] envío por MailerSend falló")
-        return {"ok": False, "sent": False, "error": str(exc)[:200]}
+            enviados.append(to_email)
+        except Exception as exc:
+            logger.exception("[reports] envío por MailerSend falló para %s", to_email)
+            fallidos.append({"to": to_email, "error": str(exc)[:200]})
+    return {"ok": bool(enviados), "sent": bool(enviados), "enviados": enviados, "fallidos": fallidos}
 
 
 # ── Orquestación ────────────────────────────────────────────────────────────────
