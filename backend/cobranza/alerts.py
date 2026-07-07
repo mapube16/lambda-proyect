@@ -21,11 +21,14 @@ logger = logging.getLogger("cobranza.alerts")
 COLLECTION = "cobranza_alertas"
 
 # Los 9 tipos del informe §7 (más "sin_contacto_agotado" = 3 intentos sin
-# respuesta, que el informe pide notificar a cartera para seguimiento manual).
+# respuesta, que el informe pide notificar a cartera para seguimiento manual,
+# y "llamada_entrante_no_identificada" = §9.4, cliente devuelve la llamada
+# pero no se pudo resolver un único deudor por su número).
 TIPOS = (
     "asesor_humano", "consulta_fuera_alcance", "oportunidad_comercial",
     "pago_reportado", "solicitud_link_cupon", "opt_out",
     "numero_equivocado", "fecha_estimada_pago", "sin_contacto_agotado",
+    "llamada_entrante_no_identificada",
 )
 
 _TITULOS = {
@@ -38,6 +41,7 @@ _TITULOS = {
     "numero_equivocado": "El número no corresponde al cliente",
     "fecha_estimada_pago": "Informó una fecha estimada de pago",
     "sin_contacto_agotado": "Agotó los 3 intentos sin contacto",
+    "llamada_entrante_no_identificada": "Llamada entrante sin identificar — seguimiento manual",
 }
 
 

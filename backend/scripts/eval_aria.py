@@ -131,7 +131,7 @@ def _runtime_block(debtor: dict) -> str:
     )
 
 
-def build_system_prompt(*, intento: int = 1, dias_mora: int = 0, debtor: dict = None) -> str:
+def build_system_prompt(*, intento: int = 1, dias_mora: int = 0, debtor: dict = None, is_inbound: bool = False) -> str:
     d = {**BASE_DEBTOR, **(debtor or {})}
     persona = _dpg_persona()
     return assemble_system_prompt(
@@ -146,6 +146,7 @@ def build_system_prompt(*, intento: int = 1, dias_mora: int = 0, debtor: dict = 
         intento=intento,
         dias_mora=dias_mora,
         numero_cuota=d.get("numero_cuota", ""),
+        is_inbound=is_inbound,
     )
 
 
@@ -169,6 +170,13 @@ ESCENARIOS = [
      "historial": [{"role": "assistant", "content": "Buenas tardes señor Carlos, le habla ARIA de DPG Seguros. ¿Hablo con el señor Carlos?"}],
      "mensaje": "sí, con él", "tool_esperada": None,
      "debe_contener": ["15 día", "vencimiento"], "no_debe_contener": ["acuerdo de pago"]},
+
+    {"id": "A4", "seccion": "§9.4 — llamada ENTRANTE: primer turno del modelo, SIN mensaje de usuario previo "
+                             "(Twilio ya saludó + pidió el nombre por su cuenta antes de este pipeline)",
+     "intento": 1, "dias_mora": 0, "is_inbound": True,
+     "historial": [], "mensaje": "", "tool_esperada": None,
+     "debe_contener": ["cuota", "autos", "pendiente"],
+     "no_debe_contener": ["habla con el", "hablo con el", "acuerdo de pago"]},
 
     # ── GRUPO B — Flujo de pago / objeciones (§4, §9) ──────────────────────────
     {"id": "B1", "seccion": "§9 — pide LINK de pago", "intento": 1, "dias_mora": 0,
@@ -285,11 +293,18 @@ ESCENARIOS = [
 
 
 async def _run_scenario(client: httpx.AsyncClient, api_key: str, esc: dict) -> dict:
-    system = build_system_prompt(intento=esc["intento"], dias_mora=esc["dias_mora"])
+    system = build_system_prompt(
+        intento=esc["intento"], dias_mora=esc["dias_mora"], is_inbound=esc.get("is_inbound", False),
+    )
     messages = [{"role": "system", "content": system}]
     for turno in esc["historial"]:
         messages.append(turno)
-    messages.append({"role": "user", "content": esc["mensaje"]})
+    # mensaje="" (llamada entrante, informe §9.4): el saludo + pregunta del
+    # nombre ya los maneja Twilio (Play + Gather) ANTES de que Gemini Live
+    # arranque — acá se prueba el primer turno del modelo SIN ningun mensaje
+    # de usuario previo, igual que arranca de verdad en producción.
+    if esc["mensaje"]:
+        messages.append({"role": "user", "content": esc["mensaje"]})
 
     async def _completar(msgs):
         r = await client.post(

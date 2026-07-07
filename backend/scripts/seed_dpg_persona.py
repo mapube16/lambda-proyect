@@ -56,6 +56,15 @@ DPG_PERSONA = {
             "en caso de un siniestro, el estado de mora podria generar restricciones o "
             "incluso afectar la cobertura por parte de la aseguradora."
         ),
+        # §9.4 — cliente devuelve una llamada perdida. La identidad ya se
+        # confirmo por telefono + nombre ANTES de este pipeline (ver
+        # cobranza/voice_router.py); este guion arranca directo en el
+        # recordatorio, sin repetir el saludo/pregunta de identidad.
+        "entrante": (
+            "Gracias, senor(a) {first_name}. Le contactamos en relacion con el pago "
+            "de la cuota{con_cuota} de su poliza de {ramo}{con_riesgo}, expedida por "
+            "{aseguradora}{con_modalidad}, con un valor pendiente de {monto_natural}."
+        ),
     },
     "business_rules": "- AL SALUDAR Y AL DIRIGIRTE AL CLIENTE usa 'senor' o 'senora' segun corresponda (ej: 'senor Carlos', 'senora Marta', 'buenas tardes senor'). NUNCA uses 'don', 'dona', 'caballero' ni 'amigo'.",
     "objection_handling": (

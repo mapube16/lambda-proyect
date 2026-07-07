@@ -115,6 +115,8 @@ async def run_bot(
     user_id: str = "",
     stream_id: str = "",
     call_control_id: str = "",
+    is_inbound: bool = False,
+    caller_stated_name: str = "",
 ) -> CallResult:
     """
     Spawn a Pipecat pipeline using Telnyx transport + Gemini Live LLM.
@@ -127,6 +129,12 @@ async def run_bot(
         user_id: Tenant user_id for config hot-reload and orchestrator isolation.
         stream_id: Telnyx stream_id from WebSocket handshake.
         call_control_id: Telnyx call_control_id for hang-up via TelnyxFrameSerializer.
+        is_inbound: True si es una llamada ENTRANTE (§9.4, cliente devuelve la
+            llamada) — selecciona el guion "entrante" y salta la pregunta de
+            identidad (ya resuelta por telefono + Gather antes del pipeline).
+        caller_stated_name: nombre que el que llama dijo por voz (STT nativo de
+            Twilio, capturado ANTES de este pipeline) — solo para auditoria/log,
+            no se inyecta al prompt (texto no verificado de quien llama).
 
     Returns:
         CallResult with transcript and duration for post-call processing.
@@ -137,7 +145,10 @@ async def run_bot(
     monto = debtor.get("monto", 0)
     vencimiento = debtor.get("vencimiento", "desconocida")
 
-    logger.info("[VOICE] run_bot called: call_sid=%s, debtor=%s, user_id=%s", call_sid, debtor_name, user_id)
+    logger.info(
+        "[VOICE] run_bot called: call_sid=%s, debtor=%s, user_id=%s, is_inbound=%s, caller_stated_name=%s",
+        call_sid, debtor_name, user_id, is_inbound, caller_stated_name,
+    )
 
     # ── Latency instrumentation: log ms between each startup stage so we can see
     # EXACTLY what's slow between WS-connect and first audio. _t0 = run_bot entry.
@@ -317,6 +328,7 @@ async def run_bot(
         intento=int(debtor.get("proximo_intento_numero") or (debtor.get("intentos") or 0) + 1),
         dias_mora=_dias_mora,
         numero_cuota=str(debtor.get("numero_cuota") or ""),
+        is_inbound=is_inbound,
     )
     logger.info(
         "[VOICE] Assembled 3-layer prompt for user %s (persona=%s, %d chars)",

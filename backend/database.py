@@ -37,7 +37,10 @@ def get_db():
 async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     global _client
     import certifi
-    _client = client or AsyncIOMotorClient(MONGODB_URI, tlsCAFile=certifi.where())
+    # socketTimeoutMS: sin esto, una query colgada sobre un socket YA conectado
+    # no tiene límite (serverSelectionTimeoutMS/connectTimeoutMS solo cubren la
+    # fase de conexión inicial, no una query en curso).
+    _client = client or AsyncIOMotorClient(MONGODB_URI, tlsCAFile=certifi.where(), socketTimeoutMS=20000)
     db = _client[DB_NAME]
     await _safe_index(db.users, "email", unique=True)
     await _safe_index(db.campaigns, [("user_id", 1), ("is_active", 1)])

@@ -52,7 +52,9 @@ class AddPhoneRequest(BaseModel):
 # ── Register / Login ─────────────────────────────────────────────────────────
 
 @router.post("/auth/register", status_code=201)
-async def register(user: UserCreate):
+async def register(user: UserCreate, request: Request):
+    from rate_limiting import check_registration_rate_limit
+    check_registration_rate_limit(request)
     existing = await get_user_by_email(user.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")

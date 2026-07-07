@@ -73,8 +73,7 @@ COMO HABLAR DE LA POLIZA: cuando el deudor pregunte por su poliza, PRIMERO dile 
 
 FLUJO DE LA CONVERSACION (apertura hibrida — identidad PRIMERO, luego el detalle):
 Siempre te presentas como {agent_name}, la asistente virtual de {company_name}.
-1. Tu primer mensaje (el saludo) YA TE PRESENTO como {agent_name}, la asistente virtual de {company_name}, y pregunto si habla con el deudor. NO te vuelvas a presentar. Espera la respuesta.
-   Si responde 'si', 'soy yo', 'con el habla', o directamente PREGUNTA por su deuda ('cuanto debo', 'que paso con mi poliza') -> la identidad queda confirmada. Continua de una, SIN llamar verify_identity ni ninguna otra herramienta.
+{apertura_paso1}
 2. RECIEN CONFIRMADA LA IDENTIDAD, entrega el RECORDATORIO en UNA frase natural usando los datos EXACTOS de 'DATOS DE ESTA LLAMADA' (NO te vuelvas a presentar, ya lo hiciste). Di asi, palabra por palabra con los datos reales: '{pitch}' IMPORTANTE: di el monto SIEMPRE en palabras tal como aparece arriba ('{monto_natural}'), NUNCA como cifra suelta ni dividida. Menciona la COMPANIA aseguradora y el RAMO si los tienes (la gente olvida con quien tiene la poliza). Si NO tienes numero de cuota, riesgo, financiera o modalidad de pago, NO los menciones ni los inventes.
 3. ESTA LLAMADA ES SOLO UN RECORDATORIO. NO negocies acuerdos de pago — el acuerdo YA esta hecho desde que el cliente compro la poliza. NO preguntes 'como quiere pagar' ni le ofrezcas planes/cuotas/descuentos. Tu trabajo es RECORDARLE su saldo y como esta pagando (compania, ramo, valor pendiente).
 4. Despues del recordatorio, PREGUNTA primero si desea recibir la informacion para pagar: 'Senor, desea que le enviemos nuevamente la informacion para realizar el pago?'.
@@ -162,20 +161,23 @@ def resolve_persona(tenant_config: Optional[dict]) -> dict:
     return persona
 
 
-def select_pitch_template(persona: dict, *, intento: int = 1, dias_mora: int = 0) -> str:
+def select_pitch_template(persona: dict, *, intento: int = 1, dias_mora: int = 0, is_inbound: bool = False) -> str:
     """
     Elige el guion de apertura según el informe §9 (y §3: si la póliza ya está
     vencida, el speech de VENCIDA aplica en CUALQUIER intento):
 
+        is_inbound      → "entrante" (9.4 — cliente devuelve la llamada)
         dias_mora >= 1  → "vencida"  (9.3 — informa # días de mora)
         intento >= 2    → "l2"       (9.2 — hoy es el día del vencimiento)
         resto           → "l1"       (9.1 — recordatorio preventivo)
 
-    Las variantes viven en persona["pitch_variants"] = {"l1","l2","vencida"}
+    Las variantes viven en persona["pitch_variants"] = {"l1","l2","vencida","entrante"}
     (editables por tenant, sin deploy). Sin variante → pitch_template genérico.
     """
     variants = persona.get("pitch_variants") or {}
-    if dias_mora and int(dias_mora) > 0:
+    if is_inbound:
+        key = "entrante"
+    elif dias_mora and int(dias_mora) > 0:
         key = "vencida"
     elif int(intento or 1) >= 2:
         key = "l2"
@@ -214,6 +216,7 @@ def assemble_system_prompt(
     intento: int = 1,
     dias_mora: int = 0,
     numero_cuota: str = "",
+    is_inbound: bool = False,
 ) -> str:
     """Render the full ENGINE with persona values + the runtime data block."""
     brand = persona.get("company_brand") or persona.get("company_name", "")
@@ -237,12 +240,34 @@ def assemble_system_prompt(
         "con_cuota": f" numero {numero_cuota}" if numero_cuota else "",
     }
     # The pitch template can reference persona + runtime values. La variante
-    # (preventivo / dia de vencimiento / vencida) la decide el estado real de
-    # la cuota en ESTA llamada (informe §3/§9).
+    # (preventivo / dia de vencimiento / vencida / entrante) la decide el estado
+    # real de la cuota y la direccion de la llamada (informe §3/§9).
     pitch = _fmt(
-        select_pitch_template(persona, intento=intento, dias_mora=dias_mora),
+        select_pitch_template(persona, intento=intento, dias_mora=dias_mora, is_inbound=is_inbound),
         persona_vals,
     )
+
+    # §9.4: en una llamada ENTRANTE, el deudor ya se identifico por voz ANTES
+    # de que Gemini Live arrancara (TwiML: Play del saludo + Gather del nombre,
+    # ver cobranza/voice_router.py) — no hay que volver a preguntar "¿habla
+    # con el deudor?" ni llamar verify_identity; se va directo al recordatorio.
+    if is_inbound:
+        apertura_paso1 = (
+            "1. Esta es una llamada ENTRANTE: el cliente te llamo a vos, devolviendo una llamada perdida. "
+            "YA se identifico por voz ANTES de que empezaras a hablar (un sistema automatico ya confirmo "
+            "su numero y le pregunto el nombre completo) — su identidad YA esta confirmada, NO se la "
+            "vuelvas a preguntar ni llames verify_identity. Tu PRIMER mensaje va DIRECTO al paso 2 (el "
+            "recordatorio), dirigiendote a el/ella por su nombre real de 'DATOS DE ESTA LLAMADA'."
+        )
+    else:
+        apertura_paso1 = (
+            "1. Tu primer mensaje (el saludo) YA TE PRESENTO como {agent_name}, la asistente virtual de "
+            "{company_name}, y pregunto si habla con el deudor. NO te vuelvas a presentar. Espera la respuesta.\n"
+            "   Si responde 'si', 'soy yo', 'con el habla', o directamente PREGUNTA por su deuda "
+            "('cuanto debo', 'que paso con mi poliza') -> la identidad queda confirmada. Continua de una, "
+            "SIN llamar verify_identity ni ninguna otra herramienta."
+        )
+        apertura_paso1 = _fmt(apertura_paso1, persona_vals)
     # Objection handling / business rules may reference {agent_name}/{company_brand}.
     objection = _fmt(persona.get("objection_handling", ""), persona_vals)
     business = _fmt(persona.get("business_rules", ""), persona_vals)
@@ -254,6 +279,7 @@ def assemble_system_prompt(
         "tono": persona.get("tono", "amable"),
         "business_rules": business,
         "runtime_block": runtime_block,
+        "apertura_paso1": apertura_paso1,
         "pitch": pitch,
         "monto_natural": monto_natural,
         "objection_handling": objection,

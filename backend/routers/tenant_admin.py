@@ -14,10 +14,10 @@ Prefix: /api/tenant
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from auth import get_current_user
+from auth import get_current_user, require_staff
 from cobranza.tenant_config import (
     append_prompt_version,
     get_rag_documents,
@@ -149,11 +149,14 @@ async def update_my_agent(
 
 @router.post("/rag/upload")
 async def upload_rag_document(
+    client_id: str = Form(...),
     files: List[UploadFile] = File(...),
-    current_user: dict = Depends(get_current_user),
+    _staff: dict = Depends(require_staff),
 ):
-    """Ingest one or more documents into the tenant's Pinecone namespace."""
-    user_id = str(current_user["user_id"])
+    """STAFF ONLY: ingest one or more documents into a client's Pinecone namespace.
+    Cada subida corre embeddings reales (costo real) — restringido a staff para
+    que no cualquier cuenta cliente lo dispare libremente sin freno."""
+    user_id = client_id
     from cobranza.rag_service import ingest_document
 
     results = []

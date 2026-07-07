@@ -230,10 +230,32 @@ async def cobranza_sincronizar(
     current_user: dict = Depends(get_current_user),
 ):
     """Dispara un sync de la cartera Softseguros en background. Sin `override_filters`
-    = refresh con la config estándar. Con `override_filters` = carga manual (pinned)."""
+    = refresh con la config estándar. Con `override_filters` = carga manual (pinned).
+    Rate-limited a 1 cada 5 min por usuario (429 + Retry-After) — mismo patrón que
+    routes/debtors.py:sync-now, esta ruta dispara el mismo trabajo costoso contra la
+    API externa de Softseguros."""
     user_id = str(current_user["user_id"])
     override = body.override_filters if body else None
     mode = "manual" if override else "cron_daily"
+
+    db = get_db()
+    last = await db.softseguros_sync_logs.find_one(
+        {"user_id": user_id, "mode": {"$in": ["manual", "cron_daily"]}},
+        sort=[("started_at", -1)],
+    )
+    if last:
+        started_at = last.get("started_at")
+        if started_at is not None:
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+            if elapsed < 300:
+                retry_after = int(300 - elapsed) + 1
+                raise HTTPException(
+                    status_code=429,
+                    detail="Sincronización demasiado frecuente, intente más tarde",
+                    headers={"Retry-After": str(retry_after)},
+                )
 
     async def _run():
         try:
@@ -411,11 +433,29 @@ async def preview_reporte(
     tipo: str = Query("diario", pattern="^(diario|semanal)$"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Vista previa (sin enviar email) — métricas + síntesis reales del período."""
+    """Vista previa (sin enviar email) — métricas + síntesis reales del período.
+    Rate-limited a 1 cada 30s por usuario (429 + Retry-After) — cada llamada dispara
+    una síntesis LLM real (reports.synthesize_qualitative)."""
     from datetime import timedelta
     from cobranza import reports
     user_id = str(current_user["user_id"])
     db = get_db()
+
+    last_call = await db.cobranza_rate_limits.find_one({"user_id": user_id, "endpoint": "reportes_preview"})
+    if last_call:
+        elapsed = (datetime.now(timezone.utc) - last_call["at"]).total_seconds()
+        if elapsed < 30:
+            raise HTTPException(
+                status_code=429,
+                detail="Vista previa de reportes demasiado frecuente, intente más tarde",
+                headers={"Retry-After": str(int(30 - elapsed) + 1)},
+            )
+    await db.cobranza_rate_limits.update_one(
+        {"user_id": user_id, "endpoint": "reportes_preview"},
+        {"$set": {"at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+
     if tipo == "diario":
         hoy = datetime.now(reports.COLOMBIA_TZ).date()
         start, end = reports._dia_utc_range(hoy)
@@ -980,7 +1020,7 @@ async def llamar_ahora(
     from cobranza.minutes import call_status_kwargs
     twilio_client = TwilioClient(account_sid, auth_token)
     to_number = debtor.get("telefono")
-    call = twilio_client.calls.create(
+    create_kwargs = dict(
         to=to_number, from_=from_number,
         url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
         record=True,
@@ -988,6 +1028,15 @@ async def llamar_ahora(
         recording_status_callback_method="POST",
         **call_status_kwargs(),
     )
+    try:
+        loop = asyncio.get_event_loop()
+        call = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: twilio_client.calls.create(**create_kwargs)),
+            timeout=15,
+        )
+    except asyncio.TimeoutError:
+        await update_debtor(db, user_id, debtor_id, {"estado": debtor.get("estado", "pendiente")})
+        raise HTTPException(504, "Twilio call initiation timed out")
     call_sid = call.sid
     logger.info("[llamar-ahora] Twilio call %s -> %s", call_sid, to_number)
 
