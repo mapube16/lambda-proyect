@@ -13,9 +13,10 @@ reporta explícitamente como "no disponible en este canal" en vez de inventar
 un número; el equipo la revisa en Chat Landa Tech como ya hace hoy.
 
 Entrega: HTML renderizado en Python (tabla, sin dependencias de Node/React) +
-envío por Resend (RESEND_API_KEY, HTTP directo — mismo patrón liviano que el
-resto del backend). Sin RESEND_API_KEY o sin destinatarios configurados, el
-reporte se genera igual (queda en logs) pero no se envía — no falla el job.
+envío por MailerSend (MAILERSEND_API_KEY, mismo cliente que ya usa mailer.py
+para el resto de la plataforma). Sin MAILERSEND_API_KEY o sin destinatarios
+configurados, el reporte se genera igual (queda en logs) pero no se envía —
+no falla el job.
 """
 import logging
 import os
@@ -271,26 +272,28 @@ def render_daily_html(metrics: dict, qualitative: dict, fecha: date, tenant_nomb
 </body></html>"""
 
 
-# ── Envío (Resend) ──────────────────────────────────────────────────────────────
+# ── Envío (MailerSend — mismo proveedor/cliente que mailer.py, el resto de la
+# plataforma ya lo usa; Resend nunca tuvo una key configurada en ningún lado) ──
 
 async def send_via_resend(to: list, subject: str, html: str) -> dict:
-    api_key = os.getenv("RESEND_API_KEY")
-    from_addr = os.getenv("RESEND_REPORTS_FROM", "reportes@landatech.io")
+    """Nombre histórico (Resend); envía por MailerSend, ver comentario arriba."""
+    import asyncio
+    api_key = os.getenv("MAILERSEND_API_KEY")
+    from_addr = os.getenv("MAILERSEND_FROM_EMAIL", "noreply@isomorph.co")
     if not api_key or not to:
-        logger.warning("[reports] sin RESEND_API_KEY o destinatarios — reporte generado pero NO enviado")
+        logger.warning("[reports] sin MAILERSEND_API_KEY o destinatarios — reporte generado pero NO enviado")
         return {"ok": False, "sent": False, "reason": "sin_key_o_destinatarios"}
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={"from": from_addr, "to": to, "subject": subject, "html": html},
+        from mailer import _send as _mailersend_send
+        for to_email in to:
+            # _send es síncrono (llamada bloqueante al SDK de MailerSend) — se
+            # corre en un thread para no congelar el event loop.
+            await asyncio.to_thread(
+                _mailersend_send, from_addr, "ARIA — Landa Tech", to_email, "", subject, html,
             )
-            r.raise_for_status()
-            return {"ok": True, "sent": True, "id": r.json().get("id")}
+        return {"ok": True, "sent": True}
     except Exception as exc:
-        logger.exception("[reports] envío por Resend falló")
+        logger.exception("[reports] envío por MailerSend falló")
         return {"ok": False, "sent": False, "error": str(exc)[:200]}
 
 

@@ -41,3 +41,4 @@ pinecone>=9.1.0
 pinecone[asyncio]
 langchain-text-splitters>=1.1.2
 telnyx
+mailersend>=1.0.0

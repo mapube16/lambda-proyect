@@ -358,8 +358,14 @@ def _send(
     reply_to_email: str = "",
     reply_to_name: str = "",
 ) -> int:
-    """Send one email via MailerSend. Returns HTTP status code."""
-    from mailersend import EmailBuilder, EmailContact
+    """Send one email via MailerSend. Returns HTTP status code.
+
+    EmailBuilder.from_email/.to/.reply_to take raw (email, name) strings, NOT
+    a pre-built EmailContact — the SDK constructs EmailContact internally.
+    Passing an EmailContact object (the previous code here) double-wraps it
+    and fails pydantic validation. Confirmed against the installed SDK via
+    inspect.signature since this diverges from what older docs/snippets show."""
+    from mailersend import EmailBuilder
 
     from_email = _validate_email(from_email, "MAILERSEND_FROM_EMAIL")
     to_email = _validate_email(to_email, "to_email")
@@ -368,19 +374,19 @@ def _send(
 
     builder = (
         EmailBuilder()
-        .from_email(EmailContact(email=from_email, name=from_name))
-        .to(EmailContact(email=to_email, name=to_name))
+        .from_email(from_email, from_name)
+        .to(to_email, to_name)
         .subject(subject)
         .html(html)
     )
     if text:
         builder = builder.text(text)
     if reply_to_email:
-        builder = builder.reply_to(EmailContact(email=reply_to_email, name=reply_to_name or reply_to_email))
+        builder = builder.reply_to(reply_to_email, reply_to_name or reply_to_email)
 
     email_obj = builder.build()
     client = _get_client()
-    response = client.send(email_obj)
+    response = client.emails.send(email_obj)
     status = getattr(response, "status_code", 202)
     logger.info(f"[mailer] sent '{subject}' → {to_email} (status {status})")
     return status
