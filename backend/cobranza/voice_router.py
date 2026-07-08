@@ -549,7 +549,7 @@ async def initiate_call_v2(
         raise HTTPException(400, "Ya fue contactado hoy (Ley 2300)")
 
     # Paquete de minutos: sin saldo no se marca (402 = payment required).
-    from cobranza.minutes import MinutesExhaustedError, require_saldo
+    from cobranza.minutes import MinutesExhaustedError, call_status_kwargs, require_saldo
     try:
         await require_saldo(db, user_id)
     except MinutesExhaustedError as e:
