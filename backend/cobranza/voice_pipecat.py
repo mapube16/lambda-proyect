@@ -737,9 +737,9 @@ async def run_bot(
         f"Tu PRIMERA frase hablada al conectar la llamada DEBE SER, palabra por "
         f"palabra, sin cambiar ni una letra, sin reemplazarla por otro saludo:\n"
         f"\"{first_message}\"\n"
-        f"NO digas 'buenas tardes' a secas, NO omitas tu nombre ARIA, NO omitas "
-        f"que eres la asistente virtual. Di la frase COMPLETA tal cual. Recien "
-        f"despues de decirla, sigue el resto de tus instrucciones.\n"
+        f"NO la abrevies, NO omitas tu nombre ARIA, NO omitas que eres la "
+        f"asistente virtual, NO cambies el saludo. Di la frase COMPLETA tal cual. "
+        f"Recien despues de decirla, sigue el resto de tus instrucciones.\n"
         f"=== FIN REGLA #1 ===\n\n"
     )
     greeting_instruction = (
@@ -957,6 +957,27 @@ async def run_bot(
             except Exception as exc:
                 logger.error("[VOICE] notify_payment_claim error: %s", exc)
                 result = {"ok": False, "error": str(exc)[:100]}
+        # Mensaje 2 (informe §9): al reportar pago, mandamos el WhatsApp que le
+        # pide el comprobante para poder validar. Best-effort: si el canal WA
+        # falla, la alerta a cartera ya quedo (arriba) y ellos lo envian manual.
+        _first = (debtor_name.split()[0] if debtor_name and debtor_name != "senor o senora" else "").strip()
+        _saludo_nombre = f", {_first}" if _first else ""
+        mensaje2 = (
+            f"Hola{_saludo_nombre} 👋\n"
+            "Soy ARIA, asistente virtual de DPG Seguros.\n"
+            "Durante nuestra llamada nos informaste que ya realizaste el pago de tu póliza. "
+            "Para actualizar nuestros registros y confirmar la vigencia de tus coberturas, "
+            "te pedimos que nos envíes el comprobante de pago a través de este chat.\n"
+            "¡Muchas gracias y que tengas un excelente día! 😊"
+        )
+        _phone = str(debtor.get("telefono", "")).strip()
+        if orchestrator and _phone:
+            try:
+                wa = await orchestrator.send_whatsapp(_phone, mensaje2)
+                result = {**result, "mensaje2_wa": wa}
+            except Exception as exc:
+                logger.error("[VOICE] notify_payment_claim mensaje2 WA error: %s", exc)
+                result = {**result, "mensaje2_wa": {"ok": False, "error": str(exc)[:100]}}
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_get_policy_info(params):

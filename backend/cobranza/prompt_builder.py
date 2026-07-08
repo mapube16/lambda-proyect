@@ -188,9 +188,19 @@ def select_pitch_template(persona: dict, *, intento: int = 1, dias_mora: int = 0
 
 def render_greeting(persona: dict, first_name: str) -> str:
     """Render the spoken opener. Uses greeting_template when we have a first
-    name, else greeting_template_no_name."""
+    name, else greeting_template_no_name.
+
+    {saludo_franja} se resuelve a 'Buenos dias' / 'Buenas tardes' segun la hora
+    real de Colombia (informe §9: 'Buenos dias/tardes'). Las llamadas son 8am-5pm
+    (Ley 2300) asi que solo aplican esas dos franjas.
+    """
+    from datetime import datetime as _dt
+    import pytz as _pytz
+    _hora = _dt.now(_pytz.timezone("America/Bogota")).hour
+    saludo_franja = "Buenos dias" if _hora < 12 else "Buenas tardes"
     vals = {
         "first_name": first_name,
+        "saludo_franja": saludo_franja,
         "agent_name": persona.get("agent_name", ""),
         "company_name": persona.get("company_name", ""),
         "company_brand": persona.get("company_brand") or persona.get("company_name", ""),
@@ -261,11 +271,13 @@ def assemble_system_prompt(
         )
     else:
         apertura_paso1 = (
-            "1. Tu primer mensaje (el saludo) YA TE PRESENTO como {agent_name}, la asistente virtual de "
-            "{company_name}, y pregunto si habla con el deudor. NO te vuelvas a presentar. Espera la respuesta.\n"
-            "   Si responde 'si', 'soy yo', 'con el habla', o directamente PREGUNTA por su deuda "
-            "('cuanto debo', 'que paso con mi poliza') -> la identidad queda confirmada. Continua de una, "
-            "SIN llamar verify_identity ni ninguna otra herramienta.\n"
+            "1. Tu primer mensaje (el saludo) YA TE PRESENTO por tu nombre ({agent_name}, asistente virtual "
+            "de {company_name}) y saludo al cliente por su nombre. NO te vuelvas a presentar ni repitas el "
+            "saludo. Despues de saludar, ESPERA la respuesta antes de dar cualquier dato de la poliza.\n"
+            "   Si responde con normalidad ('si', 'a la orden', 'digame', 'con el habla'), o directamente "
+            "PREGUNTA por su deuda ('cuanto debo', 'que paso con mi poliza') -> la identidad queda "
+            "confirmada. Pasa de una al paso 2 (el recordatorio), SIN llamar verify_identity ni ninguna "
+            "otra herramienta.\n"
             "   Si responde que NO es el/ella, que se equivoco de numero, o que esa persona no vive/trabaja "
             "ahi -> llama verify_identity con lo que dijo, y en el MISMO turno disculpate y despidete SIN "
             "revelar NADA de la deuda: 'Ah, disculpe la molestia, debe haber un error con el numero. Que "
