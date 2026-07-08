@@ -204,10 +204,14 @@ async def tmp_verify_start(request: Request):
     form = dict(await request.form())
     logger.warning("[TMP-VERIFY] llamada entrante de %s", form.get("From"))
     action_url = f"{os.getenv('VOICE_WEBHOOK_HOST', '')}/api/cobranza/voice/tmp-verify-result"
+    # speechTimeout fijo (no "auto"): Meta lee el codigo digito por digito con
+    # pausas entre ellos, y "auto" corta el Gather en la primera pausa de
+    # ~1s, truncando el codigo a solo los primeros 1-2 digitos (observado:
+    # "Su codigo de verificacion es 68." con un codigo de 6 digitos real).
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
         f'<Gather input="speech dtmf" language="es-CO" action="{action_url}" '
-        'method="POST" speechTimeout="auto" timeout="45" numDigits="10">'
+        'method="POST" speechTimeout="8" timeout="45" numDigits="10">'
         '<Say language="es-CO">Por favor diga o marque el codigo de verificacion.</Say>'
         "</Gather>"
         "<Hangup/></Response>"
@@ -219,8 +223,9 @@ async def tmp_verify_start(request: Request):
 async def tmp_verify_result(request: Request):
     form = dict(await request.form())
     logger.warning(
-        "[TMP-VERIFY] RESULTADO speech=%r digits=%r from=%s",
-        form.get("SpeechResult"), form.get("Digits"), form.get("From"),
+        "[TMP-VERIFY] RESULTADO speech=%r digits=%r confidence=%r from=%s full_form=%r",
+        form.get("SpeechResult"), form.get("Digits"), form.get("Confidence"),
+        form.get("From"), form,
     )
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
