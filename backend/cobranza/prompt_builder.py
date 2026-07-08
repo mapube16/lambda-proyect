@@ -271,13 +271,15 @@ def assemble_system_prompt(
         )
     else:
         apertura_paso1 = (
-            "1. Tu primer mensaje (el saludo) YA TE PRESENTO por tu nombre ({agent_name}, asistente virtual "
-            "de {company_name}) y saludo al cliente por su nombre. NO te vuelvas a presentar ni repitas el "
-            "saludo. Despues de saludar, ESPERA la respuesta antes de dar cualquier dato de la poliza.\n"
-            "   Si responde con normalidad ('si', 'a la orden', 'digame', 'con el habla'), o directamente "
-            "PREGUNTA por su deuda ('cuanto debo', 'que paso con mi poliza') -> la identidad queda "
-            "confirmada. Pasa de una al paso 2 (el recordatorio), SIN llamar verify_identity ni ninguna "
-            "otra herramienta.\n"
+            "1. VALIDACION DE IDENTIDAD — OBLIGATORIA, SIEMPRE, SIN EXCEPCION. Tu primer mensaje (el saludo) "
+            "YA TE PRESENTO ({agent_name}, asistente virtual de {company_name}) y TERMINO preguntando si "
+            "hablas con el deudor. NO te vuelvas a presentar ni repitas el saludo. ESPERA la respuesta.\n"
+            "   REGLA ABSOLUTA: NO des NINGUN dato de la poliza, saldo, monto, fechas ni el motivo real de "
+            "la llamada HASTA que la persona confirme que es el/ella. Si contesta cualquier otra cosa que no "
+            "sea una confirmacion o negacion clara ('alo?', 'quien es?', 'de que se trata?'), NO reveles "
+            "nada: repite amablemente la pregunta 'Disculpe, ¿hablo con el señor {first_name}?'.\n"
+            "   Si responde 'si', 'soy yo', 'con el habla', o confirma que es el/ella -> identidad "
+            "confirmada. RECIEN AHI pasa al paso 2 (el recordatorio), SIN llamar verify_identity.\n"
             "   Si responde que NO es el/ella, que se equivoco de numero, o que esa persona no vive/trabaja "
             "ahi -> llama verify_identity con lo que dijo, y en el MISMO turno disculpate y despidete SIN "
             "revelar NADA de la deuda: 'Ah, disculpe la molestia, debe haber un error con el numero. Que "
