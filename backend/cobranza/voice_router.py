@@ -195,6 +195,40 @@ async def inbound_name_captured(request: Request):
     return PlainTextResponse(twiml, media_type="application/xml")
 
 
+# ── TEMP: captura de codigo de verificacion (Meta WhatsApp Business) ────────
+# ponytail: solo mientras se verifica el numero nuevo con Meta. Escucha y
+# transcribe con el STT nativo de Twilio (sin tocar el pipeline de ARIA/Gemini).
+# Quitar este bloque + su router.post una vez verificado el numero.
+@router.post("/tmp-verify")
+async def tmp_verify_start(request: Request):
+    form = dict(await request.form())
+    logger.warning("[TMP-VERIFY] llamada entrante de %s", form.get("From"))
+    action_url = f"{os.getenv('VOICE_WEBHOOK_HOST', '')}/api/cobranza/voice/tmp-verify-result"
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?><Response>'
+        f'<Gather input="speech dtmf" language="es-CO" action="{action_url}" '
+        'method="POST" speechTimeout="auto" timeout="45" numDigits="10">'
+        '<Say language="es-CO">Por favor diga o marque el codigo de verificacion.</Say>'
+        "</Gather>"
+        "<Hangup/></Response>"
+    )
+    return PlainTextResponse(twiml, media_type="application/xml")
+
+
+@router.post("/tmp-verify-result")
+async def tmp_verify_result(request: Request):
+    form = dict(await request.form())
+    logger.warning(
+        "[TMP-VERIFY] RESULTADO speech=%r digits=%r from=%s",
+        form.get("SpeechResult"), form.get("Digits"), form.get("From"),
+    )
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?><Response>'
+        '<Say language="es-CO">Gracias.</Say><Hangup/></Response>'
+    )
+    return PlainTextResponse(twiml, media_type="application/xml")
+
+
 # ── Call Status Callback (consumo del paquete de minutos) ───────────────────
 
 
