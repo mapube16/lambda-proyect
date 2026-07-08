@@ -265,7 +265,12 @@ def assemble_system_prompt(
             "{company_name}, y pregunto si habla con el deudor. NO te vuelvas a presentar. Espera la respuesta.\n"
             "   Si responde 'si', 'soy yo', 'con el habla', o directamente PREGUNTA por su deuda "
             "('cuanto debo', 'que paso con mi poliza') -> la identidad queda confirmada. Continua de una, "
-            "SIN llamar verify_identity ni ninguna otra herramienta."
+            "SIN llamar verify_identity ni ninguna otra herramienta.\n"
+            "   Si responde que NO es el/ella, que se equivoco de numero, o que esa persona no vive/trabaja "
+            "ahi -> llama verify_identity con lo que dijo, y en el MISMO turno disculpate y despidete SIN "
+            "revelar NADA de la deuda: 'Ah, disculpe la molestia, debe haber un error con el numero. Que "
+            "tenga un buen dia, hasta luego.' y llama end_call. NUNCA menciones el saldo, la poliza ni ningun "
+            "dato a alguien que no es el deudor."
         )
         apertura_paso1 = _fmt(apertura_paso1, persona_vals)
     # Objection handling / business rules may reference {agent_name}/{company_brand}.

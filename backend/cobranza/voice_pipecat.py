@@ -895,6 +895,14 @@ async def run_bot(
         # ambigua de baja confianza que solo cayó al fallback LLM.
         if result.get("confirmed") is False and result.get("confidence") == "high":
             await _fire_alerta("numero_equivocado", detalle=utterance[:200])
+            # Instrucción explícita en el propio resultado: es la ruta donde la
+            # conversación se muere si ARIA no sabe qué decir. Sin mencionar la
+            # deuda a un tercero (§7): disculparse, despedirse y colgar.
+            result["instruccion"] = (
+                "La persona NO es el deudor (numero equivocado). Discúlpate brevemente y despídete SIN "
+                "mencionar la deuda ni ningun dato: 'Ah, disculpe la molestia, debe haber un error con el "
+                "numero. Que tenga un buen dia, hasta luego.' y llama end_call en el mismo turno."
+            )
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _fire_alerta(tipo: str, *, detalle: str = "", extra: dict = None) -> dict:
@@ -1153,12 +1161,17 @@ async def run_bot(
     # cancel_on_interruption=False for any handler with REAL side effects: with
     # barge-in enabled, the caller speaking mid-execution must NOT abort a DB
     # write or an outbound WhatsApp half-way. Read-only tools (get_policy_info,
-    # search_knowledge, verify_identity) stay cancellable — re-running them is
-    # harmless and aborting them frees the turn faster.
+    # search_knowledge) stay cancellable — re-running them is harmless and
+    # aborting them frees the turn faster.
     llm.register_function("end_call", _handle_end_call, cancel_on_interruption=False)
     llm.register_function("send_whatsapp", _handle_send_whatsapp, cancel_on_interruption=False)
     llm.register_function("escalate", _handle_escalate, cancel_on_interruption=False)
-    llm.register_function("verify_identity", _handle_verify_identity)
+    # verify_identity is read-only but NOT cancellable: its RESULT is what drives
+    # ARIA's very next spoken turn (confirm identity + continue, OR apologize +
+    # hang up on a wrong number). A spurious barge-in (phone-line echo/noise) was
+    # cancelling it 4ms in, so the result_callback never fired run_llm=True and
+    # ARIA went dead-silent until the caller hung up (observed on CA4e821a).
+    llm.register_function("verify_identity", _handle_verify_identity, cancel_on_interruption=False)
     llm.register_function("get_policy_info", _handle_get_policy_info)
     llm.register_function("search_knowledge", _handle_search_knowledge)
     # cancel_on_interruption=False: this handler does real side effects (parks
