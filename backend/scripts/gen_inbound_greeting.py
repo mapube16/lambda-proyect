@@ -14,8 +14,8 @@ MODEL = "gemini-2.5-flash-preview-tts"
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "voice")
 
 TEXTOS = {
-    "manana": "Buenos días, gracias por comunicarse con DPG Seguros. Le atiende ARIA, su asistente virtual de cobranza. Recibimos una llamada perdida desde nuestro sistema dirigida a su número. Para verificar su identidad, por favor marque su número de documento seguido de la tecla numeral. Si su documento es un NIT, no incluya el dígito de verificación.",
-    "tarde": "Buenas tardes, gracias por comunicarse con DPG Seguros. Le atiende ARIA, su asistente virtual de cobranza. Recibimos una llamada perdida desde nuestro sistema dirigida a su número. Para verificar su identidad, por favor marque su número de documento seguido de la tecla numeral. Si su documento es un NIT, no incluya el dígito de verificación.",
+    "manana": "Buenos días, gracias por comunicarse con DPG Seguros. Le atiende ARIA, su asistente virtual de cobranza. Para verificar su identidad, por favor marque su número de documento seguido de la tecla numeral. Si su documento es un NIT, no incluya el dígito de verificación.",
+    "tarde": "Buenas tardes, gracias por comunicarse con DPG Seguros. Le atiende ARIA, su asistente virtual de cobranza. Para verificar su identidad, por favor marque su número de documento seguido de la tecla numeral. Si su documento es un NIT, no incluya el dígito de verificación.",
 }
 
 
