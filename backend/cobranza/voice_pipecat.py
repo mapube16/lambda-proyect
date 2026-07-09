@@ -715,7 +715,22 @@ async def run_bot(
     # per-client and editable without a deploy. The policy detail comes only
     # AFTER the debtor confirms (handled by the prompt flow).
     first_name = debtor_name.split()[0] if debtor_name and debtor_name != "senor o senora" else ""
-    first_message = render_greeting(persona, first_name)
+    if is_inbound:
+        # Entrante (§9.4): el saludo pregrabado + Gather YA se presentó y validó
+        # la identidad ANTES de este pipeline. Forzar aquí el saludo saliente
+        # (que termina en "¿Hablo con el señor X?") re-preguntaría la identidad
+        # y contradiría el flujo entrante del prompt. Presentación corta y de
+        # una al recordatorio.
+        _brand = persona.get("company_brand") or persona.get("company_name", "")
+        first_message = (
+            f"Señor {first_name}, le habla {persona.get('agent_name', '')}, "
+            f"asistente virtual de {_brand}. Gracias por comunicarse con nosotros."
+            if first_name else
+            f"Le habla {persona.get('agent_name', '')}, asistente virtual de {_brand}. "
+            f"Gracias por comunicarse con nosotros."
+        )
+    else:
+        first_message = render_greeting(persona, first_name)
 
     # ── LLM Context ─────────────────────────────────────────────────────
     # Seed the greeting into the INITIAL context so Gemini speaks it the moment
@@ -743,10 +758,19 @@ async def run_bot(
         f"Si la persona habla o te interrumpe MIENTRAS estas diciendo esta frase "
         f"(ej. dice 'aló', 'hola', o cualquier cosa antes de que termines), NO te "
         f"quedes en silencio ni te confundas: haz caso omiso de la interrupcion y "
-        f"simplemente continua o retoma tu pregunta de identidad con naturalidad "
-        f"apenas puedas hablar de nuevo ('Disculpe, ¿hablo con el señor "
-        f"{first_name}?'). Nunca te trabes.\n"
-        f"=== FIN REGLA #1 ===\n\n"
+        + (
+            "simplemente continua con el recordatorio con naturalidad apenas "
+            "puedas hablar de nuevo. Nunca te trabes.\n"
+            if is_inbound else
+            "retoma tu pregunta de identidad con naturalidad apenas puedas "
+            "hablar de nuevo ("
+            + (
+                f"'Disculpe, ¿hablo con el señor {first_name}?'"
+                if first_name else "'Disculpe, ¿con quién tengo el gusto?'"
+            )
+            + "). Nunca te trabes.\n"
+        )
+        + f"=== FIN REGLA #1 ===\n\n"
     )
     greeting_instruction = (
         f"\n\nRECORDATORIO FINAL: tu primera linea hablada es EXACTAMENTE "

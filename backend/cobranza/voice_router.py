@@ -159,11 +159,31 @@ async def _handle_inbound_call(call_sid: str, form: dict):
     return PlainTextResponse(twiml, media_type="application/xml")
 
 
+def _stated_name_matches(stated: str, debtor_name: str) -> bool:
+    """Validación de identidad entrante (regla del cliente: SIEMPRE validar).
+
+    Compara por tokens sin acentos: basta que UN nombre/apellido real del
+    deudor (>=3 letras) aparezca en lo que la persona dijo. Tolerante al STT
+    ("me llamo Víctor" matchea VICTOR HUGO ARENAS RIOS) pero no deja pasar a
+    un tercero que diga otro nombre desde el mismo teléfono."""
+    import unicodedata
+
+    def _norm(s: str) -> set:
+        s = unicodedata.normalize("NFD", s or "")
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+        return {t for t in "".join(c if c.isalpha() else " " for c in s).split() if len(t) >= 3}
+
+    stated_tokens = _norm(stated)
+    debtor_tokens = _norm(debtor_name)
+    return bool(stated_tokens & debtor_tokens)
+
+
 @router.post("/inbound/name-captured")
 async def inbound_name_captured(request: Request):
     """Twilio <Gather> post-back con el nombre dicho (STT nativo de Twilio,
-    sin gastar tokens de LLM). Persiste el nombre y recién ahí conecta el
-    stream — Gemini Live arranca ya con la identidad resuelta."""
+    sin gastar tokens de LLM). Valida el nombre contra el deudor resuelto por
+    teléfono y recién ahí conecta el stream — Gemini Live arranca ya con la
+    identidad resuelta."""
     form = dict(await request.form())
     if not _twilio_signature_ok(request, form, "/api/cobranza/voice/inbound/name-captured"):
         raise HTTPException(403, "Invalid Twilio signature")
@@ -175,6 +195,27 @@ async def inbound_name_captured(request: Request):
     call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
     if not call_mapping:
         logger.warning("[Inbound][NameCaptured] no hay mapping para %s", call_sid)
+        return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
+
+    # Identidad SIEMPRE: el teléfono matcheó, pero si el nombre dicho no
+    # corresponde al deudor, NO se conecta el pipeline (no se revela nada).
+    if not _stated_name_matches(speech_result, call_mapping.get("debtor_name", "")):
+        logger.warning(
+            "[Inbound][NameCaptured] %s nombre dicho %r NO matchea deudor %r -> corto",
+            call_sid, speech_result, call_mapping.get("debtor_name"),
+        )
+        try:
+            from cobranza.alerts import crear_alerta
+            debtor = await db.debtors.find_one({"_id": ObjectId(call_mapping["debtor_id"])})
+            if debtor:
+                await crear_alerta(
+                    db, call_mapping["user_id"], debtor, "llamada_entrante_no_identificada",
+                    detalle=f"Llamada entrante desde el teléfono del deudor, pero quien llamó dijo "
+                            f"llamarse '{speech_result[:80]}' y no coincide con el titular.",
+                )
+        except Exception:
+            logger.exception("[Inbound][NameCaptured] alerta mismatch falló (no fatal)")
+        await db.cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
         return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
 
     await db.cobranza_calls_in_progress.update_one(

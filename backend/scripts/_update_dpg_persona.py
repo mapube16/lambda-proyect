@@ -8,13 +8,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 USER_ID = "69bcd9bb6e35d53880364535"
 
-# Saludo oficial del informe §9 (verbatim) + confirmacion de identidad OBLIGATORIA
-# al final (regla del cliente: SIEMPRE validar identidad antes de dar datos). La
-# pregunta va DENTRO del saludo verbatim para que se haga el 100% de las veces.
-# {saludo_franja} -> Buenos dias / Buenas tardes (render_greeting lo resuelve por
-# hora). "senor" por defecto (sin dato de genero confiable; el bot ya asumia senor).
-GREETING = "{saludo_franja}, señor {first_name}. Le habla {agent_name}, asistente virtual de {company_brand}. ¿Hablo con el señor {first_name}?"
-GREETING_NO_NAME = "{saludo_franja}. Le habla {agent_name}, asistente virtual de {company_brand}. ¿Con quién tengo el gusto?"
+# Saludo oficial vigente (informe §9 + ajustes del cliente 2026-07-08):
+# - 'Buenos dias' FIJO (todas las llamadas del piloto son en la manana).
+# - Termina con la confirmacion de identidad OBLIGATORIA, dentro del saludo
+#   verbatim para que se pregunte el 100% de las veces.
+GREETING = "Buenos días. Le habla {agent_name}, asistente virtual de {company_brand}. ¿Hablo con el señor {first_name}?"
+GREETING_NO_NAME = "Buenos días. Le habla {agent_name}, asistente virtual de {company_brand}. ¿Con quién tengo el gusto?"
 
 # Nueva respuesta verbal para 'ya pague' (anuncia el Mensaje 2).
 NUEVA_YA_PAGUE = (
