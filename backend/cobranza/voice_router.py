@@ -96,9 +96,10 @@ _SIN_MATCH_TWIML = (
 async def _handle_inbound_call(call_sid: str, form: dict):
     """§9.4: un deudor devuelve la llamada. Resuelve por `From`; si hay
     exactamente 1 match arranca el flujo normal (Play del saludo pre-grabado +
-    Gather para el nombre); si hay 0 o 2+, NO arranca el pipeline (no hay
-    datos reales que recitar sin inventar, y con 2+ no se puede arriesgar a
-    revelarle la deuda de una persona a otra) — mensaje corto + alerta."""
+    Gather DTMF para el número de documento); si hay 0 o 2+, NO arranca el
+    pipeline (no hay datos reales que recitar sin inventar, y con 2+ no se
+    puede arriesgar a revelarle la deuda de una persona a otra) — mensaje
+    corto + alerta."""
     db = get_db()
     from_number = form.get("From", "")
     from cobranza.csv_parser import normalize_phone
@@ -145,11 +146,17 @@ async def _handle_inbound_call(call_sid: str, form: dict):
     hora_co = datetime.now(pytz.timezone("America/Bogota")).hour
     variante = "manana" if hora_co < 12 else "tarde"
     greeting_url = f"{host_raw}/api/cobranza/voice/static/inbound-greeting/{variante}"
-    action_url = f"{host_raw}/api/cobranza/voice/inbound/name-captured"
+    action_url = f"{host_raw}/api/cobranza/voice/inbound/document-captured"
 
+    # DTMF (teclado) en vez de voz: con cientos de deudores distintos, hacer que
+    # el STT reconozca un nombre completo hablado es fragil (acentos, nombres
+    # parecidos, audio de telefono) — el numero de documento marcado por teclado
+    # es una comparacion EXACTA, sin ambiguedad (informe: valida identidad por
+    # numero de documento). finishOnKey="#" porque las cedulas colombianas no
+    # tienen longitud fija.
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
-        f'<Gather input="speech" language="es-CO" action="{action_url}" method="POST" speechTimeout="auto">'
+        f'<Gather input="dtmf" finishOnKey="#" timeout="15" action="{action_url}" method="POST">'
         f"<Play>{greeting_url}</Play>"
         "</Gather>"
         '<Say language="es-MX">No recibimos respuesta. Que tenga un buen día.</Say>'
@@ -159,67 +166,58 @@ async def _handle_inbound_call(call_sid: str, form: dict):
     return PlainTextResponse(twiml, media_type="application/xml")
 
 
-def _stated_name_matches(stated: str, debtor_name: str) -> bool:
+def _stated_document_matches(digits: str, debtor_documento) -> bool:
     """Validación de identidad entrante (regla del cliente: SIEMPRE validar).
 
-    Compara por tokens sin acentos: basta que UN nombre/apellido real del
-    deudor (>=3 letras) aparezca en lo que la persona dijo. Tolerante al STT
-    ("me llamo Víctor" matchea VICTOR HUGO ARENAS RIOS) pero no deja pasar a
-    un tercero que diga otro nombre desde el mismo teléfono."""
-    import unicodedata
-
-    def _norm(s: str) -> set:
-        s = unicodedata.normalize("NFD", s or "")
-        s = "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
-        return {t for t in "".join(c if c.isalpha() else " " for c in s).split() if len(t) >= 3}
-
-    stated_tokens = _norm(stated)
-    debtor_tokens = _norm(debtor_name)
-    return bool(stated_tokens & debtor_tokens)
+    Comparación EXACTA de solo-dígitos — el número de documento marcado por
+    teclado (DTMF) es inequívoco, a diferencia de un nombre reconocido por voz.
+    Ignora puntos/guiones que a veces trae el documento almacenado."""
+    stated = "".join(c for c in (digits or "") if c.isdigit())
+    stored = "".join(c for c in str(debtor_documento or "") if c.isdigit())
+    return bool(stated) and bool(stored) and stated == stored
 
 
-@router.post("/inbound/name-captured")
-async def inbound_name_captured(request: Request):
-    """Twilio <Gather> post-back con el nombre dicho (STT nativo de Twilio,
-    sin gastar tokens de LLM). Valida el nombre contra el deudor resuelto por
-    teléfono y recién ahí conecta el stream — Gemini Live arranca ya con la
-    identidad resuelta."""
+@router.post("/inbound/document-captured")
+async def inbound_document_captured(request: Request):
+    """Twilio <Gather input="dtmf"> post-back con el numero de documento marcado.
+    Valida contra el documento del deudor resuelto por teléfono y recién ahí
+    conecta el stream — Gemini Live arranca ya con la identidad resuelta."""
     form = dict(await request.form())
-    if not _twilio_signature_ok(request, form, "/api/cobranza/voice/inbound/name-captured"):
+    if not _twilio_signature_ok(request, form, "/api/cobranza/voice/inbound/document-captured"):
         raise HTTPException(403, "Invalid Twilio signature")
 
     call_sid = form.get("CallSid", "")
-    speech_result = form.get("SpeechResult", "")
+    digits = form.get("Digits", "")
     db = get_db()
 
     call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
     if not call_mapping:
-        logger.warning("[Inbound][NameCaptured] no hay mapping para %s", call_sid)
+        logger.warning("[Inbound][DocumentCaptured] no hay mapping para %s", call_sid)
         return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
 
     # Identidad SIEMPRE: el teléfono matcheó, pero si el nombre dicho no
     # corresponde al deudor, NO se conecta el pipeline (no se revela nada).
-    if not _stated_name_matches(speech_result, call_mapping.get("debtor_name", "")):
+    debtor = await db.debtors.find_one({"_id": ObjectId(call_mapping["debtor_id"])})
+    if not debtor or not _stated_document_matches(digits, debtor.get("cliente_documento")):
         logger.warning(
-            "[Inbound][NameCaptured] %s nombre dicho %r NO matchea deudor %r -> corto",
-            call_sid, speech_result, call_mapping.get("debtor_name"),
+            "[Inbound][DocumentCaptured] %s digitos=%r NO matchea deudor %r -> corto",
+            call_sid, digits, call_mapping.get("debtor_name"),
         )
         try:
-            from cobranza.alerts import crear_alerta
-            debtor = await db.debtors.find_one({"_id": ObjectId(call_mapping["debtor_id"])})
             if debtor:
+                from cobranza.alerts import crear_alerta
                 await crear_alerta(
                     db, call_mapping["user_id"], debtor, "llamada_entrante_no_identificada",
-                    detalle=f"Llamada entrante desde el teléfono del deudor, pero quien llamó dijo "
-                            f"llamarse '{speech_result[:80]}' y no coincide con el titular.",
+                    detalle=f"Llamada entrante desde el teléfono del deudor, pero el número de "
+                            f"documento marcado ('{digits[:20]}') no coincide con el titular.",
                 )
         except Exception:
-            logger.exception("[Inbound][NameCaptured] alerta mismatch falló (no fatal)")
+            logger.exception("[Inbound][DocumentCaptured] alerta mismatch falló (no fatal)")
         await db.cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
         return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
 
     await db.cobranza_calls_in_progress.update_one(
-        {"call_sid": call_sid}, {"$set": {"caller_stated_name": speech_result}},
+        {"call_sid": call_sid}, {"$set": {"caller_stated_document": digits}},
     )
 
     host = (
@@ -232,7 +230,7 @@ async def inbound_name_captured(request: Request):
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
         f'<Connect><Stream url="{ws_url}" /></Connect></Response>'
     )
-    logger.info("[Inbound][NameCaptured] %s nombre='%s' -> Stream", call_sid, speech_result)
+    logger.info("[Inbound][DocumentCaptured] %s documento OK -> Stream", call_sid)
     return PlainTextResponse(twiml, media_type="application/xml")
 
 
@@ -398,7 +396,7 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             user_id = call_mapping["user_id"]
             debtor_id = call_mapping["debtor_id"]
             is_inbound = call_mapping.get("direction") == "inbound"
-            caller_stated_name = call_mapping.get("caller_stated_name", "")
+            caller_stated_document = call_mapping.get("caller_stated_document", "")
             # Parallelize the two Atlas round-trips — they're independent. Run in
             # series this added ~one extra RTT of dead air before ARIA could greet.
             debtor, config_doc = await asyncio.gather(
@@ -432,7 +430,7 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             stream_id=stream_id,
             call_control_id=call_sid,
             is_inbound=is_inbound,
-            caller_stated_name=caller_stated_name,
+            caller_stated_document=caller_stated_document,
         )
 
         logger.info("[WS] Pipecat finished for call %s (duration=%ss)", call_sid, call_result.duration_seconds)

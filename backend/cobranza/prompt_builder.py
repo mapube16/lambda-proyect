@@ -257,15 +257,16 @@ def assemble_system_prompt(
         persona_vals,
     )
 
-    # §9.4: en una llamada ENTRANTE, el deudor ya se identifico por voz ANTES
-    # de que Gemini Live arrancara (TwiML: Play del saludo + Gather del nombre,
-    # ver cobranza/voice_router.py) — no hay que volver a preguntar "¿habla
-    # con el deudor?" ni llamar verify_identity; se va directo al recordatorio.
+    # §9.4: en una llamada ENTRANTE, el deudor ya se identifico ANTES de que
+    # Gemini Live arrancara (TwiML: Play del saludo + Gather de DTMF con su
+    # numero de documento, validado exacto contra el registro — ver
+    # cobranza/voice_router.py) — no hay que volver a preguntar "¿habla con
+    # el deudor?" ni llamar verify_identity; se va directo al recordatorio.
     if is_inbound:
         apertura_paso1 = (
             "1. Esta es una llamada ENTRANTE: el cliente te llamo a vos, devolviendo una llamada perdida. "
-            "YA se identifico por voz ANTES de que empezaras a hablar (un sistema automatico ya confirmo "
-            "su numero y le pregunto el nombre completo) — su identidad YA esta confirmada, NO se la "
+            "YA se identifico ANTES de que empezaras a hablar (un sistema automatico ya confirmo su numero "
+            "y valido su numero de documento por teclado) — su identidad YA esta confirmada, NO se la "
             "vuelvas a preguntar ni llames verify_identity. Tu PRIMER mensaje va DIRECTO al paso 2 (el "
             "recordatorio), dirigiendote a el/ella por su nombre real de 'DATOS DE ESTA LLAMADA'."
         )

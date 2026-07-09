@@ -116,7 +116,7 @@ async def run_bot(
     stream_id: str = "",
     call_control_id: str = "",
     is_inbound: bool = False,
-    caller_stated_name: str = "",
+    caller_stated_document: str = "",
 ) -> CallResult:
     """
     Spawn a Pipecat pipeline using Telnyx transport + Gemini Live LLM.
@@ -132,9 +132,9 @@ async def run_bot(
         is_inbound: True si es una llamada ENTRANTE (§9.4, cliente devuelve la
             llamada) — selecciona el guion "entrante" y salta la pregunta de
             identidad (ya resuelta por telefono + Gather antes del pipeline).
-        caller_stated_name: nombre que el que llama dijo por voz (STT nativo de
-            Twilio, capturado ANTES de este pipeline) — solo para auditoria/log,
-            no se inyecta al prompt (texto no verificado de quien llama).
+        caller_stated_document: número de documento marcado por teclado (DTMF,
+            capturado y ya VALIDADO contra el deudor ANTES de este pipeline) —
+            solo para auditoria/log, no se inyecta al prompt.
 
     Returns:
         CallResult with transcript and duration for post-call processing.
@@ -146,8 +146,8 @@ async def run_bot(
     vencimiento = debtor.get("vencimiento", "desconocida")
 
     logger.info(
-        "[VOICE] run_bot called: call_sid=%s, debtor=%s, user_id=%s, is_inbound=%s, caller_stated_name=%s",
-        call_sid, debtor_name, user_id, is_inbound, caller_stated_name,
+        "[VOICE] run_bot called: call_sid=%s, debtor=%s, user_id=%s, is_inbound=%s, caller_stated_document=%s",
+        call_sid, debtor_name, user_id, is_inbound, caller_stated_document,
     )
 
     # ── Latency instrumentation: log ms between each startup stage so we can see
