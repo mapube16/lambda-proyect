@@ -740,6 +740,12 @@ async def run_bot(
         f"NO la abrevies, NO omitas tu nombre ARIA, NO omitas que eres la "
         f"asistente virtual, NO cambies el saludo. Di la frase COMPLETA tal cual. "
         f"Recien despues de decirla, sigue el resto de tus instrucciones.\n"
+        f"Si la persona habla o te interrumpe MIENTRAS estas diciendo esta frase "
+        f"(ej. dice 'aló', 'hola', o cualquier cosa antes de que termines), NO te "
+        f"quedes en silencio ni te confundas: haz caso omiso de la interrupcion y "
+        f"simplemente continua o retoma tu pregunta de identidad con naturalidad "
+        f"apenas puedas hablar de nuevo ('Disculpe, ¿hablo con el señor "
+        f"{first_name}?'). Nunca te trabes.\n"
         f"=== FIN REGLA #1 ===\n\n"
     )
     greeting_instruction = (
