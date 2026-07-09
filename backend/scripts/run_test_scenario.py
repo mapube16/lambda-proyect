@@ -56,7 +56,8 @@ async def _get_db():
 
 
 async def _make_test_debtor(
-    db, phone: str, source: str, vencimiento: str | None, intentos: int | None, no_llamar: bool = False
+    db, phone: str, source: str, vencimiento: str | None, intentos: int | None,
+    no_llamar: bool = False, documento: str | None = None,
 ) -> str:
     await db.debtors.delete_many({"user_id": USER_ID, "is_test": True})
 
@@ -83,6 +84,15 @@ async def _make_test_debtor(
     if vencimiento:
         clone["vencimiento"] = vencimiento
         clone["fecha_pago"] = vencimiento
+    if documento:
+        # Un clon SIEMPRE hereda el documento real del deudor origen, lo que
+        # SIEMPRE crea un "duplicado" con ese registro real (mismo documento,
+        # 2 dueños) — confuso para probar Escenario 1 en limpio (observado:
+        # el clon de Victor Hugo con su documento real 16233741 disparó el
+        # flujo de "2 pólizas" contra su propio registro de producción, con
+        # descripciones identicas). Override a un documento sintetico que no
+        # existe en la base evita el choque.
+        clone["cliente_documento"] = documento
     if no_llamar:
         clone["no_llamar"] = True
         clone["no_llamar_motivo"] = "prueba_entidad_estatal"
@@ -103,6 +113,7 @@ async def main():
     ap.add_argument("--intentos", type=int, default=None)
     ap.add_argument("--source", default=DEFAULT_SOURCE)
     ap.add_argument("--no-llamar", action="store_true")
+    ap.add_argument("--documento", default=None, help="override cliente_documento (evita choque con el real del source)")
     args = ap.parse_args()
 
     db = await _get_db()
@@ -120,11 +131,12 @@ async def main():
         return
 
     test_id = await _make_test_debtor(
-        db, args.phone, args.source, args.vencimiento, args.intentos, no_llamar=args.no_llamar
+        db, args.phone, args.source, args.vencimiento, args.intentos,
+        no_llamar=args.no_llamar, documento=args.documento,
     )
 
     if args.accion == "setup-only":
-        print("Listo — el evaluador ya puede marcar a +1 641 541 6615")
+        print("Listo — el evaluador ya puede marcar a +57 606 347 0078")
         db.client.close()
         return
 
