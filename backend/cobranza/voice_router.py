@@ -174,9 +174,16 @@ async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: s
 
     host_raw = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
     action_url = f"{host_raw}/api/cobranza/voice/inbound/policy-selected"
+    # SOLO finishOnKey (sin numDigits): con numDigits="1" el Gather se cerraba
+    # apenas llegaba el PRIMER digito, y el "#" que la persona presiona despues
+    # por costumbre (mismo habito que el paso del documento) llegaba tarde —
+    # se colaba como tono DTMF crudo dentro del <Connect><Stream> YA conectado
+    # a Gemini Live, que al "oir" el pitido en vez de voz respondia confundido
+    # en otro idioma (observado en pruebas reales). finishOnKey="#" solo hace
+    # que el Gather espere el mismo gesto que ya funciona en el paso anterior.
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
-        f'<Gather input="dtmf" finishOnKey="#" numDigits="1" timeout="15" action="{action_url}" method="POST">'
+        f'<Gather input="dtmf" finishOnKey="#" timeout="15" action="{action_url}" method="POST">'
         f'<Say language="es-CO">{_xml_escape(enumeracion)}</Say>'
         "</Gather>"
         '<Say language="es-MX">No recibimos respuesta. Que tenga un buen día.</Say>'
@@ -600,6 +607,10 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
         # Check max intentos — manda la config del tenant (informe: 3), con el
         # max del deudor como fallback para cargas manuales. Una llamada
         # entrante NO consume intento ni puede agotar la secuencia.
+        # new_intentos SIEMPRE se define (antes solo dentro del if, y el log +
+        # el push de WS de mas abajo la leian incondicional -> UnboundLocalError
+        # en TODA llamada entrante, observado en produccion).
+        new_intentos = debtor.get("intentos", 0)
         if not is_inbound:
             try:
                 from cobranza.config_cache import get_tenant_config
@@ -608,8 +619,7 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
                 max_intentos = int(timings.get("max_intentos") or debtor.get("max_intentos", 3))
             except Exception:
                 max_intentos = debtor.get("max_intentos", 3)
-            current_intentos = debtor.get("intentos", 0)
-            new_intentos = current_intentos + 1
+            new_intentos = debtor.get("intentos", 0) + 1
             if new_intentos >= max_intentos and new_estado not in _TERMINAL_ESTADOS:
                 new_estado = "agotado"
 
