@@ -282,16 +282,14 @@ async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: s
     else:
         prompt_tags = f'<Say language="es-MX">{_xml_escape(enumeracion)}</Say>'
 
-    # SOLO finishOnKey (sin numDigits): con numDigits="1" el Gather se cerraba
-    # apenas llegaba el PRIMER digito, y el "#" que la persona presiona despues
-    # por costumbre (mismo habito que el paso del documento) llegaba tarde —
-    # se colaba como tono DTMF crudo dentro del <Connect><Stream> YA conectado
-    # a Gemini Live, que al "oir" el pitido en vez de voz respondia confundido
-    # en otro idioma (observado en pruebas reales). finishOnKey="#" solo hace
-    # que el Gather espere el mismo gesto que ya funciona en el paso anterior.
+    # numDigits="1": la seleccion de poliza es SIEMPRE un solo digito (1..9), asi
+    # que avanza apenas se presiona el numero — pedir "#" ademas era redundante.
+    # El "#" solo se necesita en el paso del DOCUMENTO (longitud variable). El
+    # audio de enumeracion dice "marque 1"/"marque 2", nunca menciona "#", asi
+    # que no se induce el habito que antes filtraba un "#" tardio al stream.
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
-        f'<Gather input="dtmf" finishOnKey="#" timeout="15" action="{action_url}" method="POST">'
+        f'<Gather input="dtmf" numDigits="1" timeout="15" action="{action_url}" method="POST">'
         f"{prompt_tags}"
         "</Gather>"
         '<Say language="es-MX">No recibimos respuesta. Que tenga un buen día.</Say>'
