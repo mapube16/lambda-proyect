@@ -16,6 +16,10 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "voice")
 TEXTOS = {
     "manana": "Buenos días, gracias por comunicarse con DPG Seguros. Le atiende ARIA, su asistente virtual de cobranza. Para verificar su identidad, por favor marque su número de documento seguido de la tecla numeral. Si su documento es un NIT, no incluya el dígito de verificación.",
     "tarde": "Buenas tardes, gracias por comunicarse con DPG Seguros. Le atiende ARIA, su asistente virtual de cobranza. Para verificar su identidad, por favor marque su número de documento seguido de la tecla numeral. Si su documento es un NIT, no incluya el dígito de verificación.",
+    # Filler que cubre la latencia de la sintesis dinamica de la enumeracion
+    # de polizas (2-8s de Gemini TTS): suena de inmediato mientras el audio
+    # real se genera (voice_router._pedir_seleccion_poliza).
+    "filler": "Un momento por favor, estoy consultando la información de sus pólizas.",
 }
 
 

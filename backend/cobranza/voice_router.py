@@ -162,7 +162,9 @@ async def _synthesize_aoede(text: str) -> bytes | None:
     if not key:
         return None
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        # 20s: la sintesis de un texto largo puede pasar de 10s; el fetch del
+        # <Play> de Twilio tolera esta espera (y el filler la cubre en el aire).
+        async with httpx.AsyncClient(timeout=20) as client:
             r = await client.post(
                 "https://generativelanguage.googleapis.com/v1beta/models/"
                 "gemini-2.5-flash-preview-tts:generateContent",
@@ -195,18 +197,42 @@ async def _synthesize_aoede(text: str) -> bytes | None:
 
 @router.get("/inbound/policy-audio/{call_sid}")
 async def get_policy_audio(call_sid: str):
-    """Sirve el WAV generado al vuelo por _pedir_seleccion_poliza (voz Aoede).
-    Se borra después de servirlo — es contenido de una sola llamada."""
-    from fastapi.responses import FileResponse
-    from starlette.background import BackgroundTask
+    """Sintetiza (voz Aoede) y sirve la enumeración de pólizas BAJO DEMANDA.
+
+    La síntesis vive AQUÍ y no en _pedir_seleccion_poliza a propósito: hacerla
+    sincrónica dentro del webhook dejaba ~10s de silencio total tras marcar el
+    documento (Gemini TTS 2-8s + descarga del WAV) antes de oír nada. Ahora el
+    TwiML responde al instante con un filler pregrabado ('un momento, estoy
+    consultando sus pólizas') y Twilio fetchea este endpoint para el segundo
+    <Play> — la síntesis corre mientras el filler suena, así que el silencio
+    percibido se reduce a lo que la síntesis tarde por encima del filler.
+    Cachea a disco: Twilio a veces re-fetchea la misma URL."""
+    import time as _time
 
     path = os.path.join(_DYNAMIC_VOICE_DIR, f"{call_sid}.wav")
     if not os.path.exists(path):
-        raise HTTPException(404, "audio not found")
-    return FileResponse(
-        path, media_type="audio/wav",
-        background=BackgroundTask(lambda: os.path.exists(path) and os.remove(path)),
-    )
+        db = get_db()
+        mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
+        text = (mapping or {}).get("enumeracion_text")
+        if not text:
+            raise HTTPException(404, "no pending enumeration for this call")
+        t0 = _time.monotonic()
+        wav_bytes = await _synthesize_aoede(text)
+        if not wav_bytes:
+            # Twilio salta un <Play> fallido y el Gather sigue esperando digitos;
+            # al timeout cae al <Say> de "no recibimos respuesta". Raro (solo si
+            # Gemini TTS falla) — se loguea fuerte para verlo.
+            logger.error("[Inbound][PolicyAudio] %s sintesis falló — Play se salta", call_sid)
+            raise HTTPException(503, "synthesis failed")
+        os.makedirs(_DYNAMIC_VOICE_DIR, exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(wav_bytes)
+        logger.info(
+            "[Inbound][PolicyAudio] %s sintetizado en %.1fs (%d bytes)",
+            call_sid, _time.monotonic() - t0, len(wav_bytes),
+        )
+    from fastapi.responses import FileResponse
+    return FileResponse(path, media_type="audio/wav")
 
 
 async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: str, candidates: list) -> PlainTextResponse:
@@ -219,17 +245,6 @@ async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: s
     """
     from xml.sax.saxutils import escape as _xml_escape
 
-    ids = [str(d["_id"]) for d in candidates]
-    await db.cobranza_calls_in_progress.update_one(
-        {"call_sid": call_sid},
-        {"$set": {
-            "call_sid": call_sid, "candidate_ids": ids, "from_number": from_number,
-            "documento": digits, "started_at": datetime.now(timezone.utc),
-            "direction": "inbound", "pending_policy_selection": True,
-        }},
-        upsert=True,
-    )
-
     partes = []
     for i, d in enumerate(candidates, start=1):
         ramo = d.get("ramo_nombre") or "su póliza"
@@ -238,19 +253,34 @@ async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: s
         partes.append(f"Para la póliza de {desc}, marque {i}.")
     enumeracion = f"Encontramos {len(candidates)} pólizas asociadas a su documento. " + " ".join(partes)
 
+    ids = [str(d["_id"]) for d in candidates]
+    await db.cobranza_calls_in_progress.update_one(
+        {"call_sid": call_sid},
+        {"$set": {
+            "call_sid": call_sid, "candidate_ids": ids, "from_number": from_number,
+            "documento": digits, "started_at": datetime.now(timezone.utc),
+            "direction": "inbound", "pending_policy_selection": True,
+            # get_policy_audio sintetiza de aqui, bajo demanda (ver su docstring)
+            "enumeracion_text": enumeracion,
+        }},
+        upsert=True,
+    )
+
     host_raw = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
     action_url = f"{host_raw}/api/cobranza/voice/inbound/policy-selected"
 
-    wav_bytes = await _synthesize_aoede(enumeracion)
-    if wav_bytes:
-        os.makedirs(_DYNAMIC_VOICE_DIR, exist_ok=True)
-        with open(os.path.join(_DYNAMIC_VOICE_DIR, f"{call_sid}.wav"), "wb") as f:
-            f.write(wav_bytes)
-        prompt_tag = f"<Play>{host_raw}/api/cobranza/voice/inbound/policy-audio/{call_sid}</Play>"
+    # UX de latencia: responder AL INSTANTE con un filler pregrabado (misma voz
+    # Aoede) y dejar que el segundo <Play> (la enumeración real) se sintetice
+    # bajo demanda cuando Twilio lo fetchee — antes la síntesis era sincrónica
+    # aquí y dejaba ~10s de silencio total tras marcar el documento. Si no hay
+    # GOOGLE_API_KEY (dev), va directo el <Say> de Twilio.
+    if os.getenv("GOOGLE_API_KEY"):
+        prompt_tags = (
+            f"<Play>{host_raw}/api/cobranza/voice/static/inbound-greeting/filler</Play>"
+            f"<Play>{host_raw}/api/cobranza/voice/inbound/policy-audio/{call_sid}</Play>"
+        )
     else:
-        # Fallback si Gemini TTS falla (cuota, red): sigue siendo audible y
-        # correcto, solo con la voz por defecto de Twilio en vez de Aoede.
-        prompt_tag = f'<Say language="es-MX">{_xml_escape(enumeracion)}</Say>'
+        prompt_tags = f'<Say language="es-MX">{_xml_escape(enumeracion)}</Say>'
 
     # SOLO finishOnKey (sin numDigits): con numDigits="1" el Gather se cerraba
     # apenas llegaba el PRIMER digito, y el "#" que la persona presiona despues
@@ -262,14 +292,14 @@ async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: s
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
         f'<Gather input="dtmf" finishOnKey="#" timeout="15" action="{action_url}" method="POST">'
-        f"{prompt_tag}"
+        f"{prompt_tags}"
         "</Gather>"
         '<Say language="es-MX">No recibimos respuesta. Que tenga un buen día.</Say>'
         "<Hangup/></Response>"
     )
     logger.info(
-        "[Inbound][DocumentCaptured] %s documento %r -> %d pólizas, pidiendo selección (voz=%s)",
-        call_sid, digits, len(candidates), "aoede" if wav_bytes else "twilio-fallback",
+        "[Inbound][DocumentCaptured] %s documento %r -> %d pólizas, pidiendo selección",
+        call_sid, digits, len(candidates),
     )
     return PlainTextResponse(twiml, media_type="application/xml")
 
@@ -322,9 +352,16 @@ async def inbound_policy_selected(request: Request):
                 "debtor_phone": from_number, "direction": "inbound",
                 "caller_stated_document": pending.get("documento", ""),
             },
-            "$unset": {"pending_policy_selection": "", "candidate_ids": ""},
+            "$unset": {"pending_policy_selection": "", "candidate_ids": "", "enumeracion_text": ""},
         },
     )
+    # El WAV de la enumeración ya cumplió su propósito — limpieza best-effort.
+    try:
+        _wav = os.path.join(_DYNAMIC_VOICE_DIR, f"{call_sid}.wav")
+        if os.path.exists(_wav):
+            os.remove(_wav)
+    except OSError:
+        pass
 
     host = (
         os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
@@ -530,7 +567,7 @@ async def get_recording(recording_sid: str, current_user: dict = Depends(get_cur
 # voice_id="Aoede") — Twilio lo reproduce vía <Play> sin gastar tokens de LLM
 # antes de saber quién llama. Sin auth: Twilio necesita fetchearlo directo.
 
-_GREETING_VARIANTS = {"manana", "tarde"}
+_GREETING_VARIANTS = {"manana", "tarde", "filler"}
 _STATIC_VOICE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "voice")
 
 
