@@ -336,6 +336,26 @@ async def run_bot(
     )
     _lap("prompt assembled")
 
+    # ── Ruido de oficina de fondo (call center feel) ───────────────────
+    # Lecho de ambiente sutil bajo la voz de ARIA. El transporte lo mezcla
+    # continuo (with_mixer en base_output) — tambien en los silencios. Off
+    # por tenant con office_ambience_enabled=false; volumen 0..1 ajustable
+    # sin redeploy con office_ambience_volume (default 0.15, bajo a proposito
+    # para no tapar la voz en la linea 8kHz).
+    _office_mixer = None
+    if bool(tenant_config.get("office_ambience_enabled", True)):
+        try:
+            from cobranza.office_mixer import OfficeAmbienceMixer
+            _amb_path = os.path.join(os.path.dirname(__file__), "..", "static", "voice", "office_ambience.pcm")
+            _office_mixer = OfficeAmbienceMixer(
+                _amb_path,
+                volume=float(tenant_config.get("office_ambience_volume") or 0.15),
+                expected_sample_rate=24000,
+            )
+        except Exception as _amb_err:
+            logger.warning("[VOICE] office ambience mixer no disponible: %s", _amb_err)
+            _office_mixer = None
+
     # ── Transport: Twilio WebSocket ────────────────────────────────────
     # Silero VAD here handles user-speech interruptions. Gemini's OWN native
     # VAD is DISABLED (see llm params) because on a phone line it self-fires
@@ -357,6 +377,7 @@ async def run_bot(
             # so it greeted once and never responded.
             audio_in_sample_rate=8000,
             audio_out_sample_rate=24000,
+            audio_out_mixer=_office_mixer,
             serializer=TwilioFrameSerializer(
                 stream_sid=stream_id or call_sid,
                 call_sid=call_sid,
