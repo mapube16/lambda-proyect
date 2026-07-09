@@ -144,12 +144,78 @@ async def _alerta_llamada_no_identificada(db, detalle: str) -> None:
         logger.exception("[Inbound] alerta no_identificada falló (no fatal)")
 
 
+_DYNAMIC_VOICE_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "voice_dynamic")
+
+
+async def _synthesize_aoede(text: str) -> bytes | None:
+    """TTS con la MISMA voz de ARIA (Gemini, voice_id='Aoede' — igual que
+    scripts/gen_inbound_greeting.py y voice_pipecat.py) para que la
+    enumeración de pólizas suene consistente con el resto de la llamada, no
+    con la voz robótica por defecto de Twilio. None si falla (el llamador
+    debe tener un fallback — nunca debe tumbar la llamada)."""
+    import httpx
+    import wave
+    import base64
+    import io
+
+    key = os.getenv("GOOGLE_API_KEY")
+    if not key:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                "gemini-2.5-flash-preview-tts:generateContent",
+                params={"key": key},
+                json={
+                    "contents": [{"parts": [{"text": text}]}],
+                    "generationConfig": {
+                        "responseModalities": ["AUDIO"],
+                        "speechConfig": {
+                            "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Aoede"}}
+                        },
+                    },
+                },
+            )
+            r.raise_for_status()
+            part = r.json()["candidates"][0]["content"]["parts"][0]["inlineData"]
+            pcm = base64.b64decode(part["data"])
+    except Exception:
+        logger.exception("[Inbound] _synthesize_aoede falló (usará fallback Twilio)")
+        return None
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(pcm)
+    return buf.getvalue()
+
+
+@router.get("/inbound/policy-audio/{call_sid}")
+async def get_policy_audio(call_sid: str):
+    """Sirve el WAV generado al vuelo por _pedir_seleccion_poliza (voz Aoede).
+    Se borra después de servirlo — es contenido de una sola llamada."""
+    from fastapi.responses import FileResponse
+    from starlette.background import BackgroundTask
+
+    path = os.path.join(_DYNAMIC_VOICE_DIR, f"{call_sid}.wav")
+    if not os.path.exists(path):
+        raise HTTPException(404, "audio not found")
+    return FileResponse(
+        path, media_type="audio/wav",
+        background=BackgroundTask(lambda: os.path.exists(path) and os.remove(path)),
+    )
+
+
 async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: str, candidates: list) -> PlainTextResponse:
     """El documento marcado matcheó 2+ pólizas del mismo titular (mismo
     documento = misma persona, no es fuga de datos enumerarlas). Las lee
-    numeradas — más urgente primero — y pide elegir por teclado, ANTES de
-    conectar nada; el pipeline solo arranca una vez hay UNA póliza resuelta,
-    así que no hay riesgo de mezclar datos entre pólizas de la misma persona.
+    numeradas — más urgente primero, con la voz de ARIA — y pide elegir por
+    teclado, ANTES de conectar nada; el pipeline solo arranca una vez hay
+    UNA póliza resuelta, así que no hay riesgo de mezclar datos entre
+    pólizas de la misma persona.
     """
     from xml.sax.saxutils import escape as _xml_escape
 
@@ -174,6 +240,18 @@ async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: s
 
     host_raw = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
     action_url = f"{host_raw}/api/cobranza/voice/inbound/policy-selected"
+
+    wav_bytes = await _synthesize_aoede(enumeracion)
+    if wav_bytes:
+        os.makedirs(_DYNAMIC_VOICE_DIR, exist_ok=True)
+        with open(os.path.join(_DYNAMIC_VOICE_DIR, f"{call_sid}.wav"), "wb") as f:
+            f.write(wav_bytes)
+        prompt_tag = f"<Play>{host_raw}/api/cobranza/voice/inbound/policy-audio/{call_sid}</Play>"
+    else:
+        # Fallback si Gemini TTS falla (cuota, red): sigue siendo audible y
+        # correcto, solo con la voz por defecto de Twilio en vez de Aoede.
+        prompt_tag = f'<Say language="es-MX">{_xml_escape(enumeracion)}</Say>'
+
     # SOLO finishOnKey (sin numDigits): con numDigits="1" el Gather se cerraba
     # apenas llegaba el PRIMER digito, y el "#" que la persona presiona despues
     # por costumbre (mismo habito que el paso del documento) llegaba tarde —
@@ -184,14 +262,14 @@ async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: s
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
         f'<Gather input="dtmf" finishOnKey="#" timeout="15" action="{action_url}" method="POST">'
-        f'<Say language="es-MX">{_xml_escape(enumeracion)}</Say>'
+        f"{prompt_tag}"
         "</Gather>"
         '<Say language="es-MX">No recibimos respuesta. Que tenga un buen día.</Say>'
         "<Hangup/></Response>"
     )
     logger.info(
-        "[Inbound][DocumentCaptured] %s documento %r -> %d pólizas, pidiendo selección",
-        call_sid, digits, len(candidates),
+        "[Inbound][DocumentCaptured] %s documento %r -> %d pólizas, pidiendo selección (voz=%s)",
+        call_sid, digits, len(candidates), "aoede" if wav_bytes else "twilio-fallback",
     )
     return PlainTextResponse(twiml, media_type="application/xml")
 

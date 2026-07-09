@@ -13,6 +13,7 @@ frontend/dist/
 .env.local
 frontend/.env.local
 .logs/
+backend/static/voice_dynamic/
 *.log
 backend/backend.log
 Instagram-automation-AI-generated-content/
