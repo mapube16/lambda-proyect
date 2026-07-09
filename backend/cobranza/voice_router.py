@@ -184,7 +184,7 @@ async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: s
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
         f'<Gather input="dtmf" finishOnKey="#" timeout="15" action="{action_url}" method="POST">'
-        f'<Say language="es-CO">{_xml_escape(enumeracion)}</Say>'
+        f'<Say language="es-MX">{_xml_escape(enumeracion)}</Say>'
         "</Gather>"
         '<Say language="es-MX">No recibimos respuesta. Que tenga un buen día.</Say>'
         "<Hangup/></Response>"
