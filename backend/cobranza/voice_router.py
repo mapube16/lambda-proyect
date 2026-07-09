@@ -94,53 +94,13 @@ _SIN_MATCH_TWIML = (
 
 
 async def _handle_inbound_call(call_sid: str, form: dict):
-    """§9.4: un deudor devuelve la llamada. Resuelve por `From`; si hay
-    exactamente 1 match arranca el flujo normal (Play del saludo pre-grabado +
-    Gather DTMF para el número de documento); si hay 0 o 2+, NO arranca el
-    pipeline (no hay datos reales que recitar sin inventar, y con 2+ no se
-    puede arriesgar a revelarle la deuda de una persona a otra) — mensaje
-    corto + alerta."""
-    db = get_db()
-    from_number = form.get("From", "")
-    from cobranza.csv_parser import normalize_phone
-    normalized = normalize_phone(from_number)
-
-    candidates = []
-    if normalized:
-        from cobranza.sequence_engine import _tenant_ids
-        for user_id in await _tenant_ids(db):
-            async for d in db.debtors.find({"user_id": user_id, "telefono": normalized}):
-                candidates.append(d)
-
-    if len(candidates) != 1:
-        logger.warning(
-            "[Webhook][Inbound] %s from=%s -> %d candidatos, no se resuelve automáticamente",
-            call_sid, from_number, len(candidates),
-        )
-        if candidates:
-            try:
-                from cobranza.alerts import crear_alerta
-                await crear_alerta(
-                    db, candidates[0]["user_id"], candidates[0], "llamada_entrante_no_identificada",
-                    detalle=f"Llamada entrante de {from_number}: {len(candidates)} deudores coinciden "
-                            f"con este número, no se pudo identificar automáticamente cuál contestó.",
-                )
-            except Exception:
-                logger.exception("[Webhook][Inbound] alerta no_identificada falló (no fatal)")
-        return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
-
-    debtor = candidates[0]
-    user_id = str(debtor["user_id"])
-
-    await db.cobranza_calls_in_progress.insert_one({
-        "call_sid": call_sid, "user_id": user_id,
-        "debtor_id": str(debtor["_id"]), "debtor_name": debtor.get("nombre"),
-        "debtor_phone": from_number, "started_at": datetime.now(timezone.utc),
-        "direction": "inbound",
-    })
-
+    """§9.4: un deudor devuelve la llamada perdida. CUALQUIERA puede llamar a
+    este número — la identidad NUNCA se decide por el teléfono desde el que
+    marca (puede llamar desde un celular prestado, uno nuevo, un fijo), la
+    decide SIEMPRE el número de documento marcado por teclado. Este primer
+    paso solo reproduce el saludo + Gather DTMF; la resolución real ocurre en
+    /inbound/document-captured."""
     host_raw = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
-    host = host_raw.replace("https://", "").replace("http://", "")
 
     import pytz
     hora_co = datetime.now(pytz.timezone("America/Bogota")).hour
@@ -148,12 +108,11 @@ async def _handle_inbound_call(call_sid: str, form: dict):
     greeting_url = f"{host_raw}/api/cobranza/voice/static/inbound-greeting/{variante}"
     action_url = f"{host_raw}/api/cobranza/voice/inbound/document-captured"
 
-    # DTMF (teclado) en vez de voz: con cientos de deudores distintos, hacer que
-    # el STT reconozca un nombre completo hablado es fragil (acentos, nombres
-    # parecidos, audio de telefono) — el numero de documento marcado por teclado
-    # es una comparacion EXACTA, sin ambiguedad (informe: valida identidad por
-    # numero de documento). finishOnKey="#" porque las cedulas colombianas no
-    # tienen longitud fija.
+    # DTMF (teclado), no voz: con cientos de deudores distintos, un STT de
+    # nombre hablado es fragil (acentos, nombres parecidos, audio de
+    # telefono) — el numero de documento marcado por teclado es una
+    # comparacion EXACTA (informe: valida identidad por numero de documento).
+    # finishOnKey="#" porque las cedulas colombianas no tienen longitud fija.
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
         f'<Gather input="dtmf" finishOnKey="#" timeout="15" action="{action_url}" method="POST">'
@@ -162,62 +121,124 @@ async def _handle_inbound_call(call_sid: str, form: dict):
         '<Say language="es-MX">No recibimos respuesta. Que tenga un buen día.</Say>'
         "<Hangup/></Response>"
     )
-    logger.info("[Webhook][Inbound] %s -> debtor=%s, saludo=%s", call_sid, debtor.get("nombre"), variante)
+    logger.info("[Webhook][Inbound] %s from=%s -> saludo=%s", call_sid, form.get("From"), variante)
     return PlainTextResponse(twiml, media_type="application/xml")
 
 
-def _stated_document_matches(digits: str, debtor_documento) -> bool:
-    """Validación de identidad entrante (regla del cliente: SIEMPRE validar).
+async def _alerta_llamada_no_identificada(db, detalle: str) -> None:
+    """Alerta cuando un desconocido llama (0 matches por documento) — antes
+    esto NO generaba ninguna alerta pese a que el mensaje hablado promete
+    'un asesor se comunicará con usted'. Sin un deudor resuelto no hay a
+    quién atribuirla; se manda al primer tenant con cobranza activa (hoy
+    solo DPG). Nunca lanza — no puede tumbar la llamada."""
+    try:
+        from cobranza.sequence_engine import _tenant_ids
+        from cobranza.alerts import crear_alerta
+        tenant_ids = await _tenant_ids(db)
+        if not tenant_ids:
+            return
+        await crear_alerta(
+            db, tenant_ids[0], {}, "llamada_entrante_no_identificada", detalle=detalle,
+        )
+    except Exception:
+        logger.exception("[Inbound] alerta no_identificada falló (no fatal)")
 
-    Comparación EXACTA de solo-dígitos — el número de documento marcado por
-    teclado (DTMF) es inequívoco, a diferencia de un nombre reconocido por voz.
-    Ignora puntos/guiones que a veces trae el documento almacenado."""
-    stated = "".join(c for c in (digits or "") if c.isdigit())
-    stored = "".join(c for c in str(debtor_documento or "") if c.isdigit())
-    return bool(stated) and bool(stored) and stated == stored
+
+async def _pedir_seleccion_poliza(db, call_sid: str, from_number: str, digits: str, candidates: list) -> PlainTextResponse:
+    """El documento marcado matcheó 2+ pólizas del mismo titular (mismo
+    documento = misma persona, no es fuga de datos enumerarlas). Las lee
+    numeradas — más urgente primero — y pide elegir por teclado, ANTES de
+    conectar nada; el pipeline solo arranca una vez hay UNA póliza resuelta,
+    así que no hay riesgo de mezclar datos entre pólizas de la misma persona.
+    """
+    from xml.sax.saxutils import escape as _xml_escape
+
+    ids = [str(d["_id"]) for d in candidates]
+    await db.cobranza_calls_in_progress.update_one(
+        {"call_sid": call_sid},
+        {"$set": {
+            "call_sid": call_sid, "candidate_ids": ids, "from_number": from_number,
+            "documento": digits, "started_at": datetime.now(timezone.utc),
+            "direction": "inbound", "pending_policy_selection": True,
+        }},
+        upsert=True,
+    )
+
+    partes = []
+    for i, d in enumerate(candidates, start=1):
+        ramo = d.get("ramo_nombre") or "su póliza"
+        riesgo = d.get("objeto_asegurado")
+        desc = f"{ramo}, {riesgo}" if riesgo else f"{ramo}, póliza {d.get('numero_poliza', '')}"
+        partes.append(f"Para la póliza de {desc}, marque {i}.")
+    enumeracion = f"Encontramos {len(candidates)} pólizas asociadas a su documento. " + " ".join(partes)
+
+    host_raw = os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
+    action_url = f"{host_raw}/api/cobranza/voice/inbound/policy-selected"
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?><Response>'
+        f'<Gather input="dtmf" finishOnKey="#" numDigits="1" timeout="15" action="{action_url}" method="POST">'
+        f'<Say language="es-CO">{_xml_escape(enumeracion)}</Say>'
+        "</Gather>"
+        '<Say language="es-MX">No recibimos respuesta. Que tenga un buen día.</Say>'
+        "<Hangup/></Response>"
+    )
+    logger.info(
+        "[Inbound][DocumentCaptured] %s documento %r -> %d pólizas, pidiendo selección",
+        call_sid, digits, len(candidates),
+    )
+    return PlainTextResponse(twiml, media_type="application/xml")
 
 
-@router.post("/inbound/document-captured")
-async def inbound_document_captured(request: Request):
-    """Twilio <Gather input="dtmf"> post-back con el numero de documento marcado.
-    Valida contra el documento del deudor resuelto por teléfono y recién ahí
-    conecta el stream — Gemini Live arranca ya con la identidad resuelta."""
+@router.post("/inbound/policy-selected")
+async def inbound_policy_selected(request: Request):
+    """Respuesta al Gather de _pedir_seleccion_poliza: qué póliza (de las
+    varias que comparten documento) eligió por teclado."""
     form = dict(await request.form())
-    if not _twilio_signature_ok(request, form, "/api/cobranza/voice/inbound/document-captured"):
+    if not _twilio_signature_ok(request, form, "/api/cobranza/voice/inbound/policy-selected"):
         raise HTTPException(403, "Invalid Twilio signature")
 
     call_sid = form.get("CallSid", "")
-    digits = form.get("Digits", "")
+    from_number = form.get("From", "")
+    digits = "".join(c for c in form.get("Digits", "") if c.isdigit())
     db = get_db()
 
-    call_mapping = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
-    if not call_mapping:
-        logger.warning("[Inbound][DocumentCaptured] no hay mapping para %s", call_sid)
+    pending = await db.cobranza_calls_in_progress.find_one(
+        {"call_sid": call_sid, "pending_policy_selection": True}
+    )
+    if not pending:
+        logger.warning("[Inbound][PolicySelected] %s sin selección pendiente", call_sid)
         return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
 
-    # Identidad SIEMPRE: el teléfono matcheó, pero si el nombre dicho no
-    # corresponde al deudor, NO se conecta el pipeline (no se revela nada).
-    debtor = await db.debtors.find_one({"_id": ObjectId(call_mapping["debtor_id"])})
-    if not debtor or not _stated_document_matches(digits, debtor.get("cliente_documento")):
+    candidate_ids = pending.get("candidate_ids") or []
+    try:
+        idx = int(digits) - 1
+    except ValueError:
+        idx = -1
+
+    if idx < 0 or idx >= len(candidate_ids):
         logger.warning(
-            "[Inbound][DocumentCaptured] %s digitos=%r NO matchea deudor %r -> corto",
-            call_sid, digits, call_mapping.get("debtor_name"),
+            "[Inbound][PolicySelected] %s selección inválida digits=%r (de %d opciones)",
+            call_sid, digits, len(candidate_ids),
         )
-        try:
-            if debtor:
-                from cobranza.alerts import crear_alerta
-                await crear_alerta(
-                    db, call_mapping["user_id"], debtor, "llamada_entrante_no_identificada",
-                    detalle=f"Llamada entrante desde el teléfono del deudor, pero el número de "
-                            f"documento marcado ('{digits[:20]}') no coincide con el titular.",
-                )
-        except Exception:
-            logger.exception("[Inbound][DocumentCaptured] alerta mismatch falló (no fatal)")
         await db.cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
         return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
 
+    debtor = await db.debtors.find_one({"_id": ObjectId(candidate_ids[idx])})
+    if not debtor:
+        await db.cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
+        return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
+
+    user_id = str(debtor["user_id"])
     await db.cobranza_calls_in_progress.update_one(
-        {"call_sid": call_sid}, {"$set": {"caller_stated_document": digits}},
+        {"call_sid": call_sid},
+        {
+            "$set": {
+                "user_id": user_id, "debtor_id": str(debtor["_id"]), "debtor_name": debtor.get("nombre"),
+                "debtor_phone": from_number, "direction": "inbound",
+                "caller_stated_document": pending.get("documento", ""),
+            },
+            "$unset": {"pending_policy_selection": "", "candidate_ids": ""},
+        },
     )
 
     host = (
@@ -230,7 +251,101 @@ async def inbound_document_captured(request: Request):
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
         f'<Connect><Stream url="{ws_url}" /></Connect></Response>'
     )
-    logger.info("[Inbound][DocumentCaptured] %s documento OK -> Stream", call_sid)
+    logger.info(
+        "[Inbound][PolicySelected] %s eligió póliza %s (%s) -> Stream",
+        call_sid, debtor.get("numero_poliza"), debtor.get("nombre"),
+    )
+    return PlainTextResponse(twiml, media_type="application/xml")
+
+
+@router.post("/inbound/document-captured")
+async def inbound_document_captured(request: Request):
+    """Twilio <Gather input="dtmf"> post-back con el número de documento
+    marcado. Busca el deudor por documento (NO por teléfono — cualquiera con
+    registro puede llamar desde cualquier número) y recién ahí conecta el
+    stream. 0 matches = desconocido real (alerta + mensaje, sin revelar
+    nada); 2+ matches = mismo documento en varias pólizas, se enumeran y se
+    pide elegir por teclado (_pedir_seleccion_poliza)."""
+    form = dict(await request.form())
+    if not _twilio_signature_ok(request, form, "/api/cobranza/voice/inbound/document-captured"):
+        raise HTTPException(403, "Invalid Twilio signature")
+
+    call_sid = form.get("CallSid", "")
+    from_number = form.get("From", "")
+    digits = "".join(c for c in form.get("Digits", "") if c.isdigit())
+    db = get_db()
+
+    if not digits:
+        logger.warning("[Inbound][DocumentCaptured] %s sin dígitos válidos", call_sid)
+        return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
+
+    # Match tolerante a puntuación: ~40% de los documentos de DPG son NITs con
+    # guión + dígito de verificación ("801001470-9", persona jurídica) — el
+    # saludo le pide al que llama NO marcar ese último dígito, así que solo
+    # comparamos contra la parte ANTES del guión. Un documento sin guión
+    # (cédula) se compara completo, sin cambios. El tenant es chico (~600
+    # deudores), escanear en Python es instantáneo y evita mantener un índice
+    # normalizado aparte.
+    def _documento_base(stored) -> str:
+        s = str(stored or "")
+        s = s.split("-")[0] if "-" in s else s
+        return "".join(c for c in s if c.isdigit())
+
+    from cobranza.sequence_engine import _tenant_ids
+    candidates = []
+    for user_id in await _tenant_ids(db):
+        async for d in db.debtors.find(
+            {"user_id": user_id, "cliente_documento": {"$nin": [None, ""]}},
+            {"cliente_documento": 1, "nombre": 1, "numero_poliza": 1, "fecha_pago": 1,
+             "vencimiento": 1, "user_id": 1, "telefono": 1, "ramo_nombre": 1,
+             "objeto_asegurado": 1},
+        ):
+            if _documento_base(d.get("cliente_documento")) == digits:
+                candidates.append(d)
+
+    if not candidates:
+        logger.warning(
+            "[Inbound][DocumentCaptured] %s from=%s digitos=%r -> 0 deudores, desconocido real",
+            call_sid, from_number, digits,
+        )
+        await _alerta_llamada_no_identificada(
+            db, f"Llamada entrante de {from_number}: marcó el documento '{digits}', "
+                f"que no corresponde a ningún deudor registrado.",
+        )
+        return PlainTextResponse(_SIN_MATCH_TWIML, media_type="application/xml")
+
+    if len(candidates) > 1:
+        # Mismo documento en 2+ pólizas (mismo titular) — el documento YA
+        # confirmó que es la misma persona dueña de todas ellas, así que no
+        # es una fuga de datos enumerarlas. En vez de adivinar cuál le
+        # interesa, se las leemos numeradas (más urgente primero) y elige
+        # por teclado — mismo mecanismo confiable que el documento.
+        def _urgencia(d: dict):
+            venc = d.get("fecha_pago") or d.get("vencimiento")
+            return str(venc)[:10] if venc else "9999-99-99"
+        candidates.sort(key=_urgencia)
+        return await _pedir_seleccion_poliza(db, call_sid, from_number, digits, candidates)
+
+    debtor = candidates[0]
+    user_id = str(debtor["user_id"])
+    await db.cobranza_calls_in_progress.insert_one({
+        "call_sid": call_sid, "user_id": user_id,
+        "debtor_id": str(debtor["_id"]), "debtor_name": debtor.get("nombre"),
+        "debtor_phone": from_number, "started_at": datetime.now(timezone.utc),
+        "direction": "inbound", "caller_stated_document": digits,
+    })
+
+    host = (
+        os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
+        .replace("https://", "")
+        .replace("http://", "")
+    )
+    ws_url = f"wss://{host}/api/cobranza/voice/ws/{call_sid}"
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?><Response>'
+        f'<Connect><Stream url="{ws_url}" /></Connect></Response>'
+    )
+    logger.info("[Inbound][DocumentCaptured] %s documento OK, debtor=%s -> Stream", call_sid, debtor.get("nombre"))
     return PlainTextResponse(twiml, media_type="application/xml")
 
 
