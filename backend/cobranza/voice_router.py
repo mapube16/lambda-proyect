@@ -698,7 +698,13 @@ _VOICEMAIL_RE = re.compile(
     r"dej[ae] (su|tu) mensaje|dejar (su|tu) mensaje|"
     r"despu[eé]s (del|de escuchar el) tono|"
     r"tecla numeral|"
-    r"no se encuentra disponible|no est[aá] disponible en este momento",
+    r"no se encuentra disponible|no est[aá] disponible en este momento|"
+    # Menú del contestador de Claro (observado CAa4739f04: quedó 'contactado'):
+    # "llegó al tiempo límite. Para editar, marque uno. Para enviar, marque dos."
+    r"lleg[oó] al tiempo l[ií]mite|"
+    r"para [a-záéíóúü ]{2,30}marque|"
+    r"llamada (ser[aá]|est[aá] siendo|ha sido) transferida|"
+    r"grab[ae]r? (su|el) mensaje",
     re.IGNORECASE,
 )
 

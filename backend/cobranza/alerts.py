@@ -103,6 +103,41 @@ def _alerta_email_html(tipo: str, doc: dict) -> str:
 """
 
 
+# Referencias fuertes a las tareas de notificación fire-and-forget — sin esto
+# el GC puede matar un create_task a mitad de envío.
+_notify_tasks: set = set()
+
+
+async def _notificar_alerta(tipo: str, doc: dict, alertas_cfg: dict, user_id: str) -> None:
+    """Envía la alerta ya insertada por WhatsApp/email. Corre en background —
+    nunca lanza, nunca bloquea la llamada en curso."""
+    if "whatsapp_responsable" in (alertas_cfg.get("canales") or []) and doc.get("responsable_telefono"):
+        try:
+            from services.notifications import send_whatsapp_text
+            await send_whatsapp_text(doc["responsable_telefono"], _formatear_mensaje(tipo, doc))
+        except Exception:
+            logger.exception("[alerts] envío WhatsApp falló (no fatal) tipo=%s user=%s", tipo, user_id)
+
+    # Canal EMAIL (SMTP Private Email) — canal principal de alertas mientras no
+    # haya WhatsApp oficial aprobado. Destinatarios: alertas.email_to del tenant
+    # o, si no, la var ALERTAS_EMAIL_TO (coma-separada). Nunca fatal.
+    import os as _os
+    email_to = alertas_cfg.get("email_to") or _os.getenv("ALERTAS_EMAIL_TO", "")
+    if isinstance(email_to, str):
+        email_to = [e.strip() for e in email_to.split(",") if e.strip()]
+    if email_to:
+        try:
+            import asyncio as _asyncio
+            from mailer import send_smtp
+            await _asyncio.to_thread(
+                send_smtp, email_to,
+                f"[ARIA] {_TITULOS.get(tipo, tipo)} — {doc.get('debtor_nombre') or 'deudor'}",
+                _alerta_email_html(tipo, doc),
+            )
+        except Exception:
+            logger.exception("[alerts] envío EMAIL falló (no fatal) tipo=%s user=%s", tipo, user_id)
+
+
 async def crear_alerta(
     db, user_id: str, debtor: dict, tipo: str, *,
     detalle: str = "", extra: Optional[dict] = None,
@@ -149,31 +184,16 @@ async def crear_alerta(
         logger.exception("[alerts] insert failed tipo=%s user=%s", tipo, user_id)
         return doc
 
-    if "whatsapp_responsable" in (alertas_cfg.get("canales") or []) and doc["responsable_telefono"]:
-        try:
-            from services.notifications import send_whatsapp_text
-            await send_whatsapp_text(doc["responsable_telefono"], _formatear_mensaje(tipo, doc))
-        except Exception:
-            logger.exception("[alerts] envío WhatsApp falló (no fatal) tipo=%s user=%s", tipo, user_id)
-
-    # Canal EMAIL (SMTP Private Email) — canal principal de alertas mientras no
-    # haya WhatsApp oficial aprobado. Destinatarios: alertas.email_to del tenant
-    # o, si no, la var ALERTAS_EMAIL_TO (coma-separada). Nunca fatal.
-    import os as _os
-    email_to = alertas_cfg.get("email_to") or _os.getenv("ALERTAS_EMAIL_TO", "")
-    if isinstance(email_to, str):
-        email_to = [e.strip() for e in email_to.split(",") if e.strip()]
-    if email_to:
-        try:
-            import asyncio as _asyncio
-            from mailer import send_smtp
-            await _asyncio.to_thread(
-                send_smtp, email_to,
-                f"[ARIA] {_TITULOS.get(tipo, tipo)} — {doc.get('debtor_nombre') or 'deudor'}",
-                _alerta_email_html(tipo, doc),
-            )
-        except Exception:
-            logger.exception("[alerts] envío EMAIL falló (no fatal) tipo=%s user=%s", tipo, user_id)
+    # Notificaciones EN BACKGROUND (fire-and-forget). Antes se esperaban inline:
+    # WhatsApp (bridge Baileys, throttle 5-9s) + SMTP (3-8s) sumaban >10s y
+    # pipecat mataba la function call de la llamada en curso por timeout
+    # (observado: solicitar_link_cupon "timed out after 10.0 seconds" en
+    # CA8f9eb1 — ARIA nunca recibió el resultado). El insert ya está hecho; la
+    # alerta existe. El envío no debe retrasar a ARIA.
+    import asyncio as _asyncio
+    task = _asyncio.create_task(_notificar_alerta(tipo, doc, alertas_cfg, user_id))
+    _notify_tasks.add(task)
+    task.add_done_callback(_notify_tasks.discard)
 
     logger.info(
         "[alerts] tipo=%s area=%s responsable=%s user=%s debtor=%s",
