@@ -323,6 +323,85 @@ async def run_daily_report(db, user_id: str, fecha: Optional[date] = None) -> di
     return {"metrics": metrics, "qualitative": qualitative, "envio": envio, "fecha": fecha.isoformat()}
 
 
+def _correos_operacion(cfg: dict) -> list:
+    """Todos los correos de la operación: destinatarios de reportes + correos de
+    alertas, deduplicados (a todos les llegan los avisos de jornada)."""
+    reportes_cfg = cfg.get("reportes") or {}
+    alertas_cfg = cfg.get("alertas") or {}
+    out: list = []
+    for e in (reportes_cfg.get("destinatarios") or []) + (alertas_cfg.get("email_to") or []):
+        if e and e.lower() not in {x.lower() for x in out}:
+            out.append(e)
+    return out
+
+
+def _aviso_html(titulo: str, color: str, cuerpo_html: str, tenant_nombre: str) -> str:
+    """Correo corto de aviso de operación (inicio / recordatorio)."""
+    return f"""<!DOCTYPE html><html><body style="margin:0;background:#F6F6FB;font-family:-apple-system,Segoe UI,Roboto,sans-serif">
+<div style="max-width:560px;margin:0 auto;padding:24px 16px">
+  <div style="background:{color};border-radius:12px 12px 0 0;padding:18px 24px">
+    <div style="color:rgba(255,255,255,.75);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase">ARIA · {tenant_nombre}</div>
+    <div style="color:#fff;font-size:19px;font-weight:800;margin-top:4px">{titulo}</div>
+  </div>
+  <div style="background:#fff;border:1px solid #E7E6E2;border-top:none;border-radius:0 0 12px 12px;padding:18px 24px;font-size:13.5px;color:#374151;line-height:1.65">
+    {cuerpo_html}
+    <p style="margin-top:18px;font-size:11px;color:#9CA3AF">Generado automáticamente por ARIA (Landa Tech) — {_utcnow().astimezone(COLOMBIA_TZ).strftime('%Y-%m-%d %H:%M')} hora Colombia.</p>
+  </div>
+</div></body></html>"""
+
+
+async def run_inicio_jornada_email(db, user_id: str) -> dict:
+    """Aviso 'la operación arrancó' — se envía cuando sale la primera llamada
+    del día (petición DPG: correo cuando inicia y cuando finaliza)."""
+    from cobranza.config_cache import get_tenant_config
+    cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
+    tenant_nombre = (cfg.get("reportes") or {}).get("nombre_empresa") or "la operación"
+    cupo = int((cfg.get("volumen") or {}).get("llamadas_por_dia") or 150)
+    hoy = datetime.now(COLOMBIA_TZ).date()
+    prog = await _programados_para(db, user_id, hoy, cupo)
+    hora = datetime.now(COLOMBIA_TZ).strftime("%I:%M %p").lstrip("0")
+    cuerpo = (
+        f"<p>La jornada de llamadas de hoy <b>{hoy.strftime('%d/%m/%Y')}</b> quedó autorizada "
+        f"y <b>ARIA ya está marcando</b> (primera llamada ~{hora}).</p>"
+        f"<ul style='padding-left:18px;margin:10px 0'>"
+        f"<li><b>{prog['total']}</b> clientes en cola hoy</li>"
+        f"<li>Cupo del día: <b>{cupo}</b> llamadas</li>"
+        f"<li>Orden: mayor mora primero</li></ul>"
+        f"<p>Al finalizar la jornada llegará el informe completo del día.</p>"
+    )
+    envio = await send_via_resend(
+        _correos_operacion(cfg),
+        f"🟢 Operación iniciada — {tenant_nombre} {hoy.strftime('%d/%m/%Y')}",
+        _aviso_html("Operación iniciada", "#0F6B64", cuerpo, tenant_nombre),
+    )
+    return {"envio": envio, "en_cola": prog["total"]}
+
+
+async def run_recordatorio_autorizacion(db, user_id: str, numero: int) -> dict:
+    """Recordatorio: la franja ya abrió y la jornada de hoy NO está autorizada —
+    ARIA no está llamando. Se repite (cada ~2h, máx 3) hasta que autoricen."""
+    from cobranza.config_cache import get_tenant_config
+    cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
+    tenant_nombre = (cfg.get("reportes") or {}).get("nombre_empresa") or "la operación"
+    cupo = int((cfg.get("volumen") or {}).get("llamadas_por_dia") or 150)
+    hoy = datetime.now(COLOMBIA_TZ).date()
+    prog = await _programados_para(db, user_id, hoy, cupo)
+    cuerpo = (
+        f"<p><b>La jornada de hoy {hoy.strftime('%d/%m/%Y')} aún no ha sido autorizada</b>, "
+        f"así que ARIA <b>no está llamando</b> a pesar de que el horario de llamadas ya abrió.</p>"
+        f"<p>Hay <b>{prog['total']}</b> clientes en cola esperando. Para iniciar: entre al "
+        f"dashboard (my.landatech.org) → Cobranza → <b>Autorizar jornada de hoy</b>.</p>"
+        f"<p style='color:#6B7280;font-size:12px'>Tip: desde la tarde anterior pueden dejar "
+        f"pre-autorizada la jornada del día siguiente y la operación arranca sola.</p>"
+    )
+    envio = await send_via_resend(
+        _correos_operacion(cfg),
+        f"⚠️ Jornada sin autorizar — ARIA no está llamando ({tenant_nombre}) · recordatorio {numero}",
+        _aviso_html("Jornada sin autorizar", "#B45309", cuerpo, tenant_nombre),
+    )
+    return {"envio": envio}
+
+
 async def _programados_para(db, user_id: str, fecha_obj: date, cupo: int) -> dict:
     """Quiénes están en cola para marcar el día `fecha_obj`: deudores llamables
     con cita (proximo_intento_at) hasta el fin de ese día, ordenados por la
@@ -365,10 +444,7 @@ async def run_fin_jornada_report(db, user_id: str, fecha: Optional[date] = None)
     cupo = int((cfg.get("volumen") or {}).get("llamadas_por_dia") or 150)
 
     # todos los correos: destinatarios de reportes + correos de alertas (dedupe)
-    destinatarios: list = []
-    for e in (reportes_cfg.get("destinatarios") or []) + (alertas_cfg.get("email_to") or []):
-        if e and e.lower() not in {x.lower() for x in destinatarios}:
-            destinatarios.append(e)
+    destinatarios = _correos_operacion(cfg)
 
     metrics = await aggregate_metrics(db, user_id, start, end, fecha)
     muestras = await _muestras_del_dia(db, user_id, start, end)
@@ -403,7 +479,7 @@ async def run_fin_jornada_report(db, user_id: str, fecha: Optional[date] = None)
           <th style="text-align:right;padding:6px 12px;color:#6B7280;font-size:11px">INTENTO</th></tr>
       {top_html}
     </table>
-    <p style="margin-top:14px;font-size:11px;color:#9CA3AF">Las llamadas de mañana NO inician solas: requieren autorizar la jornada en el dashboard.</p>
+    <p style="margin-top:14px;font-size:11px;color:#9CA3AF">Puede dejar la jornada de mañana <b>pre-autorizada desde ya</b> en el dashboard (Cobranza → Autorizar mañana) y la operación arranca sola; si no, se autoriza mañana como siempre.</p>
   </div>
 </div></body></html>""",
     )

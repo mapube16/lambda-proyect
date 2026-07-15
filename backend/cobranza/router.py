@@ -382,12 +382,16 @@ async def get_jornada_estado(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/jornada/autorizar")
-async def post_jornada_autorizar(current_user: dict = Depends(get_current_user)):
-    """Autoriza la jornada de HOY: recién aquí el scheduler empieza a marcar."""
+async def post_jornada_autorizar(
+    dia: str = Query("hoy", pattern="^(hoy|manana)$"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Autoriza la jornada de HOY, o PRE-autoriza la de MAÑANA (?dia=manana):
+    desde la tarde anterior se deja lista y al día siguiente arranca sola."""
     await _require_cobranza_enabled(current_user)
     from cobranza.campaign_scheduler import set_jornada_authorized
     actor = current_user.get("email") or str(current_user["user_id"])
-    return await set_jornada_authorized(str(current_user["user_id"]), True, actor=actor)
+    return await set_jornada_authorized(str(current_user["user_id"]), True, actor=actor, dia=dia)
 
 
 @router.post("/jornada/desautorizar")

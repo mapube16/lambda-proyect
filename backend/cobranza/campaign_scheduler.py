@@ -127,29 +127,63 @@ def _today_bogota() -> str:
 async def is_jornada_authorized(user_id: str) -> bool:
     db = get_db()
     doc = await db.cobranza_runtime.find_one({"_id": f"{_JORNADA_DOC_PREFIX}:{user_id}"})
-    return bool(doc) and doc.get("authorized_date") == _today_bogota()
+    if not doc:
+        return False
+    hoy = _today_bogota()
+    # authorized_dates (lista) permite pre-autorizar mañana sin pisar hoy;
+    # authorized_date (campo viejo) se mantiene por compatibilidad.
+    return hoy in (doc.get("authorized_dates") or []) or doc.get("authorized_date") == hoy
 
 
-async def set_jornada_authorized(user_id: str, authorized: bool, actor: str = "") -> dict:
+def _manana_habil_bogota() -> str:
+    """Próximo día hábil (la 'jornada de mañana' que se puede pre-autorizar)."""
+    import pytz
+    from cobranza.call_scheduler import add_business_days
+    hoy = datetime.now(pytz.timezone("America/Bogota")).date()
+    return add_business_days(hoy, 1).isoformat()
+
+
+async def set_jornada_authorized(user_id: str, authorized: bool, actor: str = "", dia: str = "hoy") -> dict:
+    """dia='hoy' autoriza la jornada de HOY; dia='manana' PRE-autoriza el próximo
+    día hábil (petición DPG: autorizar desde la tarde anterior → al llegar el
+    día, el gate se cumple solo y arranca automático). authorized_dates es una
+    LISTA: pre-autorizar mañana a media jornada NO apaga la de hoy. Desautorizar
+    limpia todo (hoy y mañana)."""
     db = get_db()
     _id = f"{_JORNADA_DOC_PREFIX}:{user_id}"
     now = datetime.now(timezone.utc)
     if authorized:
-        fields = {"authorized_date": _today_bogota(), "by": actor, "at": now}
+        fecha = _manana_habil_bogota() if dia == "manana" else _today_bogota()
+        await db.cobranza_runtime.update_one(
+            {"_id": _id},
+            {"$addToSet": {"authorized_dates": fecha},
+             "$set": {"by": actor, "at": now}},
+            upsert=True,
+        )
     else:
-        fields = {"authorized_date": None, "by": actor, "at": now}
-    await db.cobranza_runtime.update_one({"_id": _id}, {"$set": fields}, upsert=True)
-    logger.warning("[jornada] autorizacion=%s user=%s por=%s", authorized, user_id, actor)
-    return {"authorized": bool(authorized), "authorized_date": fields["authorized_date"], "by": actor}
+        fecha = None
+        await db.cobranza_runtime.update_one(
+            {"_id": _id},
+            {"$set": {"authorized_dates": [], "authorized_date": None, "by": actor, "at": now}},
+            upsert=True,
+        )
+    logger.warning("[jornada] autorizacion=%s dia=%s user=%s por=%s", authorized, dia, user_id, actor)
+    return {"authorized": bool(authorized), "authorized_date": fecha, "by": actor}
 
 
 async def jornada_estado(user_id: str) -> dict:
     db = get_db()
     doc = await db.cobranza_runtime.find_one({"_id": f"{_JORNADA_DOC_PREFIX}:{user_id}"}) or {}
     hoy = _today_bogota()
+    manana = _manana_habil_bogota()
+    fechas = set(doc.get("authorized_dates") or [])
+    if doc.get("authorized_date"):
+        fechas.add(doc["authorized_date"])  # compat con el campo viejo
     return {
         "hoy": hoy,
-        "authorized": doc.get("authorized_date") == hoy,
+        "manana": manana,
+        "authorized": hoy in fechas,
+        "authorized_manana": manana in fechas,
         "authorized_date": doc.get("authorized_date"),
         "by": doc.get("by"),
         "at": doc.get("at").isoformat() if doc.get("at") else None,

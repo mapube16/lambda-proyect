@@ -1373,7 +1373,7 @@ export function CobranzaTab() {
 
   // ── Autorización de jornada (informe §2.1): el bot NO marca hasta que DPG
   // revisa la lista y autoriza HOY. Sin esto, nada arranca en automático. ──────
-  const [jornadaAuth, setJornadaAuth] = useState<{ authorized: boolean; by?: string | null; at?: string | null; hoy?: string } | null>(null);
+  const [jornadaAuth, setJornadaAuth] = useState<{ authorized: boolean; authorized_manana?: boolean; manana?: string; by?: string | null; at?: string | null; hoy?: string } | null>(null);
   const [jornadaAuthBusy, setJornadaAuthBusy] = useState(false);
   const fetchJornadaAuth = useCallback(async () => {
     try {
@@ -1415,6 +1415,24 @@ export function CobranzaTab() {
     } catch {
       addToast({ id: 'jornada-auth', ok: false, message: 'Error de conexión.' });
     } finally { setJornadaAuthBusy(false); }
+  }, [fetchJornadaAuth, addToast]);
+
+  // Pre-autorizar la jornada de MAÑANA (desde la tarde anterior): al llegar el
+  // día siguiente la operación arranca sola, sin entrar al dashboard.
+  const [mananaBusy, setMananaBusy] = useState(false);
+  const autorizarManana = useCallback(async () => {
+    setMananaBusy(true);
+    try {
+      const r = await apiFetch('/api/cobranza/jornada/autorizar?dia=manana', { method: 'POST' });
+      if (r.ok) {
+        await fetchJornadaAuth();
+        addToast({ id: 'jornada-manana', ok: true, message: 'Jornada de mañana pre-autorizada — arrancará sola en la franja.' });
+      } else {
+        addToast({ id: 'jornada-manana', ok: false, message: 'No se pudo pre-autorizar mañana.' });
+      }
+    } catch {
+      addToast({ id: 'jornada-manana', ok: false, message: 'Error de conexión.' });
+    } finally { setMananaBusy(false); }
   }, [fetchJornadaAuth, addToast]);
 
   // ── Today's activity KPIs + funnel (whole-cartera, not the current page) ─────
@@ -1806,20 +1824,49 @@ export function CobranzaTab() {
 
         {/* ── Autorización de jornada (informe §2.1): pill de estado + modal ─── */}
         {jornadaAuth && (
-          <button
-            onClick={() => setJornadaModal(true)}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 16,
-              padding: '8px 14px', borderRadius: 999, cursor: 'pointer',
-              background: jornadaAuth.authorized ? C.greenBg : C.orangeBg,
-              border: `1px solid ${jornadaAuth.authorized ? 'rgba(21,127,91,0.3)' : 'rgba(183,121,30,0.4)'}`,
-              fontFamily: C.SG, fontWeight: 700, fontSize: 12.5,
-              color: jornadaAuth.authorized ? C.green : C.orange,
-            }}
-          >
-            <span>{jornadaAuth.authorized ? '✅' : '⏸️'}</span>
-            {jornadaAuth.authorized ? 'Jornada de hoy autorizada' : 'Jornada de hoy SIN autorizar — clic para autorizar'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setJornadaModal(true)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '8px 14px', borderRadius: 999, cursor: 'pointer',
+                background: jornadaAuth.authorized ? C.greenBg : C.orangeBg,
+                border: `1px solid ${jornadaAuth.authorized ? 'rgba(21,127,91,0.3)' : 'rgba(183,121,30,0.4)'}`,
+                fontFamily: C.SG, fontWeight: 700, fontSize: 12.5,
+                color: jornadaAuth.authorized ? C.green : C.orange,
+              }}
+            >
+              <span>{jornadaAuth.authorized ? '✅' : '⏸️'}</span>
+              {jornadaAuth.authorized ? 'Jornada de hoy autorizada' : 'Jornada de hoy SIN autorizar — clic para autorizar'}
+            </button>
+            {/* Pre-autorización de mañana: desde la tarde se deja lista y la
+                operación del día siguiente arranca sola. */}
+            {jornadaAuth.authorized_manana ? (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '8px 14px', borderRadius: 999,
+                background: C.greenBg, border: '1px solid rgba(21,127,91,0.3)',
+                fontFamily: C.SG, fontWeight: 700, fontSize: 12.5, color: C.green,
+              }}>
+                🌅 Mañana pre-autorizada — arranca sola
+              </span>
+            ) : (
+              <button
+                onClick={autorizarManana}
+                disabled={mananaBusy}
+                title="Deja autorizada la jornada del próximo día hábil: las llamadas arrancan solas en la franja."
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '8px 14px', borderRadius: 999, cursor: 'pointer',
+                  background: C.s1, border: `1px dashed ${C.border}`,
+                  fontFamily: C.SG, fontWeight: 700, fontSize: 12.5, color: C.muted,
+                  opacity: mananaBusy ? 0.6 : 1,
+                }}
+              >
+                🌅 {mananaBusy ? 'Autorizando…' : 'Pre-autorizar mañana'}
+              </button>
+            )}
+          </div>
         )}
 
         {/* Page heading (Panel) */}
