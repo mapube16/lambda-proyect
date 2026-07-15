@@ -348,6 +348,8 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
     import ssl
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
+    from email.header import Header
+    from email.utils import formataddr
 
     host = _env_clean("SMTP_HOST", "mail.privateemail.com")
     port = int(_env_clean("SMTP_PORT", "465") or "465")
@@ -363,8 +365,11 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
         raise RuntimeError("sin destinatarios")
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"ARIA — Landa Tech <{from_addr}>"
+    # Headers RFC 5322: subject/from pueden traer no-ASCII (tildes, guion largo).
+    # Sin codificar, Private Email (Namecheap) rechaza con 554 invalid From/Subject.
+    # Header(...) hace el encoding RFC 2047; el display name va ASCII ('-' normal).
+    msg["Subject"] = Header(subject, "utf-8")
+    msg["From"] = formataddr(("ARIA - Landa Tech", from_addr))
     msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(html, "html", "utf-8"))
 
