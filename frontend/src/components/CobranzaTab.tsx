@@ -1385,12 +1385,25 @@ export function CobranzaTab() {
     const id = window.setInterval(fetchJornadaAuth, 120000);
     return () => window.clearInterval(id);
   }, [fetchJornadaAuth]);
+  // El modal se abre solo cuando la jornada de hoy aún NO está autorizada
+  // (una vez por carga; el usuario puede cerrarlo para revisar la lista).
+  const [jornadaModal, setJornadaModal] = useState(false);
+  const jornadaAutoOpenRef = useRef(false);
+  useEffect(() => {
+    if (jornadaAuth && !jornadaAuth.authorized && !jornadaAutoOpenRef.current) {
+      jornadaAutoOpenRef.current = true;
+      setJornadaModal(true);
+    }
+    // al re-autorizarse/pasar de día, permite que vuelva a abrir el siguiente día
+    if (jornadaAuth?.authorized) jornadaAutoOpenRef.current = true;
+  }, [jornadaAuth]);
   const toggleJornadaAuth = useCallback(async (authorize: boolean) => {
     setJornadaAuthBusy(true);
     try {
       const r = await apiFetch(`/api/cobranza/jornada/${authorize ? 'autorizar' : 'desautorizar'}`, { method: 'POST' });
       if (r.ok) {
         await fetchJornadaAuth();
+        if (authorize) setJornadaModal(false);
         addToast({
           id: 'jornada-auth', ok: true,
           message: authorize ? 'Jornada autorizada — el agente comenzará a marcar en la franja.' : 'Jornada pausada — no se harán nuevas llamadas hoy.',
@@ -1770,41 +1783,22 @@ export function CobranzaTab() {
         <input ref={csvInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('create')} />
         <input ref={csvUpdateRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsvUpload('update')} />
 
-        {/* ── Autorización de jornada (informe §2.1) ─────────────────────────── */}
+        {/* ── Autorización de jornada (informe §2.1): pill de estado + modal ─── */}
         {jornadaAuth && (
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
-            padding: '14px 20px', marginBottom: 18, borderRadius: 12,
-            background: jornadaAuth.authorized ? C.greenBg : C.orangeBg,
-            border: `1px solid ${jornadaAuth.authorized ? 'rgba(21,127,91,0.3)' : 'rgba(183,121,30,0.35)'}`,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-              <span style={{ fontSize: 20, flexShrink: 0 }}>{jornadaAuth.authorized ? '✅' : '⏸️'}</span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 14, color: jornadaAuth.authorized ? C.green : C.orange }}>
-                  {jornadaAuth.authorized ? 'Jornada de hoy autorizada' : 'Jornada de hoy sin autorizar'}
-                </div>
-                <div style={{ fontFamily: C.IN, fontSize: 12.5, color: C.muted, marginTop: 2 }}>
-                  {jornadaAuth.authorized
-                    ? `El agente marca durante la franja. Autorizada por ${jornadaAuth.by || 'un colaborador'}.`
-                    : 'Revisa el listado del día y autoriza para que el agente empiece a llamar. Sin autorización, no se hace ninguna llamada.'}
-                </div>
-              </div>
-            </div>
-            <Button
-              onClick={() => toggleJornadaAuth(!jornadaAuth.authorized)}
-              loading={jornadaAuthBusy}
-              size="sm"
-              styles={{ root: {
-                background: jornadaAuth.authorized ? 'transparent' : C.purple,
-                color: jornadaAuth.authorized ? C.pink : '#fff',
-                border: jornadaAuth.authorized ? `1px solid ${C.border2}` : 'none',
-                fontWeight: 700, flexShrink: 0,
-              } }}
-            >
-              {jornadaAuth.authorized ? 'Pausar jornada' : 'Autorizar jornada de hoy'}
-            </Button>
-          </div>
+          <button
+            onClick={() => setJornadaModal(true)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 16,
+              padding: '8px 14px', borderRadius: 999, cursor: 'pointer',
+              background: jornadaAuth.authorized ? C.greenBg : C.orangeBg,
+              border: `1px solid ${jornadaAuth.authorized ? 'rgba(21,127,91,0.3)' : 'rgba(183,121,30,0.4)'}`,
+              fontFamily: C.SG, fontWeight: 700, fontSize: 12.5,
+              color: jornadaAuth.authorized ? C.green : C.orange,
+            }}
+          >
+            <span>{jornadaAuth.authorized ? '✅' : '⏸️'}</span>
+            {jornadaAuth.authorized ? 'Jornada de hoy autorizada' : 'Jornada de hoy SIN autorizar — clic para autorizar'}
+          </button>
         )}
 
         {/* Page heading (Panel) */}
@@ -2226,6 +2220,101 @@ export function CobranzaTab() {
               <Button onClick={handleForceLlamar} color="orange" variant="light" size="sm">
                 Llamar de todos modos
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de autorización de jornada (informe §2.1) ─────────────────── */}
+      {jornadaModal && jornadaAuth && (
+        <div
+          onClick={() => setJornadaModal(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 600, display: 'grid', placeItems: 'center',
+            background: 'rgba(22,22,29,0.45)', backdropFilter: 'blur(6px)', padding: 20,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: 480, maxWidth: '100%', background: C.s1, borderRadius: 18,
+              overflow: 'hidden', boxShadow: '0 24px 70px rgba(22,22,60,0.35)',
+              border: `1px solid ${C.border}`, animation: 'cobr-fade-in 0.2s ease',
+            }}
+          >
+            {/* Cabecera con acento de marca */}
+            <div style={{
+              background: jornadaAuth.authorized ? C.green : C.purple,
+              padding: '22px 28px', color: '#fff', display: 'flex', alignItems: 'center', gap: 14,
+            }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 12, background: 'rgba(255,255,255,0.16)',
+                display: 'grid', placeItems: 'center', fontSize: 22, flexShrink: 0,
+              }}>{jornadaAuth.authorized ? '✅' : '📞'}</div>
+              <div>
+                <div style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 18, letterSpacing: '-0.01em' }}>
+                  {jornadaAuth.authorized ? 'Jornada de hoy autorizada' : 'Autoriza la jornada de hoy'}
+                </div>
+                <div style={{ fontFamily: C.IN, fontSize: 12.5, opacity: 0.85, marginTop: 2 }}>
+                  {new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}
+                </div>
+              </div>
+            </div>
+
+            {/* Cuerpo */}
+            <div style={{ padding: '24px 28px' }}>
+              <p style={{ fontFamily: C.IN, fontSize: 14, color: C.text, lineHeight: 1.6, margin: '0 0 18px' }}>
+                {jornadaAuth.authorized ? (
+                  <>El agente está habilitado para marcar hoy durante la franja. Puedes pausar la jornada cuando quieras.</>
+                ) : (
+                  <>Antes de que el agente empiece a llamar, revisa el listado del día y excluye a quien no deba ser contactado. <strong>Mientras no autorices, no se hace ninguna llamada.</strong></>
+                )}
+              </p>
+
+              {/* Stats del día */}
+              {jornada && (
+                <div style={{ display: 'flex', gap: 12, marginBottom: 22 }}>
+                  <div style={{ flex: 1, background: C.s3, borderRadius: 12, padding: '14px 16px' }}>
+                    <div style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 24, color: C.ink }}>{jornada.total ?? '—'}</div>
+                    <div style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted, marginTop: 2 }}>programados hoy</div>
+                  </div>
+                  <div style={{ flex: 1, background: C.s3, borderRadius: 12, padding: '14px 16px' }}>
+                    <div style={{ fontFamily: C.SG, fontWeight: 800, fontSize: 24, color: C.ink }}>{jornada.cupo_diario ?? '—'}</div>
+                    <div style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted, marginTop: 2 }}>cupo del día</div>
+                  </div>
+                </div>
+              )}
+
+              {jornadaAuth.authorized && jornadaAuth.by && (
+                <div style={{ fontFamily: C.IN, fontSize: 12, color: C.muted, marginBottom: 18 }}>
+                  Autorizada por <strong style={{ color: C.text }}>{jornadaAuth.by}</strong>.
+                </div>
+              )}
+
+              {/* Acciones */}
+              <div style={{ display: 'flex', gap: 12 }}>
+                <Button
+                  onClick={() => setJornadaModal(false)}
+                  variant="default"
+                  size="md"
+                  styles={{ root: { flex: 1, fontWeight: 700 } }}
+                >
+                  {jornadaAuth.authorized ? 'Cerrar' : 'Revisar primero'}
+                </Button>
+                <Button
+                  onClick={() => toggleJornadaAuth(!jornadaAuth.authorized)}
+                  loading={jornadaAuthBusy}
+                  size="md"
+                  styles={{ root: {
+                    flex: 2, fontWeight: 800,
+                    background: jornadaAuth.authorized ? C.pinkBg : C.purple,
+                    color: jornadaAuth.authorized ? C.pink : '#fff',
+                    border: 'none',
+                  } }}
+                >
+                  {jornadaAuth.authorized ? 'Pausar jornada' : 'Autorizar jornada de hoy'}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
