@@ -80,6 +80,11 @@ async def lifespan(app: FastAPI):
     try:
         from softseguros.scheduler import setup_scheduler as setup_softseguros_scheduler
         await setup_softseguros_scheduler(app)
+        # Catch-up al boot: el jobstore es en memoria y el servicio redespliega
+        # seguido, así que el cron fijo se pierde y la cartera se congela. Si está
+        # vieja, sincroniza de una vez (en background, no bloquea el arranque).
+        from softseguros.scheduler import run_catchup_if_stale
+        asyncio.create_task(run_catchup_if_stale())
     except Exception:  # noqa: BLE001 — scheduler must never block app startup
         logging.exception("Failed to start SOFTSEGUROS scheduler")
 

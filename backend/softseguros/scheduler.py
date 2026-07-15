@@ -12,6 +12,7 @@ app.state.softseguros_scheduler.shutdown() if present.
 """
 import os
 import logging
+from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -55,6 +56,46 @@ async def run_daily_sync_for_all_users() -> None:
             continue
         except Exception:  # noqa: BLE001 — one bad tenant must not abort the rest
             logger.exception("softseguros daily sync failed for user_id=%s", user_id)
+
+
+async def run_catchup_if_stale(max_age_hours: float = None) -> None:
+    """
+    Al arrancar: si el último sync de cartera de un tenant es más viejo que
+    SOFTSEGUROS_CATCHUP_STALE_HOURS (default 6h), corre un sync cron_daily de una
+    vez. El jobstore de APScheduler es EN MEMORIA y el servicio redespliega
+    seguido, así que el cron fijo (13,18 UTC) se pierde entre reinicios y la data
+    se congela (se detectó cartera de 11 días vieja). Este catch-up garantiza
+    data fresca en cada boot cuando ya está vencida, sin re-sincronizar en
+    redeploys seguidos (el chequeo de frescura lo evita). Best-effort — nunca
+    tumba el arranque.
+    """
+    from database import get_db
+    from softseguros.sync import run_cartera_sync, NoCredentialsError
+
+    max_age = max_age_hours or float(os.getenv("SOFTSEGUROS_CATCHUP_STALE_HOURS", "6"))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age)
+    db = get_db()
+    docs = await db.softseguros_credentials.find({}, {"user_id": 1}).to_list(length=None)
+    for doc in docs:
+        uid = doc.get("user_id")
+        if not uid:
+            continue
+        st = await db.softseguros_sync_state.find_one({"user_id": uid}, {"last_cartera_sync_at": 1})
+        last = (st or {}).get("last_cartera_sync_at")
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if last >= cutoff:
+                continue  # fresca — no re-sincronizar en redeploys seguidos
+        try:
+            logger.warning("softseguros catch-up: cartera stale for user_id=%s (last=%s) — syncing now", uid, last)
+            res = await run_cartera_sync(db, uid, mode="cron_daily")
+            logger.info("softseguros catch-up done user_id=%s: %s", uid,
+                        {k: res.get(k) for k in ("debtors_updated", "debtors_created", "debtors_marked_paid")})
+        except NoCredentialsError:
+            continue
+        except Exception:  # noqa: BLE001 — one bad tenant must not abort the rest
+            logger.exception("softseguros catch-up sync failed user_id=%s", uid)
 
 
 async def setup_scheduler(app) -> AsyncIOScheduler:
