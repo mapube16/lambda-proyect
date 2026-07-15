@@ -243,10 +243,19 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
         # El SDK de Twilio es sync (HTTP bloqueante): en el event loop congela
         # TODAS las llamadas activas ~0.5-1s por marcación. Igual que initiate-v2.
         loop = asyncio.get_event_loop()
+        # Tope de TIMBRADO (petición DPG: cortar ANTES de entrar a buzón).
+        # No hay señal "va a entrar a buzón"; lo único posible es dejar timbrar
+        # menos que lo que tarda el buzón en contestar. En CO el buzón levanta
+        # ~25-30s; un humano que contesta lo hace en ~4 timbres (~20s). Con
+        # ring_timeout≈20s: si nadie contesta en ese lapso → Twilio marca
+        # no-answer ($0, se reintenta) ANTES de que el buzón conteste. Tunable
+        # por env: subir si corta humanos lentos, bajar si aún caen buzones.
+        ring_timeout = int(os.getenv("COBRANZA_RING_TIMEOUT_SECS", "20"))
         call = await asyncio.wait_for(
             loop.run_in_executor(None, lambda: client.calls.create(
                 to=to_number, from_=from_number,
                 url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+                timeout=ring_timeout,
                 # Grabar SOLO las contestadas (petición DPG, QA/compliance):
                 # Twilio graba desde que contestan → las no contestadas no
                 # generan grabación ni costo. El callback guarda la URL en el
@@ -256,7 +265,7 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
                 recording_status_callback_method="POST",
                 **call_status_kwargs(),
             )),
-            timeout=15,
+            timeout=15,  # latencia del API de Twilio; el ring_timeout es async del lado de Twilio
         )
         call_sid = call.sid
         logger.info("[scheduler] Twilio call %s -> %s (debtor %s)", call_sid, to_number, debtor["_id"])
