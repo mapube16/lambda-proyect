@@ -23,7 +23,22 @@ function persistAuth(data: any) {
   }
   const user: AuthUser = { user_id: data.user_id, email: data.email, role: data.role || "client" };
   localStorage.setItem("landa_user", JSON.stringify(user));
+  // Contraseña temporal: el dashboard abre el modal de cambio al entrar.
+  if (data.must_change_password) localStorage.setItem("must_change_pw", "1");
+  else localStorage.removeItem("must_change_pw");
   return user;
+}
+
+// Cambio de contraseña del usuario autenticado (identidad real del login).
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/auth/change-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ACCESS_TOKEN}` },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "No se pudo cambiar la contraseña");
+  localStorage.removeItem("must_change_pw");
 }
 
 // Login real con email/password.

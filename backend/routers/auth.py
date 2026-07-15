@@ -81,17 +81,73 @@ async def login(user: UserCreate, request: Request):
     if not db_user or not verify_password(user.password, db_user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password",
                             headers={"WWW-Authenticate": "Bearer"})
-    token = create_access_token(data={"sub": str(db_user["id"]), "role": db_user.get("role", "client")})
+    # Cuentas de equipo (acts_for_user_id): miembros del equipo del cliente
+    # (p.ej. cartera/gerencia de DPG) tienen credenciales PROPIAS pero operan
+    # sobre el workspace del tenant. El token sale con sub = tenant (todos los
+    # endpoints existentes quedan scopeados sin cambios) y auth_sub = identidad
+    # real del login (para cambio de contraseña y auditoría).
+    own_id = str(db_user["id"])
+    data_sub = str(db_user.get("acts_for_user_id") or own_id)
+    token = create_access_token(data={
+        "sub": data_sub,
+        "role": db_user.get("role", "client"),
+        "auth_sub": own_id,
+    })
     response_data = {
-        "user_id": str(db_user["id"]),
+        "user_id": data_sub,
         "role": db_user.get("role", "client"),
         "email": db_user["email"],
         "authenticated": True,
         "access_token": token,
+        "must_change_password": bool(db_user.get("must_change_password")),
     }
     response = JSONResponse(content=response_data, status_code=200)
     _set_auth_cookie(response, token)
     return response
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/auth/change-password")
+async def change_password(body: ChangePasswordRequest, request: Request):
+    """Cambio de contraseña del usuario AUTENTICADO (por su identidad real de
+    login — auth_sub — no por el tenant sobre el que actúa)."""
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip() or \
+        request.cookies.get("hive_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+    auth_id = payload.get("auth_sub") or payload.get("sub")
+    if not auth_id:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    db_user = await get_user_by_id(auth_id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Rate-limit igual que el login: current_password es fuerza-brutable.
+    from rate_limiting import check_login_rate_limit
+    check_login_rate_limit(db_user["email"], request)
+    if not db_user.get("hashed_password"):
+        raise HTTPException(status_code=400, detail="Esta cuenta no usa contraseña local (inicia sesión con Google)")
+    if not verify_password(body.current_password, db_user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Contraseña actual incorrecta")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe tener al menos 8 caracteres")
+
+    from bson import ObjectId
+    from database import get_db
+    await get_db().users.update_one(
+        {"_id": ObjectId(auth_id)},
+        {"$set": {"hashed_password": hash_password(body.new_password)},
+         "$unset": {"must_change_password": ""}},
+    )
+    return {"ok": True}
 
 
 @router.post("/auth/dev-token")

@@ -482,6 +482,92 @@ const TAB_META: Record<Tab, { title: string; sub: string; emoji: string }> = {
 
 type DashboardSection = 'leads' | 'cobranza' | 'email' | 'canales';
 
+// ─── Modal de cambio de contraseña ─────────────────────────────────────────────
+// Se abre manualmente desde el sidebar, o solo al entrar cuando el login vino
+// con must_change_password (cuentas de equipo creadas con contraseña temporal).
+function PasswordChangeModal({ forced, onClose }: { forced: boolean; onClose: () => void }) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    if (next.length < 8) { setError('La nueva contraseña debe tener al menos 8 caracteres.'); return; }
+    if (next !== confirm) { setError('Las contraseñas no coinciden.'); return; }
+    setBusy(true);
+    try {
+      const { changePassword } = await import('../api');
+      await changePassword(current, next);
+      setDone(true);
+      setTimeout(onClose, 1500);
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo cambiar la contraseña');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '10px 12px', borderRadius: 8,
+    border: `1px solid ${C.cyanBdr}`, background: C.s2, color: C.text,
+    fontFamily: C.IN, fontSize: 13, outline: 'none',
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 300, display: 'grid', placeItems: 'center',
+      background: 'rgba(5,5,12,0.7)', backdropFilter: 'blur(6px)',
+    }} onClick={forced ? undefined : onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: 380, maxWidth: 'calc(100vw - 40px)', padding: 28,
+        background: C.s0, backdropFilter: C.s0Blur, borderRadius: 14,
+        border: `1px solid ${C.cyanBdr}`, boxShadow: C.shadow2,
+      }}>
+        <h3 style={{ margin: 0, fontFamily: C.SG, fontSize: 16, color: C.text }}>
+          {forced ? 'Crea tu nueva contraseña' : 'Cambiar contraseña'}
+        </h3>
+        <p style={{ margin: '8px 0 20px', fontFamily: C.IN, fontSize: 12, color: C.muted, lineHeight: 1.5 }}>
+          {forced
+            ? 'Tu cuenta tiene una contraseña temporal. Elige una nueva para continuar.'
+            : 'Ingresa tu contraseña actual y la nueva.'}
+        </p>
+        {done ? (
+          <div style={{ fontFamily: C.IN, fontSize: 13, color: C.green, textAlign: 'center', padding: '12px 0' }}>
+            ✓ Contraseña actualizada
+          </div>
+        ) : (
+          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <input type="password" placeholder="Contraseña actual (la temporal del correo)" value={current}
+              onChange={e => setCurrent(e.target.value)} style={inputStyle} autoFocus />
+            <input type="password" placeholder="Nueva contraseña (mínimo 8 caracteres)" value={next}
+              onChange={e => setNext(e.target.value)} style={inputStyle} />
+            <input type="password" placeholder="Confirmar nueva contraseña" value={confirm}
+              onChange={e => setConfirm(e.target.value)} style={inputStyle} />
+            {error && <div style={{ fontFamily: C.IN, fontSize: 12, color: C.pink }}>{error}</div>}
+            <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+              {!forced && (
+                <button type="button" onClick={onClose} style={{
+                  flex: 1, padding: '10px 0', borderRadius: 8, border: `1px solid ${C.s4}`,
+                  background: 'transparent', color: C.muted, fontFamily: C.SG, fontSize: 12, cursor: 'pointer',
+                }}>Ahora no</button>
+              )}
+              <button type="submit" disabled={busy} style={{
+                flex: 2, padding: '10px 0', borderRadius: 8, border: 'none',
+                background: C.grad, color: '#fff', fontFamily: C.SG, fontSize: 12, fontWeight: 600,
+                cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.7 : 1,
+              }}>{busy ? 'Guardando…' : 'Guardar contraseña'}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ClientDashboard({
   onBack,
   initialSection,
@@ -530,6 +616,13 @@ export function ClientDashboard({
   // While loading, keep every section locked rather than briefly granting access.
   const enabledModules = new Set<DashboardSection>(modulesData?.modules_enabled ?? []);
   const [lockedFeature, setLockedFeature] = useState<DashboardSection | null>(null);
+
+  // ── Cambio de contraseña ────────────────────────────────────────────────────
+  // forced=true cuando el login vino con contraseña temporal (must_change_pw).
+  const [pwModal, setPwModal] = useState<null | { forced: boolean }>(null);
+  useEffect(() => {
+    if (localStorage.getItem('must_change_pw') === '1') setPwModal({ forced: true });
+  }, []);
 
   function goToSection(target: DashboardSection, extra?: () => void) {
     if (!enabledModules.has(target)) {
@@ -828,6 +921,27 @@ export function ClientDashboard({
               }}>{userEmail}</span>
             </div>
           )}
+          <button onClick={() => setPwModal({ forced: false })} style={{
+            display: 'flex', alignItems: 'center', gap: 10, width: 'calc(100% - 16px)',
+            margin: '0 8px 2px',
+            padding: '10px 12px', border: 'none', background: 'transparent',
+            cursor: 'pointer',
+            fontFamily: C.SG, fontSize: 11, fontWeight: 500,
+            letterSpacing: '0.02em', color: C.muted,
+            transition: 'all 0.25s ease-out',
+            borderRadius: 8,
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = C.cyanBg; (e.currentTarget as HTMLElement).style.color = C.cyan; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = C.muted; }}
+          >
+            <span style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 32, height: 32, borderRadius: 8,
+            }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </span>
+            Cambiar contraseña
+          </button>
           <button onClick={clearAuth} style={{
             display: 'flex', alignItems: 'center', gap: 10, width: 'calc(100% - 16px)',
             margin: '0 8px',
@@ -1439,6 +1553,11 @@ export function ClientDashboard({
           featureName={MODULE_LABELS[lockedFeature]}
           onClose={() => setLockedFeature(null)}
         />
+      )}
+
+      {/* ── Cambio de contraseña ────────────────────────────────────────────── */}
+      {pwModal && (
+        <PasswordChangeModal forced={pwModal.forced} onClose={() => setPwModal(null)} />
       )}
 
       {/* ── Toast stack ─────────────────────────────────────────────────────── */}

@@ -193,6 +193,9 @@ async def get_user_by_email(email: str) -> Optional[dict]:
         "created_at": doc.get("created_at"),
         "phones": doc.get("phones", []),
         "phone": doc.get("phone"),
+        # Cuentas de equipo: login propio que opera sobre el workspace del tenant
+        "acts_for_user_id": doc.get("acts_for_user_id"),
+        "must_change_password": doc.get("must_change_password"),
     }
 
 
@@ -207,10 +210,13 @@ async def get_user_by_id(user_id: str) -> Optional[dict]:
     return {
         "id": str(doc["_id"]),
         "email": doc["email"],
+        "hashed_password": doc.get("hashed_password"),
         "role": doc.get("role", "client"),
         "created_at": doc.get("created_at"),
         "phones": doc.get("phones", []),
         "phone": doc.get("phone"),
+        "acts_for_user_id": doc.get("acts_for_user_id"),
+        "must_change_password": doc.get("must_change_password"),
     }
 
 
