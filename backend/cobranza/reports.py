@@ -323,6 +323,101 @@ async def run_daily_report(db, user_id: str, fecha: Optional[date] = None) -> di
     return {"metrics": metrics, "qualitative": qualitative, "envio": envio, "fecha": fecha.isoformat()}
 
 
+async def _programados_para(db, user_id: str, fecha_obj: date, cupo: int) -> dict:
+    """Quiénes están en cola para marcar el día `fecha_obj`: deudores llamables
+    con cita (proximo_intento_at) hasta el fin de ese día, ordenados por la
+    misma prioridad del dispatcher (mayor mora primero). Devuelve total + top."""
+    from cobranza.sequence_engine import CALLABLE_ESTADOS, prioridad_informe
+    fin_dia = COLOMBIA_TZ.localize(
+        datetime.combine(fecha_obj, datetime.max.time())
+    ).astimezone(pytz.utc)
+    cursor = db.debtors.find({
+        "user_id": user_id, "is_active": {"$ne": False}, "is_test": {"$ne": True},
+        "no_llamar": {"$ne": True}, "tipo_entidad": {"$ne": None},
+        "estado": {"$in": list(CALLABLE_ESTADOS)},
+        "proximo_intento_at": {"$lte": fin_dia},
+    }, {"nombre": 1, "dias_mora": 1, "edad_cartera": 1, "vencimiento": 1,
+        "fecha_pago": 1, "monto": 1, "intentos": 1, "numero_poliza": 1})
+    todos = [d async for d in cursor]
+    todos.sort(key=lambda d: prioridad_informe(d, fecha_obj, set()))
+    top = [{
+        "nombre": d.get("nombre") or "N/D",
+        "mora": int(d.get("dias_mora") or d.get("edad_cartera") or 0),
+        "monto": float(d.get("monto") or 0),
+        "intento": int(d.get("intentos") or 0) + 1,
+    } for d in todos[:15]]
+    return {"total": len(todos), "dentro_cupo": min(len(todos), cupo), "top": top}
+
+
+async def run_fin_jornada_report(db, user_id: str, fecha: Optional[date] = None) -> dict:
+    """Informe de FIN DE JORNADA (petición DPG): al cerrar la última franja del
+    día se envía a todos los correos (reportes.destinatarios ∪ alertas.email_to)
+    el resumen completo del día + la programación de mañana (quiénes se van a
+    llamar, mayor mora primero)."""
+    fecha = fecha or datetime.now(COLOMBIA_TZ).date()
+    start, end = _dia_utc_range(fecha)
+
+    from cobranza.config_cache import get_tenant_config
+    cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
+    reportes_cfg = cfg.get("reportes") or {}
+    alertas_cfg = cfg.get("alertas") or {}
+    tenant_nombre = reportes_cfg.get("nombre_empresa") or "la operación"
+    cupo = int((cfg.get("volumen") or {}).get("llamadas_por_dia") or 150)
+
+    # todos los correos: destinatarios de reportes + correos de alertas (dedupe)
+    destinatarios: list = []
+    for e in (reportes_cfg.get("destinatarios") or []) + (alertas_cfg.get("email_to") or []):
+        if e and e.lower() not in {x.lower() for x in destinatarios}:
+            destinatarios.append(e)
+
+    metrics = await aggregate_metrics(db, user_id, start, end, fecha)
+    muestras = await _muestras_del_dia(db, user_id, start, end)
+    qualitative = await synthesize_qualitative(muestras)
+
+    # Programación de MAÑANA (próximo día hábil, misma prioridad del dispatcher)
+    from cobranza.call_scheduler import add_business_days
+    manana = add_business_days(fecha, 1)
+    prog = await _programados_para(db, user_id, manana, cupo)
+    top_html = "".join(
+        f'<tr><td style="padding:6px 12px;border-bottom:1px solid #E7E6E2;color:#374151">{p["nombre"]}</td>'
+        f'<td style="padding:6px 12px;border-bottom:1px solid #E7E6E2;text-align:right;color:#B45309;font-weight:700">{p["mora"]} días</td>'
+        f'<td style="padding:6px 12px;border-bottom:1px solid #E7E6E2;text-align:right;color:#111">${p["monto"]:,.0f}</td>'
+        f'<td style="padding:6px 12px;border-bottom:1px solid #E7E6E2;text-align:right;color:#6B7280">#{p["intento"]}</td></tr>'
+        for p in prog["top"]
+    ) or '<tr><td style="padding:8px 12px;color:#6B7280">Nadie en cola por ahora — el planificador sigue asignando citas durante la noche.</td></tr>'
+
+    html = render_daily_html(metrics, qualitative, fecha, tenant_nombre).replace(
+        "Reporte diario · ARIA", "Jornada finalizada · ARIA",
+    ).replace(
+        "</body></html>",
+        f"""<div style="max-width:640px;margin:12px auto 0;padding:0 16px">
+  <div style="background:#fff;border:1px solid #E7E6E2;border-radius:12px;padding:20px 24px">
+    <h3 style="color:#0F6B64;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Jornada de mañana — {manana.strftime('%A %d de %B').capitalize()}</h3>
+    <p style="font-size:13px;color:#374151;margin:0 0 12px"><b>{prog['total']}</b> clientes en cola
+      (se marcarán hasta <b>{prog['dentro_cupo']}</b> según el cupo diario de {cupo}), en orden de mayor mora.
+      Los primeros de la lista:</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <tr><th style="text-align:left;padding:6px 12px;color:#6B7280;font-size:11px">CLIENTE</th>
+          <th style="text-align:right;padding:6px 12px;color:#6B7280;font-size:11px">MORA</th>
+          <th style="text-align:right;padding:6px 12px;color:#6B7280;font-size:11px">MONTO</th>
+          <th style="text-align:right;padding:6px 12px;color:#6B7280;font-size:11px">INTENTO</th></tr>
+      {top_html}
+    </table>
+    <p style="margin-top:14px;font-size:11px;color:#9CA3AF">Las llamadas de mañana NO inician solas: requieren autorizar la jornada en el dashboard.</p>
+  </div>
+</div></body></html>""",
+    )
+
+    envio = await send_via_resend(
+        destinatarios,
+        f"✅ Jornada finalizada — {tenant_nombre} {fecha.strftime('%d/%m/%Y')} · mañana: {prog['total']} en cola",
+        html,
+    )
+    logger.info("[reports] fin_jornada user=%s fecha=%s enviado=%s manana=%d",
+                user_id, fecha.isoformat(), envio.get("sent"), prog["total"])
+    return {"metrics": metrics, "programados_manana": prog, "envio": envio, "fecha": fecha.isoformat()}
+
+
 async def run_weekly_report(db, user_id: str, semana_fin: Optional[date] = None) -> dict:
     """Reporte semanal (informe §12): mismo cálculo, ventana de 7 días + franja
     de mayor tasa de contacto (informe: 'horarios con mayor tasa de contacto')."""

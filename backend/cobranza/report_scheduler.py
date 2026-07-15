@@ -51,6 +51,53 @@ async def reporte_semanal_job() -> None:
             logger.exception("[report_scheduler] semanal falló user=%s", user_id)
 
 
+async def fin_jornada_check_job() -> None:
+    """Cada 15 min: si la ÚLTIMA franja del tenant ya cerró hoy, hubo actividad
+    (llamadas iniciadas) y el informe de fin de jornada no se ha enviado aún,
+    lo envía UNA vez (flag idempotente en cobranza_runtime). Chequeo periódico
+    en vez de cron fijo: la hora de cierre es config por tenant y puede cambiar
+    en caliente (hoy mismo se extendió 16:00→17:00)."""
+    from datetime import datetime
+    import pytz
+    from database import get_db
+    from cobranza.reports import run_fin_jornada_report
+
+    db = get_db()
+    co = pytz.timezone("America/Bogota")
+    ahora = datetime.now(co)
+    hoy = ahora.date().isoformat()
+    hhmm = ahora.strftime("%H:%M")
+
+    for user_id in await _tenant_ids(db):
+        try:
+            flag_id = f"fin_jornada_sent:{user_id}"
+            flag = await db.cobranza_runtime.find_one({"_id": flag_id})
+            if flag and flag.get("fecha") == hoy:
+                continue  # ya enviado hoy
+
+            from cobranza.config_cache import get_tenant_config
+            cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
+            franjas = (cfg.get("horarios") or {}).get("franjas") or [["09:00", "12:00"], ["14:00", "16:00"]]
+            cierre = max(f[1] for f in franjas)
+            if hhmm <= cierre:
+                continue  # la jornada sigue abierta
+
+            stats = await db.cobranza_daily_stats.find_one({"user_id": user_id, "fecha": hoy})
+            if not int((stats or {}).get("llamadas_iniciadas") or 0):
+                continue  # hoy no hubo jornada (festivo / no autorizada) — nada que informar
+
+            res = await run_fin_jornada_report(db, user_id)
+            await db.cobranza_runtime.update_one(
+                {"_id": flag_id},
+                {"$set": {"fecha": hoy, "sent_at": datetime.now(pytz.utc),
+                          "enviado": res["envio"].get("sent")}},
+                upsert=True,
+            )
+            logger.info("[report_scheduler] fin_jornada user=%s enviado=%s", user_id, res["envio"].get("sent"))
+        except Exception:
+            logger.exception("[report_scheduler] fin_jornada falló user=%s", user_id)
+
+
 def register_report_jobs(scheduler) -> None:
     scheduler.add_job(
         reporte_diario_job, CronTrigger(hour=18, minute=0, day_of_week="mon-sat", timezone="UTC"),
@@ -60,5 +107,9 @@ def register_report_jobs(scheduler) -> None:
         reporte_semanal_job, CronTrigger(day_of_week="mon", hour=18, minute=5, timezone="UTC"),
         id="cobr_reporte_semanal", replace_existing=True,
     )
+    scheduler.add_job(
+        fin_jornada_check_job, "interval", minutes=15,
+        id="cobr_fin_jornada_check", replace_existing=True,
+    )
     logger.info("[report_scheduler] registrados: cobr_reporte_diario (18:00 UTC L-Sáb), "
-                "cobr_reporte_semanal (lun 18:05 UTC)")
+                "cobr_reporte_semanal (lun 18:05 UTC), cobr_fin_jornada_check (15m)")

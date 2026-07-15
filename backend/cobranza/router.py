@@ -285,13 +285,16 @@ class KillSwitchPayload(BaseModel):
 # ── Jornada de hoy (informe §2.1: revisión previa del colaborador) ─────────────
 
 @router.get("/jornada-hoy")
-async def jornada_hoy(current_user: dict = Depends(get_current_user)):
+async def jornada_hoy(
+    dia: str = Query("hoy", pattern="^(hoy|manana)$"),
+    current_user: dict = Depends(get_current_user),
+):
     """
-    Llamadas PROGRAMADAS para hoy, en el orden real de marcación (prioridad del
-    informe: vencen hoy → preventivas → mayor mora). Es la lista que el
-    colaborador de cartera revisa ANTES de la jornada para excluir clientes
-    (botón pausar). Se calcula en vivo con la misma lógica del dispatcher, así
-    que refleja exactamente lo que el bot va a hacer.
+    Llamadas PROGRAMADAS para hoy (o MAÑANA con ?dia=manana), en el orden real
+    de marcación (mayor mora primero). Es la lista que el colaborador de
+    cartera revisa ANTES de la jornada para excluir clientes (botón pausar).
+    Se calcula en vivo con la misma lógica del dispatcher, así que refleja
+    exactamente lo que el bot va a hacer. `manana` = próximo día hábil.
     """
     from cobranza.sequence_engine import (
         CALLABLE_ESTADOS, _parse_festivos, _tz,
@@ -307,6 +310,10 @@ async def jornada_hoy(current_user: dict = Depends(get_current_user)):
     tz = _tz(horarios)
     today_local = datetime.now(timezone.utc).astimezone(tz).date()
     extra_fest = _parse_festivos(horarios)
+    if dia == "manana":
+        # próximo día hábil: los que quedaron en cola hoy también son de mañana
+        from cobranza.call_scheduler import add_business_days
+        today_local = add_business_days(today_local, 1, extra_fest)
 
     cursor = db.debtors.find(
         {
