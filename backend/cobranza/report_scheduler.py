@@ -176,12 +176,20 @@ def register_report_jobs(scheduler) -> None:
         reporte_semanal_job, CronTrigger(day_of_week="mon", hour=18, minute=5, timezone="UTC"),
         id="cobr_reporte_semanal", replace_existing=True,
     )
+    # next_run_time: primer disparo ~45s tras el boot. El jobstore es EN MEMORIA
+    # y cada redeploy reinicia el timer — con deploys frecuentes un intervalo de
+    # 15 min podía NO dispararse nunca (observado: el fin-de-jornada del 15-jul
+    # se saltó dos veces por redeploys consecutivos). Los jobs son idempotentes
+    # (flags por fecha en cobranza_runtime), así que correr al boot es seguro.
+    from datetime import datetime as _dt, timedelta as _td
     scheduler.add_job(
         fin_jornada_check_job, "interval", minutes=15,
+        next_run_time=_dt.now() + _td(seconds=45),
         id="cobr_fin_jornada_check", replace_existing=True,
     )
     scheduler.add_job(
         jornada_notificaciones_job, "interval", minutes=5,
+        next_run_time=_dt.now() + _td(seconds=60),
         id="cobr_jornada_notifs", replace_existing=True,
     )
     logger.info("[report_scheduler] registrados: cobr_reporte_diario (18:00 UTC L-Sáb), "
