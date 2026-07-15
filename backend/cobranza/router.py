@@ -336,7 +336,7 @@ async def jornada_hoy(current_user: dict = Depends(get_current_user)):
         at_local = at.astimezone(tz)
         if at_local.date() > today_local:
             continue  # cita futura — no es de hoy
-        grupo, _ = prioridad_informe(d, today_local, extra_fest)
+        _, grupo = prioridad_informe(d, today_local, extra_fest)
         programados.append({
             "_id": str(d["_id"]),
             "nombre": d.get("nombre"),

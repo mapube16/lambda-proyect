@@ -94,7 +94,8 @@ def test_franja_inicio_configurable():
 
 # ── prioridad del informe ──────────────────────────────────────────────────────
 
-def test_prioridad_vence_hoy_manana_luego_mora():
+def test_prioridad_mayor_mora_primero():
+    # DPG: mayor mora primero; vence_hoy/preventiva (mora 0 o negativa) al final.
     hoy = date(2026, 7, 14)
     vence_hoy = {"vencimiento": "2026-07-14", "dias_mora": 0}
     preventiva = {"vencimiento": "2026-07-15", "dias_mora": 0}
@@ -102,7 +103,16 @@ def test_prioridad_vence_hoy_manana_luego_mora():
     mora_baja = {"vencimiento": "2026-07-01", "dias_mora": 13}
     orden = sorted([mora_baja, preventiva, mora_alta, vence_hoy],
                    key=lambda d: prioridad_informe(d, hoy, set()))
-    assert orden == [vence_hoy, preventiva, mora_alta, mora_baja]
+    assert orden == [mora_alta, mora_baja, vence_hoy, preventiva]
+
+
+def test_prioridad_mora_fresca_ignora_dias_mora_stale():
+    # dias_mora persistido stale (0) pero vencimiento dice 100 días → gana mora fresca.
+    hoy = date(2026, 7, 14)
+    stale = {"vencimiento": "2026-04-05", "dias_mora": 0}     # real ≈ 100
+    reciente = {"vencimiento": "2026-07-10", "dias_mora": 999}  # real = 4
+    orden = sorted([reciente, stale], key=lambda d: prioridad_informe(d, hoy, set()))
+    assert orden == [stale, reciente]
 
 
 # ── franjas del tenant ─────────────────────────────────────────────────────────

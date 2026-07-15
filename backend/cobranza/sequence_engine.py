@@ -197,9 +197,11 @@ def compute_proximo_intento(
 
 def prioridad_informe(debtor: dict, today: date, extra_fest: set) -> tuple:
     """
-    Orden de marcación del informe (jornada de arranque §3 y régimen):
-      0 = vence HOY · 1 = vence el próximo hábil (preventiva) · 2 = resto,
-    y dentro de cada grupo, mayor mora primero (riesgo de cancelación).
+    Orden de marcación: MAYOR MORA PRIMERO (prioridad explícita de DPG — los
+    días con más mora, mayor riesgo de cancelación, se llaman primero). La mora
+    se calcula fresca desde vencimiento; el campo dias_mora persistido puede
+    estar stale. El grupo (vence_hoy=0 · preventiva=1 · backlog=2) queda como
+    desempate y como etiqueta para el UI.
     """
     venc = _to_date(debtor.get("vencimiento")) or _to_date(debtor.get("fecha_pago"))
     manana_habil = add_business_days(today, 1, extra_fest)
@@ -209,8 +211,11 @@ def prioridad_informe(debtor: dict, today: date, extra_fest: set) -> tuple:
         grupo = 1
     else:
         grupo = 2
-    mora = debtor.get("dias_mora") or debtor.get("edad_cartera") or 0
-    return (grupo, -int(mora))
+    if venc is not None:
+        mora = (today - venc).days
+    else:
+        mora = int(debtor.get("dias_mora") or debtor.get("edad_cartera") or 0)
+    return (-int(mora), grupo)
 
 
 # ── Config por tenant ──────────────────────────────────────────────────────────
