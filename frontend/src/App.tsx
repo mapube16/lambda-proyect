@@ -6,6 +6,7 @@ import { CobranzaTab } from './components/CobranzaTab';
 import { CobranzaSettings } from './components/CobranzaSettings';
 import { AdminPanel } from './components/AdminPanel';
 import { FeatureLockedModal } from './components/FeatureLockedModal';
+import { PasswordChangeModal } from './components/PasswordChangeModal';
 import { apiFetch } from './lib/apiFetch';
 
 // Context for shared email status (used by multiple views)
@@ -1209,7 +1210,7 @@ const LOCKED_COPY: Record<string, { name: string; desc: string; features: string
   aprendizaje: { name: 'Aprendizaje', desc: 'El agente aprende de cada interacción para mejorar la prospección.', features: ['Mejora continua del pitch', 'Insights de conversión', 'Recomendaciones automáticas'] },
 };
 
-function Sidebar({ view, setView, user, onLogout }: any) {
+function Sidebar({ view, setView, user, onLogout, onChangePassword }: any) {
   const nav = [
     ['inicio', 'home', 'Inicio'],
     ['campanas', 'rocket', 'Campañas'],
@@ -1374,6 +1375,9 @@ function Sidebar({ view, setView, user, onLogout }: any) {
           <div style={{ color: '#fff', fontSize: 13, fontWeight: 700, textTransform: 'capitalize', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{userName}{user?.role === 'staff' && <span style={{ fontSize: 10, fontWeight: 700, color: SB_ACTIVE_C, marginLeft: 6, textTransform: 'uppercase' }}>staff</span>}</div>
           <div style={{ color: 'rgba(255,255,255,0.32)', fontSize: 11, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || '—'}</div>
         </div>
+        <button onClick={onChangePassword} title="Cambiar contraseña" style={{ display: 'flex', background: 'transparent', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.35)', padding: 4, flex: 'none' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+        </button>
         <button onClick={onLogout} title="Cerrar sesión" style={{ display: 'flex', background: 'transparent', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.35)', padding: 4, flex: 'none' }}><Icon name="arrow" size={16} /></button>
       </div>
     </aside>
@@ -1695,6 +1699,11 @@ export function App() {
   const [showWizard, setShowWizard] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [activeRun, setActiveRun] = useState<any>(null);
+  // Cambio de contraseña. forced=true si el login trajo contraseña temporal.
+  const [pwModal, setPwModal] = useState<null | { forced: boolean }>(null);
+  useEffect(() => {
+    if (user && localStorage.getItem('must_change_pw') === '1') setPwModal({ forced: true });
+  }, [user]);
 
   const handleLogout = () => { api.logout(); setUser(null); setView('inicio'); setShowOnboarding(false); localStorage.removeItem('landa_campaignId'); };
 
@@ -1808,7 +1817,7 @@ export function App() {
   return (
     <EmailStatusContext.Provider value={{ connected: emailData?.connected ?? false }}>
       <div className="lc" style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)', fontFamily: "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" }}>
-        <Sidebar view={view} setView={setView} user={user} onLogout={handleLogout} />
+        <Sidebar view={view} setView={setView} user={user} onLogout={handleLogout} onChangePassword={() => setPwModal({ forced: false })} />
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Topbar onLaunch={() => { setView('campanas'); setShowWizard(true); }} />
           {activeRun && <RunStatusBanner run={activeRun} onClose={() => setActiveRun(null)} onViewLeads={(cid: string) => { setCampaignId(cid); setActiveRun(null); setView('aprobados'); }} />}
@@ -1823,6 +1832,7 @@ export function App() {
             {view === 'cobranza' && <ViewCobranza />}
           </div>
         </main>
+        {pwModal && <PasswordChangeModal forced={pwModal.forced} onClose={() => setPwModal(null)} />}
       </div>
     </EmailStatusContext.Provider>
   );
