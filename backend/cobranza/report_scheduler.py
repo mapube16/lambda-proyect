@@ -86,14 +86,27 @@ async def fin_jornada_check_job() -> None:
             if not int((stats or {}).get("llamadas_iniciadas") or 0):
                 continue  # hoy no hubo jornada (festivo / no autorizada) — nada que informar
 
+            # Cap de reintentos: si SMTP está caído, se reintenta cada ciclo
+            # (15m) hasta 8 veces — el flag solo se sella cuando REALMENTE salió
+            # (bug observado: se selló con enviado=False y no reintentó nunca).
+            intentos = int(flag.get("attempts") or 0) if (flag and flag.get("attempt_fecha") == hoy) else 0
+            if intentos >= 8:
+                continue
             res = await run_fin_jornada_report(db, user_id)
-            await db.cobranza_runtime.update_one(
-                {"_id": flag_id},
-                {"$set": {"fecha": hoy, "sent_at": datetime.now(pytz.utc),
-                          "enviado": res["envio"].get("sent")}},
-                upsert=True,
-            )
-            logger.info("[report_scheduler] fin_jornada user=%s enviado=%s", user_id, res["envio"].get("sent"))
+            if res["envio"].get("sent"):
+                await db.cobranza_runtime.update_one(
+                    {"_id": flag_id},
+                    {"$set": {"fecha": hoy, "sent_at": datetime.now(pytz.utc), "enviado": True}},
+                    upsert=True,
+                )
+            else:
+                await db.cobranza_runtime.update_one(
+                    {"_id": flag_id},
+                    {"$set": {"attempt_fecha": hoy, "attempts": intentos + 1}},
+                    upsert=True,
+                )
+            logger.info("[report_scheduler] fin_jornada user=%s enviado=%s intento=%d",
+                        user_id, res["envio"].get("sent"), intentos + 1)
         except Exception:
             logger.exception("[report_scheduler] fin_jornada falló user=%s", user_id)
 

@@ -383,9 +383,20 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
     msg.attach(MIMEText(html, "html", "utf-8"))
 
     ctx = ssl.create_default_context()
-    with smtplib.SMTP_SSL(host, port, context=ctx, timeout=30) as s:
-        s.login(user, pw)
-        s.sendmail(from_addr, envelope, msg.as_string())
+    try:
+        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=30) as s:
+            s.login(user, pw)
+            s.sendmail(from_addr, envelope, msg.as_string())
+    except (TimeoutError, OSError) as exc:
+        # 465 SSL no responde (observado: Private Email dejó de aceptar 465
+        # tras la ráfaga de alertas del 15-jul). Fallback: 587 STARTTLS — si el
+        # bloqueo es por puerto, esto pasa; si es throttle de cuenta, el retry
+        # del llamador lo cubre.
+        logger.warning("[mailer] SMTP %s:%s no responde (%s) — fallback 587 STARTTLS", host, port, type(exc).__name__)
+        with smtplib.SMTP(host, 587, timeout=30) as s:
+            s.starttls(context=ctx)
+            s.login(user, pw)
+            s.sendmail(from_addr, envelope, msg.as_string())
     logger.info("[mailer] SMTP sent '%s' -> %s (bcc=%s)", subject, recipients, always_bcc or "-")
 
 
