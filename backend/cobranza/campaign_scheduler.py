@@ -247,6 +247,13 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
             loop.run_in_executor(None, lambda: client.calls.create(
                 to=to_number, from_=from_number,
                 url=f"{webhook_url}/api/cobranza/voice/webhook", method="POST",
+                # Grabar SOLO las contestadas (petición DPG, QA/compliance):
+                # Twilio graba desde que contestan → las no contestadas no
+                # generan grabación ni costo. El callback guarda la URL en el
+                # historial del deudor (mismo endpoint que el path manual).
+                record=True,
+                recording_status_callback=f"{webhook_url}/api/cobranza/voice/recording-callback",
+                recording_status_callback_method="POST",
                 **call_status_kwargs(),
             )),
             timeout=15,
