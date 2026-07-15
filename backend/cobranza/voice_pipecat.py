@@ -727,6 +727,36 @@ async def run_bot(
     )
     _lap("LLM service created")
 
+    # ── NO_INTERRUPTION: el fix real del "ARIA se queda callada" ─────────────
+    # El default de Gemini Live es START_OF_ACTIVITY_INTERRUPTS: cualquier audio
+    # entrante que su VAD tome como voz (el "aló" al contestar, eco en altavoz,
+    # ruido de fondo) CANCELA en el servidor la generación en curso. Así murió el
+    # saludo en CA68f7/CAe7c1 (kill a +314ms/+376ms de empezar a hablar) y tras
+    # dos cancelaciones el estado de turnos quedó huérfano → silencio total. Todo
+    # el tuning histórico de VAD (start HIGH/LOW, silence_duration) tocaba la
+    # DETECCIÓN de turnos, nunca este comportamiento de cancelación — por eso
+    # nunca se resolvió. Con NO_INTERRUPTION la respuesta SIEMPRE se termina de
+    # generar; la voz del cliente se sigue detectando/transcribiendo y se procesa
+    # como turno siguiente. pipecat 0.0.108 no expone activity_handling, así que
+    # se inyecta envolviendo el connect (pipecat también muta config post-init).
+    if not bool(tenant_config.get("barge_in_enabled", False)):
+        from google.genai.types import ActivityHandling, RealtimeInputConfig
+
+        _orig_live_connect = llm._client.aio.live.connect
+
+        def _connect_no_interruption(*args, **kwargs):
+            cfg = kwargs.get("config")
+            if cfg is not None:
+                if getattr(cfg, "realtime_input_config", None) is None:
+                    cfg.realtime_input_config = RealtimeInputConfig()
+                cfg.realtime_input_config.activity_handling = (
+                    ActivityHandling.NO_INTERRUPTION
+                )
+            return _orig_live_connect(*args, **kwargs)
+
+        llm._client.aio.live.connect = _connect_no_interruption
+        logger.info("[VOICE] Gemini activity_handling=NO_INTERRUPTION (barge-in OFF)")
+
     # ── First greeting (spoken as TTS, not LLM-generated) ─────────────
     # Always address the client as "senor" + first name (per client request),
     # never "don"/"dona"/"caballero". No diminutives anywhere.
@@ -839,25 +869,27 @@ async def run_bot(
         ]
     )
 
-    # Interruptions ENABLED but GATED by a min-words strategy. Bare barge-in
-    # broke calls: the caller's "Aló" landed ON TOP of ARIA's opening greeting,
-    # cut Gemini Live mid-sentence, and Gemini then never recovered (observed:
-    # greeting half-said, then only the caller's "Hola... Hola..." with ARIA
-    # silent). MinWordsInterruptionStrategy requires the caller to say a real
-    # phrase (>= N words) before an interruption is honored — so short backchannel
-    # ("Aló", "sí", "hola") does NOT cut the greeting, but a genuine sentence
-    # ("espere, una pregunta") still interrupts naturally. Per-tenant override
-    # via tenant_config.interruption_min_words (0 disables the gate).
-    from pipecat.audio.interruptions.min_words_interruption_strategy import (
-        MinWordsInterruptionStrategy,
-    )
-    _min_words = int(tenant_config.get("interruption_min_words") or 3)
-    _strategies = [MinWordsInterruptionStrategy(min_words=_min_words)] if _min_words > 0 else []
-    _allow_interruptions = bool(tenant_config.get("allow_interruptions", True))
+    # Barge-in OFF por defecto (tenant_config.barge_in_enabled) — mismo switch
+    # que NO_INTERRUPTION arriba: la llamada es 100% por turnos. Historia: el
+    # gate MinWordsInterruptionStrategy que protegía el saludo quedó MUERTO con
+    # el upgrade de pipecat (deprecado por user_turn_strategies; el aggregator
+    # nuevo lo ignora) — en CAe7c1 un "Aló." de UNA palabra emitió "broadcasting
+    # interruption" igual. Con interrupciones cliente apagadas + NO_INTERRUPTION
+    # server, nada corta a ARIA a mitad de frase; lo que diga el cliente se
+    # transcribe y se responde al terminar el turno. Si un tenant quiere
+    # barge-in real, barge_in_enabled=true reactiva el camino viejo.
+    _barge_in = bool(tenant_config.get("barge_in_enabled", False))
+    _strategies = []
+    if _barge_in:
+        from pipecat.audio.interruptions.min_words_interruption_strategy import (
+            MinWordsInterruptionStrategy,
+        )
+        _min_words = int(tenant_config.get("interruption_min_words") or 3)
+        _strategies = [MinWordsInterruptionStrategy(min_words=_min_words)] if _min_words > 0 else []
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
-            allow_interruptions=_allow_interruptions,
+            allow_interruptions=_barge_in,
             interruption_strategies=_strategies,
             enable_metrics=True,
             report_only_initial_ttfb=True,
