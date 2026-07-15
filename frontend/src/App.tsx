@@ -5,6 +5,8 @@ import * as api from './api';
 import { CobranzaTab } from './components/CobranzaTab';
 import { CobranzaSettings } from './components/CobranzaSettings';
 import { AdminPanel } from './components/AdminPanel';
+import { FeatureLockedModal } from './components/FeatureLockedModal';
+import { apiFetch } from './lib/apiFetch';
 
 // Context for shared email status (used by multiple views)
 const EmailStatusContext = createContext<{ connected: boolean } | null>(null);
@@ -1189,6 +1191,24 @@ function ViewCobranza() {
 }
 
 // ============ SIDEBAR ============
+// Qué módulo (modules_enabled del backend) requiere cada sección del sidebar.
+// Si el tenant no lo tiene, la sección se muestra con candado y abre el modal.
+// DPG es cobranza-only: todo lo B2B queda bloqueado.
+const NAV_MODULE: Record<string, string | null> = {
+  inicio: 'leads', campanas: 'leads', resultados: 'leads',
+  aprobados: 'leads', chat: 'leads', aprendizaje: 'leads',
+  ajustes: null, cobranza: 'cobranza',
+};
+// Copy del modal por sección bloqueada.
+const LOCKED_COPY: Record<string, { name: string; desc: string; features: string[] }> = {
+  inicio: { name: 'Panel de Prospección', desc: 'El tablero de prospección B2B con IA no está incluido en tu plan de cobranza.', features: ['Campañas de prospección automáticas', 'Pipeline de leads calificados', 'Seguimiento y métricas'] },
+  campanas: { name: 'Campañas', desc: 'Crea y lanza campañas de prospección B2B automatizadas con agentes de IA.', features: ['Agentes de IA por canal', 'Segmentación por industria y cargo', 'Outreach automático por email'] },
+  resultados: { name: 'Resultados', desc: 'Analítica de tus campañas de prospección — no incluido en tu plan.', features: ['Métricas de campaña en vivo', 'Tasa de apertura y respuesta', 'Exportación de resultados'] },
+  aprobados: { name: 'Leads Aprobados', desc: 'Gestión del pipeline de prospectos calificados.', features: ['Dossier de cada lead', 'Aprobación y descarte', 'Handoff a ventas'] },
+  chat: { name: 'Chat', desc: 'Bandeja unificada de conversaciones con prospectos.', features: ['Conversaciones multicanal', 'Respuestas asistidas por IA', 'Historial por contacto'] },
+  aprendizaje: { name: 'Aprendizaje', desc: 'El agente aprende de cada interacción para mejorar la prospección.', features: ['Mejora continua del pitch', 'Insights de conversión', 'Recomendaciones automáticas'] },
+};
+
 function Sidebar({ view, setView, user, onLogout }: any) {
   const nav = [
     ['inicio', 'home', 'Inicio'],
@@ -1202,6 +1222,8 @@ function Sidebar({ view, setView, user, onLogout }: any) {
 
   const [quota, setQuota] = useState<any>(null);
   const [cobranzaEnabled, setCobranzaEnabled] = useState(false);
+  const [modules, setModules] = useState<string[] | null>(null);
+  const [lockedModal, setLockedModal] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -1212,6 +1234,10 @@ function Sidebar({ view, setView, user, onLogout }: any) {
       } catch (e) {
         console.warn('Quota load failed:', e);
       }
+      try {
+        const r = await apiFetch('/api/client/modules');
+        if (alive && r.ok) { const d = await r.json(); setModules(Array.isArray(d.modules_enabled) ? d.modules_enabled : null); }
+      } catch { /* noop */ }
       let cobranza = false;
       try {
         const s = await api.getCobranzaStatus();
@@ -1244,6 +1270,15 @@ function Sidebar({ view, setView, user, onLogout }: any) {
   }, []);
 
   const navItems = cobranzaEnabled ? [...nav, ['cobranza', 'phone', 'Cobranza']] : nav;
+
+  // Tenant cobranza-only (DPG): la vista por defecto 'inicio' está bloqueada,
+  // así que al cargar los módulos lo mandamos a Cobranza, su única sección.
+  useEffect(() => {
+    if (modules == null) return;
+    const reqMod = NAV_MODULE[view];
+    const viewLocked = reqMod != null && !modules.includes(reqMod);
+    if (viewLocked && modules.includes('cobranza')) setView('cobranza');
+  }, [modules, view, setView]);
 
   const emailName = (user?.email || '').split('@')[0].replace(/[._-]/g, ' ').trim();
   const userName = emailName || 'Mi cuenta';
@@ -1285,13 +1320,33 @@ function Sidebar({ view, setView, user, onLogout }: any) {
       <div style={{ flex: 1, padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto' }}>
         {navItems.map(([key, ic, label]) => {
           const active = view === key;
+          // modules=null → sin override, todo desbloqueado (comportamiento previo).
+          const reqMod = NAV_MODULE[key as string];
+          const locked = modules != null && reqMod != null && !modules.includes(reqMod);
           return (
-            <button key={key} onClick={() => setView(key)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: active ? SB_ACTIVE : 'transparent', color: active ? SB_ACTIVE_C : SB_TEXT, fontFamily: 'inherit', fontWeight: active ? 700 : 500, fontSize: 14, width: '100%', textAlign: 'left', transition: 'all .12s' }}>
+            <button
+              key={key}
+              onClick={() => locked ? setLockedModal(key as string) : setView(key)}
+              style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: active ? SB_ACTIVE : 'transparent', color: locked ? 'rgba(255,255,255,0.28)' : (active ? SB_ACTIVE_C : SB_TEXT), fontFamily: 'inherit', fontWeight: active ? 700 : 500, fontSize: 14, width: '100%', textAlign: 'left', transition: 'all .12s' }}
+            >
               <Icon name={ic} size={17} stroke={active ? 2 : 1.6} />
-              <span>{label}</span>
+              <span style={{ flex: 1 }}>{label}</span>
+              {locked && (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7 }}>
+                  <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              )}
             </button>
           );
         })}
+        {lockedModal && (
+          <FeatureLockedModal
+            featureName={LOCKED_COPY[lockedModal]?.name || 'Función'}
+            description={LOCKED_COPY[lockedModal]?.desc}
+            features={LOCKED_COPY[lockedModal]?.features}
+            onClose={() => setLockedModal(null)}
+          />
+        )}
 
         <div style={{ marginTop: 16, padding: '2px 0 8px', borderTop: `1px solid ${SB_BORDER}` }} />
 

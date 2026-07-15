@@ -2297,7 +2297,7 @@ export function CobranzaTab() {
                   onClick={() => setJornadaModal(false)}
                   variant="default"
                   size="md"
-                  styles={{ root: { flex: 1, fontWeight: 700 } }}
+                  styles={{ root: { flex: 1, fontWeight: 700, whiteSpace: 'nowrap' }, label: { whiteSpace: 'nowrap' } }}
                 >
                   {jornadaAuth.authorized ? 'Cerrar' : 'Revisar primero'}
                 </Button>
