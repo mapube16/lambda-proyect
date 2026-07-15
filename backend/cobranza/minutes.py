@@ -14,6 +14,7 @@ callback reenviado no descuenta dos veces).
 
 Las COMPRAS/AJUSTES son staff-only (el tenant nunca escribe su propio saldo).
 """
+import asyncio
 import logging
 import math
 import os
@@ -112,6 +113,48 @@ async def record_purchase(
     await db[COLLECTION].insert_one(doc)
     logger.info("[minutes] %s user=%s minutos=%+d actor=%s", tipo, user_id, minutos, actor)
     return await get_saldo(db, user_id)
+
+
+# Referencias fuertes a las tareas de reembolso diferidas (anti-GC).
+_refund_tasks: set = set()
+
+
+def refund_uncontacted_call(db, call_sid: str, *, delay_seconds: int = 20) -> None:
+    """
+    Regla de negocio (DPG): una llamada SIN contacto real (buzón de voz, nadie
+    habló) no se le cobra al cliente. El consumo lo registra el status-callback
+    de Twilio, que puede llegar DESPUÉS del post-call — por eso el reembolso
+    corre diferido en background: espera, busca el consumo por call_sid y lo
+    revierte con un 'ajuste' idempotente (refund_call_sid único por llamada).
+    """
+    if not call_sid:
+        return
+
+    async def _do():
+        try:
+            await asyncio.sleep(delay_seconds)
+            consumo = await db[COLLECTION].find_one({"call_sid": call_sid, "tipo": "consumo"})
+            if not consumo:
+                return  # nunca se cobró (no-answer/busy → duration=0)
+            if await db[COLLECTION].find_one({"refund_call_sid": call_sid}):
+                return  # ya reembolsada (reintento del post-call)
+            minutos = abs(int(consumo.get("minutos") or 0))
+            if minutos <= 0:
+                return
+            await db[COLLECTION].insert_one({
+                "user_id": consumo["user_id"], "tipo": "ajuste", "minutos": minutos,
+                "refund_call_sid": call_sid, "debtor_id": consumo.get("debtor_id"),
+                "nota": "reembolso: llamada sin contacto (buzón / no contestó)",
+                "actor": "sistema", "created_at": _utcnow(),
+            })
+            logger.info("[minutes] reembolso user=%s call=%s +%dmin (sin contacto)",
+                        consumo["user_id"], call_sid, minutos)
+        except Exception:
+            logger.exception("[minutes] reembolso falló call=%s", call_sid)
+
+    task = asyncio.create_task(_do())
+    _refund_tasks.add(task)
+    task.add_done_callback(_refund_tasks.discard)
 
 
 async def record_call_consumption(

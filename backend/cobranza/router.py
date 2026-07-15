@@ -700,14 +700,20 @@ async def funnel(current_user: dict = Depends(get_current_user)):
     user_id = str(current_user["user_id"])
     db = get_db()
     pipeline = [
-        {"$match": {"user_id": user_id, "is_active": {"$ne": False}}},
-        {"$group": {"_id": "$estado", "n": {"$sum": 1}}},
+        # is_test excluido: los deudores de prueba no son cartera del cliente.
+        {"$match": {"user_id": user_id, "is_active": {"$ne": False}, "is_test": {"$ne": True}}},
+        {"$group": {"_id": "$estado", "n": {"$sum": 1}, "monto": {"$sum": {"$ifNull": ["$monto", 0]}}}},
     ]
     counts: dict[str, int] = {}
+    monto_total = 0.0
     async for row in db.debtors.aggregate(pipeline):
         counts[row["_id"] or "pendiente"] = int(row["n"])
+        monto_total += float(row.get("monto") or 0)
     total = sum(counts.values())
-    return {"counts": counts, "total": total}
+    # monto_total: la suma REAL de toda la cartera activa. El KPI 'Cartera
+    # total' del dashboard sumaba solo la página visible (50 deudores) y por
+    # eso mostraba un valor distinto en cada página.
+    return {"counts": counts, "total": total, "monto_total": monto_total}
 
 
 # ── Get Single Debtor ─────────────────────────────────────────────────────────

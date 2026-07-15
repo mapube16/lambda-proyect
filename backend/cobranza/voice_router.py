@@ -733,19 +733,21 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
 
         # Determine new estado
         _voicemail = _looks_like_voicemail(result.full_transcript)
+        _hubo_contacto = True  # default conservador; los branches sin contacto lo apagan
         if current_estado in _TERMINAL_ESTADOS:
+            # una tool escribió estado durante la llamada → alguien habló
             new_estado = current_estado
         elif _voicemail:
             # Buzón de voz contestó: NO es contacto — la secuencia debe reintentar.
             new_estado = "sin_contacto"
+            _hubo_contacto = False
             logger.info("[PostCall] %s buzón de voz detectado → sin_contacto", result.call_sid)
         elif result.duration_seconds > 10 and result.user_turn_count > 0:
             # User spoke — call was answered
             new_estado = "contactado"
-        elif result.duration_seconds > 5:
-            new_estado = "sin_contacto"
         else:
             new_estado = "sin_contacto"
+            _hubo_contacto = False
 
         # Check max intentos — manda la config del tenant (informe: 3), con el
         # max del deudor como fallback para cargas manuales. Una llamada
@@ -796,6 +798,15 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
             # recalcule el siguiente intento con el nuevo conteo (offset L2/L3).
             update_doc["$unset"] = {"vapi_call_id": "", "proximo_intento_at": "", "proximo_intento_numero": ""}
         await db.debtors.update_one({"_id": debtor_oid}, update_doc)
+
+        # Regla de negocio: llamada saliente SIN contacto (buzón / nadie habló)
+        # no se cobra — se revierte el consumo en background (idempotente).
+        if not is_inbound and not _hubo_contacto:
+            try:
+                from cobranza.minutes import refund_uncontacted_call
+                refund_uncontacted_call(db, result.call_sid)
+            except Exception:
+                logger.exception("[PostCall] no se pudo programar reembolso %s", result.call_sid)
 
         logger.info("[PostCall] %s -> estado=%s, intentos=%d, duration=%ds",
                      result.call_sid, new_estado, new_intentos, result.duration_seconds)

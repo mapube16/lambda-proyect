@@ -1533,7 +1533,7 @@ export function CobranzaTab() {
   }, [addToast]);
 
   // ── Whole-cartera counts per estado (KPIs) ─────────────────────────────────
-  const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number } | null>(null);
+  const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number; monto_total?: number } | null>(null);
   const fetchFunnel = useCallback(async () => {
     try {
       const r = await apiFetch('/api/cobranza/funnel');
@@ -1749,9 +1749,10 @@ export function CobranzaTab() {
   const contactados = (fc.contactado ?? 0) + (fc.promesa_de_pago ?? 0) + (fc.pagado ?? 0);
   const promesasActivas = fc.promesa_de_pago ?? 0;
   const pagados = fc.pagado ?? 0;
-  // No endpoint returns the cartera-wide monto sum for the mixed (manual + SS)
-  // cartera, so this reflects the debtors currently loaded on screen.
-  const carteraMontoPage = debtors.reduce((s, d) => s + (d.monto || 0), 0);
+  // Suma REAL de toda la cartera desde /funnel (monto_total). El fallback a la
+  // página visible solo aplica mientras el funnel carga — antes ese fallback
+  // era el valor permanente y "Cartera total" cambiaba con cada página.
+  const carteraMontoPage = funnel?.monto_total ?? debtors.reduce((s, d) => s + (d.monto || 0), 0);
 
   // ── Filtered list ──────────────────────────────────────────────────────────
   // Filtering + pagination are server-side now; `debtors` is already the page.
