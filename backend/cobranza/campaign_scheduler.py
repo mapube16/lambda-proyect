@@ -250,7 +250,7 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
         # ring_timeout≈20s: si nadie contesta en ese lapso → Twilio marca
         # no-answer ($0, se reintenta) ANTES de que el buzón conteste. Tunable
         # por env: subir si corta humanos lentos, bajar si aún caen buzones.
-        ring_timeout = int(os.getenv("COBRANZA_RING_TIMEOUT_SECS", "20"))
+        ring_timeout = int(os.getenv("COBRANZA_RING_TIMEOUT_SECS", "18"))
         call = await asyncio.wait_for(
             loop.run_in_executor(None, lambda: client.calls.create(
                 to=to_number, from_=from_number,

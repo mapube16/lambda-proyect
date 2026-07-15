@@ -13,6 +13,7 @@ Target: <500ms TTFB.
 import asyncio
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -75,9 +76,26 @@ class CallResult:
         return sum(1 for _, speaker, _ in self.transcript if speaker == "Deudor")
 
 
+# Frases INEQUÍVOCAS de contestador/buzón (lo que dice la MÁQUINA al contestar).
+# Un humano nunca dice "deja tu mensaje después del tono". Se usa para colgar EN
+# VIVO apenas la locución del buzón se transcribe, en vez de dejar que ARIA le
+# recite el guión completo (observado: buzones de hasta 226s facturados).
+_VOICEMAIL_LIVE_RE = re.compile(
+    r"buz[oó]n de voz|correo de voz|contestador|"
+    r"dej[ae] (su|tu) mensaje|dejar (su|tu) mensaje|grab[ae]r? (su|el) mensaje|"
+    r"despu[eé]s (del|de escuchar el) tono|al (escuchar|o[ií]r) el tono|"
+    r"tecla numeral|lleg[oó] al tiempo l[ií]mite|"
+    r"para [a-záéíóúü ]{2,30}marque|"
+    r"no se encuentra disponible|no est[aá] disponible en este momento|"
+    r"el n[uú]mero que (usted )?marc[oó]",
+    re.IGNORECASE,
+)
+
+
 class TranscriptCollector(FrameProcessor):
     """Captures transcription + TTS text frames, and tracks bot speech state so
-    end_call can wait for the FAREWELL to finish instead of a blind fixed sleep."""
+    end_call can wait for the FAREWELL to finish instead of a blind fixed sleep.
+    También detecta buzón de voz EN VIVO y dispara on_voicemail para colgar."""
 
     def __init__(self, call_result: CallResult, **kwargs):
         super().__init__(**kwargs)
@@ -85,6 +103,10 @@ class TranscriptCollector(FrameProcessor):
         # Bot speech tracking (used by end_call to time the hangup precisely).
         self.bot_speaking = False
         self.last_bot_audio_ts = 0.0
+        # Detección de buzón en vivo. on_voicemail se setea tras crear el task.
+        self.on_voicemail = None      # coroutine callable | None
+        self._vm_fired = False
+        self._vm_text = ""
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
@@ -98,6 +120,16 @@ class TranscriptCollector(FrameProcessor):
             # User spoke — flush any pending bot text first
             self._result.flush_bot_buffer()
             self._result.transcript.append((time.time(), "Deudor", frame.text))
+            # Buzón EN VIVO: si lo que "contesta" es una máquina, colgar de una.
+            if not self._vm_fired and self.on_voicemail is not None:
+                self._vm_text += " " + frame.text
+                if _VOICEMAIL_LIVE_RE.search(self._vm_text):
+                    self._vm_fired = True
+                    logger.info("[VOICE] buzón detectado EN VIVO — colgando sin gastar guión")
+                    try:
+                        await self.on_voicemail()
+                    except Exception:
+                        logger.exception("[VOICE] hangup de buzón en vivo falló")
         elif isinstance(frame, TTSTextFrame) and frame.text:
             # Bot token — accumulate into buffer
             if not self._result._bot_buffer:
@@ -905,6 +937,15 @@ async def run_bot(
             report_only_initial_ttfb=True,
         ),
     )
+
+    # Buzón EN VIVO: cuando el colector transcribe la locución de un contestador,
+    # colgamos de una (task.cancel = hangup duro, igual que end_call) SIN que ARIA
+    # recite el guión. Ahorra minutos Twilio + créditos Gemini. El transcript ya
+    # quedó con la frase del buzón → el post-call lo marca sin_contacto y reintenta.
+    async def _hangup_on_voicemail():
+        logger.info("[VOICE] colgando por buzón en vivo (call %s)", call_sid)
+        await task.cancel()
+    user_collector.on_voicemail = _hangup_on_voicemail
 
     # ── Function call handlers ─────────────────────────────────────────
 

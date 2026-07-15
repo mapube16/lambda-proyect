@@ -129,7 +129,7 @@ interface Debtor {
   monto: number;
   vencimiento: string;
   estado: 'pendiente' | 'llamando' | 'contactado' | 'promesa_de_pago' | 'sin_contacto' |
-          'pagado' | 'fallido' | 'escalado' | 'agotado' | 'pausado' | 'reagendado' | 'disputa';
+          'pagado' | 'pago_reportado' | 'fallido' | 'escalado' | 'agotado' | 'pausado' | 'reagendado' | 'disputa';
   intentos: number;
   max_intentos: number;
   historial_llamadas: CallRecord[];
@@ -1054,6 +1054,7 @@ const FILTERS: { value: EstadoFilter; label: string }[] = [
   { value: 'llamando',          label: 'LLAMANDO' },
   { value: 'contactado',        label: 'CONTACTADO' },
   { value: 'promesa_de_pago',   label: 'PROMESA' },
+  { value: 'pago_reportado',    label: 'REPORTÓ PAGO' },
   { value: 'pagado',            label: 'PAGADO' },
   { value: 'sin_contacto',      label: 'SIN CONTACTO' },
   { value: 'reagendado',        label: 'REAGENDADO' },
@@ -1500,6 +1501,7 @@ export function CobranzaTab() {
   // ── Alertas tipadas (informe §7/§12) ───────────────────────────────────────
   type Alerta = {
     _id: string; tipo: string; detalle?: string; debtor_nombre?: string;
+    debtor_id?: string;
     debtor_telefono?: string; numero_poliza?: string; area?: string;
     responsable?: string; created_at: string;
   };
@@ -1591,6 +1593,19 @@ export function CobranzaTab() {
       return data.debtor ?? null;
     } catch { return null; }
   }, []);
+
+  // Abrir la conversación del deudor desde una alerta (click en el nombre).
+  // La alerta solo trae debtor_id; se trae el deudor completo (con historial +
+  // transcript) y se abre el mismo modal de detalle de la tabla.
+  const [abriendoAlerta, setAbriendoAlerta] = useState<string | null>(null);
+  const openDebtorFromAlerta = useCallback(async (debtorId?: string) => {
+    if (!debtorId) return;
+    setAbriendoAlerta(debtorId);
+    try {
+      const full = await fetchDebtorById(debtorId);
+      if (full) setSelectedDebtor(full);
+    } finally { setAbriendoAlerta(null); }
+  }, [fetchDebtorById]);
 
   useEffect(() => {
     const handleDebtorUpdate = async (e: Event) => {
@@ -2032,9 +2047,25 @@ export function CobranzaTab() {
                     <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 10, color: C.orange, background: C.orangeBg, borderRadius: 5, padding: '2px 7px', whiteSpace: 'nowrap' }}>
                       {ALERTA_TITULOS[a.tipo] || a.tipo}
                     </span>
-                    <span style={{ fontFamily: C.SG, fontWeight: 600, fontSize: 12.5, color: C.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {a.debtor_nombre || 'N/D'}
-                    </span>
+                    {a.debtor_id ? (
+                      <button
+                        onClick={() => openDebtorFromAlerta(a.debtor_id)}
+                        disabled={abriendoAlerta === a.debtor_id}
+                        title="Ver la conversación de este cliente"
+                        style={{
+                          fontFamily: C.SG, fontWeight: 600, fontSize: 12.5, color: C.cyan,
+                          flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          background: 'none', border: 'none', padding: 0, textAlign: 'left',
+                          cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2,
+                        }}
+                      >
+                        {abriendoAlerta === a.debtor_id ? 'Abriendo…' : (a.debtor_nombre || 'Ver cliente')}
+                      </button>
+                    ) : (
+                      <span style={{ fontFamily: C.SG, fontWeight: 600, fontSize: 12.5, color: C.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {a.debtor_nombre || 'N/D'}
+                      </span>
+                    )}
                     <span style={{ fontFamily: C.IN, fontSize: 11.5, color: C.muted, whiteSpace: 'nowrap', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {a.detalle || (a.responsable ? `→ ${a.responsable}` : '')}
                     </span>
