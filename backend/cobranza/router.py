@@ -657,11 +657,15 @@ async def today_summary(current_user: dict = Depends(get_current_user)):
     # Llamando ahora (live, not date-bound)
     llamando = await db.debtors.count_documents({**base, "estado": "llamando"})
 
-    # Contactados hoy: last contact today AND currently a "contacted-ish" state
+    # Contactados hoy: habló con un humano hoy. TODOS los estados que solo se
+    # alcanzan tras una conversación real (no solo 3 — antes faltaban
+    # pago_reportado/escalado/disputa y esos casos no se contaban aunque ARIA
+    # sí habló con la persona, p.ej. EDIFICIO MILANO que reportó pago).
     contactados_hoy = await db.debtors.count_documents({
         **base,
         "ultimo_contacto_fecha": {"$gte": today_start},
-        "estado": {"$in": ["contactado", "promesa_de_pago", "reagendado"]},
+        "estado": {"$in": ["contactado", "promesa_de_pago", "pago_reportado",
+                            "reagendado", "escalado", "disputa"]},
     })
 
     # Promesas hoy: moved to promesa_de_pago today (use updated_at). Sum monto_prometido.

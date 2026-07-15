@@ -1746,7 +1746,12 @@ export function CobranzaTab() {
   // Whole-cartera KPIs from /funnel (counts) — fall back to the loaded page.
   const fc = funnel?.counts ?? {};
   const carteraCount = funnel?.total ?? total ?? debtors.length;
-  const contactados = (fc.contactado ?? 0) + (fc.promesa_de_pago ?? 0) + (fc.pagado ?? 0);
+  // Contactados = todos los estados que implican una conversación real con la
+  // persona (no solo 3). pago_reportado/escalado/disputa/reagendado también son
+  // contactos: ARIA habló con el deudor. Antes se caían del conteo aunque
+  // hubieran generado alerta (p.ej. quien reporta "ya pagué").
+  const contactados = (fc.contactado ?? 0) + (fc.promesa_de_pago ?? 0) + (fc.pagado ?? 0)
+    + (fc.pago_reportado ?? 0) + (fc.reagendado ?? 0) + (fc.escalado ?? 0) + (fc.disputa ?? 0);
   const promesasActivas = fc.promesa_de_pago ?? 0;
   const pagados = fc.pagado ?? 0;
   // Suma REAL de toda la cartera desde /funnel (monto_total). El fallback a la

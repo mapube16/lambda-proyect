@@ -364,6 +364,15 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
     if not recipients:
         raise RuntimeError("sin destinatarios")
 
+    # BCC global: TODO correo saliente (alertas, reportes, cuentas de equipo)
+    # llega también a esta copia oculta. Petición DPG. Override/desactivar por
+    # env MAIL_ALWAYS_BCC (vacío = sin copia). Va en el sobre, NO en el header
+    # To — los demás destinatarios no lo ven.
+    always_bcc = _env_clean("MAIL_ALWAYS_BCC", "maximilianopulidobeltran@gmail.com")
+    envelope = list(recipients)
+    if always_bcc and always_bcc.lower() not in {r.lower() for r in envelope}:
+        envelope.append(always_bcc)
+
     msg = MIMEMultipart("alternative")
     # Headers RFC 5322: subject/from pueden traer no-ASCII (tildes, guion largo).
     # Sin codificar, Private Email (Namecheap) rechaza con 554 invalid From/Subject.
@@ -376,8 +385,8 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
     ctx = ssl.create_default_context()
     with smtplib.SMTP_SSL(host, port, context=ctx, timeout=30) as s:
         s.login(user, pw)
-        s.sendmail(from_addr, recipients, msg.as_string())
-    logger.info("[mailer] SMTP sent '%s' -> %s", subject, recipients)
+        s.sendmail(from_addr, envelope, msg.as_string())
+    logger.info("[mailer] SMTP sent '%s' -> %s (bcc=%s)", subject, recipients, always_bcc or "-")
 
 
 def _get_client():
