@@ -276,26 +276,24 @@ def render_daily_html(metrics: dict, qualitative: dict, fecha: date, tenant_nomb
 # plataforma ya lo usa; Resend nunca tuvo una key configurada en ningún lado) ──
 
 async def send_via_resend(to: list, subject: str, html: str) -> dict:
-    """Nombre histórico (Resend); envía por MailerSend, ver comentario arriba."""
+    """Nombre histórico; ahora envía por SMTP (Private Email) — MailerSend trial
+    da 403. Por destinatario para aislar fallos (una dirección mala no tumba al
+    resto)."""
     import asyncio
-    api_key = os.getenv("MAILERSEND_API_KEY")
-    from_addr = os.getenv("MAILERSEND_FROM_EMAIL", "noreply@isomorph.co")
-    if not api_key or not to:
-        logger.warning("[reports] sin MAILERSEND_API_KEY o destinatarios — reporte generado pero NO enviado")
-        return {"ok": False, "sent": False, "reason": "sin_key_o_destinatarios"}
-    from mailer import _send as _mailersend_send
+    if not to:
+        logger.warning("[reports] sin destinatarios — reporte generado pero NO enviado")
+        return {"ok": False, "sent": False, "reason": "sin_destinatarios"}
+    if not os.getenv("SMTP_PASS"):
+        logger.warning("[reports] sin SMTP_PASS — reporte generado pero NO enviado")
+        return {"ok": False, "sent": False, "reason": "sin_smtp"}
+    from mailer import send_smtp
     enviados, fallidos = [], []
     for to_email in to:
         try:
-            # _send es síncrono (llamada bloqueante al SDK de MailerSend) — se
-            # corre en un thread para no congelar el event loop. Por destinatario:
-            # un fallo (ej. límite de cuenta trial) no debe tumbar a los demás.
-            await asyncio.to_thread(
-                _mailersend_send, from_addr, "ARIA — Landa Tech", to_email, "", subject, html,
-            )
+            await asyncio.to_thread(send_smtp, [to_email], subject, html)
             enviados.append(to_email)
         except Exception as exc:
-            logger.exception("[reports] envío por MailerSend falló para %s", to_email)
+            logger.exception("[reports] envío SMTP falló para %s", to_email)
             fallidos.append({"to": to_email, "error": str(exc)[:200]})
     return {"ok": bool(enviados), "sent": bool(enviados), "enviados": enviados, "fallidos": fallidos}
 

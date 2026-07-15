@@ -71,6 +71,38 @@ def _formatear_mensaje(tipo: str, doc: dict) -> str:
     return "\n".join(linea)
 
 
+def _alerta_email_html(tipo: str, doc: dict) -> str:
+    def _esc(v):
+        return (str(v) if v is not None else "N/D").replace("<", "&lt;").replace(">", "&gt;")
+    rows = [
+        ("Tipo", _TITULOS.get(tipo, tipo)),
+        ("Cliente", doc.get("debtor_nombre")),
+        ("Teléfono", doc.get("debtor_telefono")),
+        ("Póliza", doc.get("numero_poliza")),
+        ("Área", doc.get("area")),
+        ("Responsable", doc.get("responsable")),
+        ("Detalle", doc.get("detalle")),
+    ]
+    trs = "".join(
+        f'<tr><td style="padding:6px 14px 6px 0;color:#667;font-size:13px;white-space:nowrap">{_esc(k)}</td>'
+        f'<td style="padding:6px 0;color:#1a1a1a;font-size:13px"><b>{_esc(v)}</b></td></tr>'
+        for k, v in rows if v
+    )
+    return f"""
+<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;border:1px solid #e3e3ea;border-radius:12px;overflow:hidden">
+  <div style="background:#1a7f6e;color:#fff;padding:16px 22px;font-size:16px;font-weight:bold">
+    🔔 Alerta de cobranza — ARIA
+  </div>
+  <div style="padding:20px 22px">
+    <table style="border-collapse:collapse;width:100%">{trs}</table>
+    <p style="margin:18px 0 0;color:#889;font-size:12px">
+      Notificación automática del agente de cobranza. Gestiona esta alerta desde el dashboard de Landa Tech.
+    </p>
+  </div>
+</div>
+"""
+
+
 async def crear_alerta(
     db, user_id: str, debtor: dict, tipo: str, *,
     detalle: str = "", extra: Optional[dict] = None,
@@ -123,6 +155,25 @@ async def crear_alerta(
             await send_whatsapp_text(doc["responsable_telefono"], _formatear_mensaje(tipo, doc))
         except Exception:
             logger.exception("[alerts] envío WhatsApp falló (no fatal) tipo=%s user=%s", tipo, user_id)
+
+    # Canal EMAIL (SMTP Private Email) — canal principal de alertas mientras no
+    # haya WhatsApp oficial aprobado. Destinatarios: alertas.email_to del tenant
+    # o, si no, la var ALERTAS_EMAIL_TO (coma-separada). Nunca fatal.
+    import os as _os
+    email_to = alertas_cfg.get("email_to") or _os.getenv("ALERTAS_EMAIL_TO", "")
+    if isinstance(email_to, str):
+        email_to = [e.strip() for e in email_to.split(",") if e.strip()]
+    if email_to:
+        try:
+            import asyncio as _asyncio
+            from mailer import send_smtp
+            await _asyncio.to_thread(
+                send_smtp, email_to,
+                f"[ARIA] {_TITULOS.get(tipo, tipo)} — {doc.get('debtor_nombre') or 'deudor'}",
+                _alerta_email_html(tipo, doc),
+            )
+        except Exception:
+            logger.exception("[alerts] envío EMAIL falló (no fatal) tipo=%s user=%s", tipo, user_id)
 
     logger.info(
         "[alerts] tipo=%s area=%s responsable=%s user=%s debtor=%s",

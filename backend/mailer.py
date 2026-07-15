@@ -339,6 +339,42 @@ def _render_staff_summary(
 # Send helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def send_smtp(to_emails, subject: str, html: str) -> None:
+    """Envío SMTP directo (Private Email / Namecheap) — usado por las alertas de
+    cobranza porque MailerSend trial da 403. Config por env: SMTP_HOST/PORT/
+    USER/PASS/FROM (ya seteadas en Railway). Sincrono: llamar con asyncio.to_thread.
+    """
+    import smtplib
+    import ssl
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    host = _env_clean("SMTP_HOST", "mail.privateemail.com")
+    port = int(_env_clean("SMTP_PORT", "465") or "465")
+    user = _env_clean("SMTP_USER")
+    pw = os.getenv("SMTP_PASS", "")
+    from_addr = _env_clean("SMTP_FROM", user)
+    if not user or not pw:
+        raise RuntimeError("SMTP no configurado (SMTP_USER / SMTP_PASS)")
+
+    recipients = [to_emails] if isinstance(to_emails, str) else list(to_emails)
+    recipients = [r.strip() for r in recipients if r and r.strip()]
+    if not recipients:
+        raise RuntimeError("sin destinatarios")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"ARIA — Landa Tech <{from_addr}>"
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(html, "html", "utf-8"))
+
+    ctx = ssl.create_default_context()
+    with smtplib.SMTP_SSL(host, port, context=ctx, timeout=30) as s:
+        s.login(user, pw)
+        s.sendmail(from_addr, recipients, msg.as_string())
+    logger.info("[mailer] SMTP sent '%s' -> %s", subject, recipients)
+
+
 def _get_client():
     from mailersend import MailerSendClient
     api_key = _env_clean("MAILERSEND_API_KEY")
