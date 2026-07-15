@@ -274,14 +274,19 @@ async def run_bot(
     # tenant config in Mongo (voice_persona), falling back to a generic default;
     # LAYER 3 (runtime) is THIS debtor's data, built here as runtime_block.
     from cobranza.prompt_builder import (
-        resolve_persona, render_greeting, assemble_system_prompt,
+        resolve_persona, render_greeting, assemble_system_prompt, tratamiento_for,
     )
 
+    # Tratamiento por género inferido del primer nombre (Softseguros no lo trae).
+    _trat_rt = tratamiento_for(debtor_name.split()[0] if debtor_name else "")
     runtime_block = (
         "DATOS DE ESTA LLAMADA (datos REALES y exactos de ESTE deudor — usalos directo, "
         "NO necesitas consultar ninguna herramienta para responder sobre su poliza, "
         "saldo o fechas; ya los tienes aqui):\n"
         f"- Nombre: {debtor_name}\n"
+        f"- Tratamiento: {_trat_rt} — dirigete a la persona SIEMPRE como "
+        f"'{_trat_rt}' (y sus pronombres correspondientes). NUNCA uses el "
+        f"tratamiento contrario.\n"
         f"- Deuda pendiente: {monto_natural}\n"
         f"- Vencimiento: {vencimiento_str}\n"
         f"{_policy_block}"
@@ -766,6 +771,11 @@ async def run_bot(
     # per-client and editable without a deploy. The policy detail comes only
     # AFTER the debtor confirms (handled by the prompt flow).
     first_name = debtor_name.split()[0] if debtor_name and debtor_name != "senor o senora" else ""
+    # Tratamiento por género (tratamiento_for ya importado arriba).
+    # "señora Daniela", no "señor Daniela".
+    _trat = tratamiento_for(first_name)          # "señor" | "señora"
+    _trat_cap = "Señora" if _trat == "señora" else "Señor"
+    _el_trat = ("la " if _trat == "señora" else "el ") + _trat
     if is_inbound:
         # Entrante (§9.4): el saludo pregrabado + Gather YA se presentó y validó
         # la identidad ANTES de este pipeline. Forzar aquí el saludo saliente
@@ -774,7 +784,7 @@ async def run_bot(
         # una al recordatorio.
         _brand = persona.get("company_brand") or persona.get("company_name", "")
         first_message = (
-            f"Señor {first_name}, le habla {persona.get('agent_name', '')}, "
+            f"{_trat_cap} {first_name}, le habla {persona.get('agent_name', '')}, "
             f"asistente virtual de {_brand}. Gracias por comunicarse con nosotros."
             if first_name else
             f"Le habla {persona.get('agent_name', '')}, asistente virtual de {_brand}. "
@@ -816,7 +826,7 @@ async def run_bot(
             "retoma tu pregunta de identidad con naturalidad apenas puedas "
             "hablar de nuevo ("
             + (
-                f"'Disculpe, ¿hablo con el señor {first_name}?'"
+                f"'Disculpe, ¿hablo con {_el_trat} {first_name}?'"
                 if first_name else "'Disculpe, ¿con quién tengo el gusto?'"
             )
             + "). Nunca te trabes.\n"

@@ -120,6 +120,50 @@ PROHIBIDO:
 {forbidden}"""
 
 
+# ── Tratamiento por género (señor/señora) ─────────────────────────────────────
+# Softseguros NO expone género; se infiere del PRIMER nombre (los nombres en
+# español son fuertemente generizados: terminación en 'a' ≈ femenino). Ante la
+# duda → "señor" (estadísticamente lo más seguro con iniciales/apellidos).
+_NOMBRES_FEMENINOS = {
+    # Femeninos comunes en Colombia que NO terminan en 'a'
+    "isabel", "elizabeth", "lizeth", "yaneth", "janeth", "maribel", "anabel",
+    "carmen", "ines", "beatriz", "leonor", "flor", "pilar", "consuelo",
+    "amparo", "socorro", "rosario", "rocio", "mercedes", "dolores", "ruth",
+    "miriam", "myriam", "miryam", "esther", "ester", "edith", "ingrid",
+    "astrid", "leidy", "leydi", "yeimy", "nancy", "betty", "doris", "gladys",
+    "deisy", "daisy", "marleny", "luz", "sol", "lucero", "milagros", "nieves",
+    "judith", "raquel", "noemi", "yamile", "yamileth", "marisol", "soledad",
+    "guadalupe", "matilde", "berenice", "elcy", "emily", "lily", "paz",
+    "margoth", "maryluz", "yudi", "yudy", "leonilde", "belen",
+}
+_MASCULINOS_EN_A = {"luca", "sasha"}  # excepciones raras
+
+
+def tratamiento_for(first_name: str) -> str:
+    """'señora' si el primer nombre es femenino; 'señor' en caso contrario."""
+    n = (first_name or "").strip().lower()
+    n = n.translate(str.maketrans("áéíóúü", "aeiouu"))
+    if not n or n in _MASCULINOS_EN_A:
+        return "señor"
+    if n in _NOMBRES_FEMENINOS or n.endswith("a"):
+        return "señora"
+    return "señor"
+
+
+def _tratamiento_vals(first_name: str) -> dict:
+    """Variables de plantilla derivadas del género: {tratamiento} 'señor(a)',
+    {Tratamiento} capitalizado, {el_tratamiento} 'el señor'/'la señora',
+    {lo_la} pronombre objeto."""
+    t = tratamiento_for(first_name)
+    fem = t == "señora"
+    return {
+        "tratamiento": t,
+        "Tratamiento": "Señora" if fem else "Señor",
+        "el_tratamiento": ("la " + t) if fem else ("el " + t),
+        "lo_la": "la" if fem else "lo",
+    }
+
+
 # NOT DPG-specific — a brand-new tenant with no voice_persona still gets a sane,
 # non-branded agent rather than inheriting another client's identity.
 
@@ -128,9 +172,9 @@ DEFAULT_PERSONA: dict = {
     "company_name": "la empresa",
     "company_brand": "la empresa",
     "tono": "amable",
-    "greeting_template": "Buenos días. Le habla {agent_name}, asistente virtual de {company_brand}. ¿Hablo con el señor {first_name}?",
+    "greeting_template": "Buenos días. Le habla {agent_name}, asistente virtual de {company_brand}. ¿Hablo con {el_tratamiento} {first_name}?",
     "greeting_template_no_name": "Buenos días. Le habla {agent_name}, asistente virtual de {company_brand}. ¿Con quién tengo el gusto?",
-    "pitch_template": "Senor {first_name}, lo contacto para recordarle el pago de su poliza de {ramo}, que tiene un valor pendiente de {monto_natural}.",
+    "pitch_template": "{Tratamiento} {first_name}, {lo_la} contacto para recordarle el pago de su poliza de {ramo}, que tiene un valor pendiente de {monto_natural}.",
     "business_rules": "- AL SALUDAR Y AL DIRIGIRTE AL CLIENTE usa 'senor' o 'senora' segun corresponda (ej: 'senor Carlos', 'senora Marta'). NUNCA uses 'don', 'dona', 'caballero' ni 'amigo'.",
     "objection_handling": (
         "- 'No tengo plata' / 'no puedo pagar ahora' / 'quiero cambiar el acuerdo' -> NO negocies tu (la llamada es SOLO un recordatorio). Di con empatia: 'Entiendo, senor. Para mirar opciones sobre su pago, lo mejor es que lo atienda un asesor. Yo le paso el caso y lo contactan.' Luego llama escalate y end_call.\n"
@@ -204,6 +248,7 @@ def render_greeting(persona: dict, first_name: str) -> str:
         "agent_name": persona.get("agent_name", ""),
         "company_name": persona.get("company_name", ""),
         "company_brand": persona.get("company_brand") or persona.get("company_name", ""),
+        **_tratamiento_vals(first_name),
     }
     tmpl = (
         persona.get("greeting_template")
@@ -248,6 +293,7 @@ def assemble_system_prompt(
         "con_riesgo": f", asociada a {riesgo}" if riesgo else "",
         "con_modalidad": f", bajo la modalidad de pago {modalidad}" if modalidad else "",
         "con_cuota": f" numero {numero_cuota}" if numero_cuota else "",
+        **_tratamiento_vals(first_name),
     }
     # The pitch template can reference persona + runtime values. La variante
     # (preventivo / dia de vencimiento / vencida / entrante) la decide el estado
@@ -278,7 +324,7 @@ def assemble_system_prompt(
             "   REGLA ABSOLUTA: NO des NINGUN dato de la poliza, saldo, monto, fechas ni el motivo real de "
             "la llamada HASTA que la persona confirme que es el/ella. Si contesta cualquier otra cosa que no "
             "sea una confirmacion o negacion clara ('alo?', 'quien es?', 'de que se trata?'), NO reveles "
-            "nada: repite amablemente la pregunta 'Disculpe, ¿hablo con el señor {first_name}?'.\n"
+            "nada: repite amablemente la pregunta 'Disculpe, ¿hablo con {el_tratamiento} {first_name}?'.\n"
             "   Si responde 'si', 'soy yo', 'con el habla', o confirma que es el/ella -> identidad "
             "confirmada. RECIEN AHI pasa al paso 2 (el recordatorio), SIN llamar verify_identity.\n"
             "   Si responde que NO es el/ella, que se equivoco de numero, o que esa persona no vive/trabaja "
