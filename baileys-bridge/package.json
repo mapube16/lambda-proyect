@@ -1,0 +1,19 @@
+{
+  "name": "baileys-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Puente interno de alertas WhatsApp via Baileys (numero desechable, solo equipo DPG) mientras Meta aprueba la cuenta oficial",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "express": "^4.19.2",
+    "pino": "^9.5.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

@@ -1,0 +1,11 @@
+# Config propia del microservicio (el railway.toml de la RAIZ del repo es de
+# lambda-proyect y forzaba su Dockerfile + healthcheck /api/health — el primer
+# deploy fallo por eso). Deploy: railway up baileys-bridge --path-as-root -s baileys-bridge
+[build]
+builder = "railpack"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/health"
+healthcheckTimeout = 60
+restartPolicyType = "on_failure"

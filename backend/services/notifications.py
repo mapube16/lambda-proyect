@@ -7,6 +7,26 @@ from services.connection_manager import manager
 
 
 async def send_whatsapp_text(phone: str, message: str) -> None:
+    # Puente Baileys (numero desechable, SOLO equipo interno — allowlist en el
+    # propio servicio) mientras Meta aprueba la cuenta oficial de DPG. Si esta
+    # configurado y responde, listo; si falla o no esta, cae al camino Twilio
+    # de siempre (que hoy es no-op por el numero placeholder, pero queda para
+    # cuando haya WhatsApp oficial).
+    bridge_url = os.getenv("BAILEYS_BRIDGE_URL", "").rstrip("/")
+    if bridge_url:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{bridge_url}/send",
+                    json={"to": phone, "text": message},
+                    headers={"Authorization": f"Bearer {os.getenv('BAILEYS_BRIDGE_TOKEN', '')}"},
+                )
+            if resp.status_code == 200:
+                return
+            logging.error("[WA] baileys-bridge %d: %s — fallback Twilio", resp.status_code, resp.text[:200])
+        except Exception as e:
+            logging.error("[WA] baileys-bridge error: %s — fallback Twilio", e)
+
     sid = os.getenv("TWILIO_ACCOUNT_SID", "")
     token = os.getenv("TWILIO_AUTH_TOKEN", "")
     from_number = os.getenv("TWILIO_WHATSAPP_FROM", "")
