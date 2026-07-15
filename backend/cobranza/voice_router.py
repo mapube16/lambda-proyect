@@ -8,6 +8,7 @@ Endpoints:
 """
 import logging
 import os
+import re
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -687,6 +688,24 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
 
 # ── Post-call processing ────────────────────────────────────────────────────
 
+# Frases inequívocas de contestador/buzón (operadores CO: Claro/Movistar/Tigo).
+# Un buzón "habla" (user_turn_count > 0) y dura >10s, así que sin esto la
+# llamada quedaba "contactado" y la secuencia NO reintentaba (observado:
+# CA75b916 → buzón de Daniela marcado contactado). Solo frases de sistema —
+# un humano no dice "presiona la tecla numeral".
+_VOICEMAIL_RE = re.compile(
+    r"buz[oó]n de voz|correo de voz|contestador|"
+    r"dej[ae] (su|tu) mensaje|dejar (su|tu) mensaje|"
+    r"despu[eé]s (del|de escuchar el) tono|"
+    r"tecla numeral|"
+    r"no se encuentra disponible|no est[aá] disponible en este momento",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_voicemail(transcript: str) -> bool:
+    return bool(transcript and _VOICEMAIL_RE.search(transcript))
+
 
 async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inbound: bool = False):
     """Update debtor status and save call history after Pipecat pipeline ends.
@@ -707,8 +726,13 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
             current_estado = debtor.get("estado_previo") or "pendiente"
 
         # Determine new estado
+        _voicemail = _looks_like_voicemail(result.full_transcript)
         if current_estado in _TERMINAL_ESTADOS:
             new_estado = current_estado
+        elif _voicemail:
+            # Buzón de voz contestó: NO es contacto — la secuencia debe reintentar.
+            new_estado = "sin_contacto"
+            logger.info("[PostCall] %s buzón de voz detectado → sin_contacto", result.call_sid)
         elif result.duration_seconds > 10 and result.user_turn_count > 0:
             # User spoke — call was answered
             new_estado = "contactado"
