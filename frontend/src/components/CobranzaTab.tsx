@@ -1496,15 +1496,21 @@ export function CobranzaTab() {
   const [jornadaOpen, setJornadaOpen] = useState(false);
   const [jornada, setJornada] = useState<{ fecha: string; total: number; cupo_diario: number; items: JornadaItem[] } | null>(null);
   const [jornadaLoading, setJornadaLoading] = useState(false);
-  const fetchJornada = useCallback(async () => {
+  // 'hoy' | 'manana' — mañana = la lista del próximo día hábil (mismo endpoint)
+  const [jornadaDia, setJornadaDia] = useState<'hoy' | 'manana'>('hoy');
+  const fetchJornada = useCallback(async (dia: 'hoy' | 'manana' = 'hoy') => {
     setJornadaLoading(true);
     try {
-      const r = await apiFetch('/api/cobranza/jornada-hoy');
+      const r = await apiFetch(`/api/cobranza/jornada-hoy?dia=${dia}`);
       if (r.ok) setJornada(await r.json());
     } catch { /* keep prev */ }
     finally { setJornadaLoading(false); }
   }, []);
-  useEffect(() => { if (jornadaOpen && !jornada) fetchJornada(); }, [jornadaOpen, jornada, fetchJornada]);
+  useEffect(() => { if (jornadaOpen && !jornada) fetchJornada(jornadaDia); }, [jornadaOpen, jornada, fetchJornada, jornadaDia]);
+  const cambiarJornadaDia = useCallback((dia: 'hoy' | 'manana') => {
+    setJornadaDia(dia);
+    fetchJornada(dia);
+  }, [fetchJornada]);
   const excluirDeJornada = useCallback(async (item: JornadaItem) => {
     try {
       const r = await apiFetch(`/api/cobranza/debtors/${item._id}/pausar`, { method: 'POST' });
@@ -1997,7 +2003,7 @@ export function CobranzaTab() {
           >
             <span style={{ fontFamily: C.SG, fontWeight: 700, fontSize: 13.5, color: C.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
               <ClipboardDocumentListIcon width={16} height={16} style={{ color: C.purple, flexShrink: 0 }} />
-              Jornada de hoy
+              {jornadaDia === 'hoy' ? 'Jornada de hoy' : `Jornada de mañana${jornada?.fecha ? ` (${jornada.fecha})` : ''}`}
               {jornada && (
                 <span style={{ fontFamily: C.IN, fontWeight: 500, fontSize: 12, color: C.muted }}>
                   {jornada.total} programados · cupo {jornada.cupo_diario}/día
@@ -2010,11 +2016,29 @@ export function CobranzaTab() {
           </UnstyledButton>
           {jornadaOpen && (
             <div style={{ borderTop: `1px solid ${C.border}`, maxHeight: 380, overflowY: 'auto' }}>
+              {/* Toggle Hoy / Mañana — mañana = próximo día hábil, mismo orden real de marcación */}
+              <div style={{ display: 'flex', gap: 6, padding: '10px 18px 4px' }}>
+                {(['hoy', 'manana'] as const).map(d => (
+                  <button
+                    key={d}
+                    onClick={() => cambiarJornadaDia(d)}
+                    style={{
+                      padding: '5px 14px', borderRadius: 999, cursor: 'pointer',
+                      fontFamily: C.SG, fontWeight: 700, fontSize: 11.5,
+                      background: jornadaDia === d ? C.purple : C.s1,
+                      color: jornadaDia === d ? '#fff' : C.muted,
+                      border: `1px solid ${jornadaDia === d ? C.purple : C.border}`,
+                    }}
+                  >
+                    {d === 'hoy' ? 'HOY' : '🌅 MAÑANA'}
+                  </button>
+                ))}
+              </div>
               {jornadaLoading ? (
                 <div style={{ padding: 18, fontFamily: C.IN, fontSize: 12.5, color: C.muted }}>Calculando la jornada…</div>
               ) : !jornada || jornada.items.length === 0 ? (
                 <div style={{ padding: 18, fontFamily: C.IN, fontSize: 12.5, color: C.muted }}>
-                  No hay llamadas programadas para hoy.
+                  {jornadaDia === 'hoy' ? 'No hay llamadas programadas para hoy.' : 'No hay llamadas en cola para mañana todavía — el planificador sigue asignando citas durante la noche.'}
                 </div>
               ) : (
                 jornada.items.map((it, idx) => {
