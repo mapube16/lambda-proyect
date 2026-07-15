@@ -352,10 +352,14 @@ def register_cobranza_jobs(scheduler, force: bool = False) -> None:
         id="seq_plan_intentos",
         replace_existing=True,
     )
+    # Cada 2 min (era 5): con MAX_CONCURRENT_CALLS=5 y llamadas de ~1 min, el
+    # ciclo de 5 min dejaba las lineas ociosas ~4 min. Configurable sin deploy
+    # de codigo via COBRANZA_DISPATCH_INTERVAL_MIN.
+    dispatch_min = int(os.getenv("COBRANZA_DISPATCH_INTERVAL_MIN", "2"))
     scheduler.add_job(
         dispatch_intentos_job,
         "interval",
-        minutes=5,
+        minutes=dispatch_min,
         id="seq_dispatch_intentos",
         replace_existing=True,
     )
@@ -368,5 +372,6 @@ def register_cobranza_jobs(scheduler, force: bool = False) -> None:
     )
     logger.warning(
         "[register_cobranza_jobs] AUTOCALL ENABLED — Registered: seq_plan_intentos (15m), "
-        "seq_dispatch_intentos (5m), cobr_rescue_llamando (10m). Real debtors WILL be called."
+        "seq_dispatch_intentos (%dm), cobr_rescue_llamando (10m). Real debtors WILL be called.",
+        dispatch_min,
     )
