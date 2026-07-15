@@ -110,6 +110,53 @@ async def set_autocall_enabled(enabled: bool, scheduler=None, actor: str = "syst
 
 
 # ---------------------------------------------------------------------------
+# Gate de autorización de jornada (informe §2.1)
+# ---------------------------------------------------------------------------
+# El bot NO marca hasta que un colaborador de DPG revisa la lista del día y la
+# AUTORIZA explícitamente desde el dashboard. La autorización es por-tenant y
+# por-día: vale solo para HOY (Bogotá); al día siguiente hay que re-autorizar,
+# así nunca marca en automático sin la revisión humana previa.
+_JORNADA_DOC_PREFIX = "jornada_authorized"
+
+
+def _today_bogota() -> str:
+    import pytz
+    return datetime.now(pytz.timezone("America/Bogota")).date().isoformat()
+
+
+async def is_jornada_authorized(user_id: str) -> bool:
+    db = get_db()
+    doc = await db.cobranza_runtime.find_one({"_id": f"{_JORNADA_DOC_PREFIX}:{user_id}"})
+    return bool(doc) and doc.get("authorized_date") == _today_bogota()
+
+
+async def set_jornada_authorized(user_id: str, authorized: bool, actor: str = "") -> dict:
+    db = get_db()
+    _id = f"{_JORNADA_DOC_PREFIX}:{user_id}"
+    now = datetime.now(timezone.utc)
+    if authorized:
+        fields = {"authorized_date": _today_bogota(), "by": actor, "at": now}
+    else:
+        fields = {"authorized_date": None, "by": actor, "at": now}
+    await db.cobranza_runtime.update_one({"_id": _id}, {"$set": fields}, upsert=True)
+    logger.warning("[jornada] autorizacion=%s user=%s por=%s", authorized, user_id, actor)
+    return {"authorized": bool(authorized), "authorized_date": fields["authorized_date"], "by": actor}
+
+
+async def jornada_estado(user_id: str) -> dict:
+    db = get_db()
+    doc = await db.cobranza_runtime.find_one({"_id": f"{_JORNADA_DOC_PREFIX}:{user_id}"}) or {}
+    hoy = _today_bogota()
+    return {
+        "hoy": hoy,
+        "authorized": doc.get("authorized_date") == hoy,
+        "authorized_date": doc.get("authorized_date"),
+        "by": doc.get("by"),
+        "at": doc.get("at").isoformat() if doc.get("at") else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 
@@ -153,6 +200,19 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
                     {"$set": {"estado": "pendiente", "updated_at": datetime.now(timezone.utc)}},
                 )
                 return
+
+        # Gate de autorización de jornada (informe §2.1): el bot NO marca hasta
+        # que DPG revisó la lista del día y la autorizó desde el dashboard.
+        if not await is_jornada_authorized(user_id):
+            logger.info(
+                "[scheduler] jornada de hoy NO autorizada (user=%s) — no se marca a debtor %s",
+                user_id, debtor["_id"],
+            )
+            await db.debtors.update_one(
+                {"_id": debtor["_id"]},
+                {"$set": {"estado": "pendiente", "updated_at": datetime.now(timezone.utc)}},
+            )
+            return
 
         # Paquete de minutos: sin saldo el tenant no marca (el job sigue vivo
         # para otros tenants; el deudor vuelve a pendiente).

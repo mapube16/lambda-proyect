@@ -365,6 +365,32 @@ async def jornada_hoy(current_user: dict = Depends(get_current_user)):
     }
 
 
+# ── Autorización de jornada (informe §2.1) ──────────────────────────────────────
+# El bot no marca hasta que DPG revisa la lista y autoriza HOY explícitamente.
+
+@router.get("/jornada/estado")
+async def get_jornada_estado(current_user: dict = Depends(get_current_user)):
+    from cobranza.campaign_scheduler import jornada_estado
+    return await jornada_estado(str(current_user["user_id"]))
+
+
+@router.post("/jornada/autorizar")
+async def post_jornada_autorizar(current_user: dict = Depends(get_current_user)):
+    """Autoriza la jornada de HOY: recién aquí el scheduler empieza a marcar."""
+    await _require_cobranza_enabled(current_user)
+    from cobranza.campaign_scheduler import set_jornada_authorized
+    actor = current_user.get("email") or str(current_user["user_id"])
+    return await set_jornada_authorized(str(current_user["user_id"]), True, actor=actor)
+
+
+@router.post("/jornada/desautorizar")
+async def post_jornada_desautorizar(current_user: dict = Depends(get_current_user)):
+    """Revoca la autorización de hoy: detiene nuevas marcaciones de la jornada."""
+    from cobranza.campaign_scheduler import set_jornada_authorized
+    actor = current_user.get("email") or str(current_user["user_id"])
+    return await set_jornada_authorized(str(current_user["user_id"]), False, actor=actor)
+
+
 # ── Paquete de minutos ─────────────────────────────────────────────────────────
 
 @router.get("/minutos")
