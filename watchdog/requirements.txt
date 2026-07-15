@@ -1,0 +1,4 @@
+pymongo[srv]==4.10.1
+certifi
+httpx
+pytz

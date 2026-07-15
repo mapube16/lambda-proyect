@@ -1,0 +1,11 @@
+# Servicio watchdog — separado del backend a proposito (si lambda-proyect se
+# cae, este sigue vivo para avisar). Deploy:
+#   railway up watchdog --path-as-root -s watchdog
+[build]
+builder = "railpack"
+
+[deploy]
+startCommand = "python watchdog.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
