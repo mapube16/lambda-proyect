@@ -725,10 +725,37 @@ async def funnel(current_user: dict = Depends(get_current_user)):
         counts[row["_id"] or "pendiente"] = int(row["n"])
         monto_total += float(row.get("monto") or 0)
     total = sum(counts.values())
-    # monto_total: la suma REAL de toda la cartera activa. El KPI 'Cartera
-    # total' del dashboard sumaba solo la página visible (50 deudores) y por
-    # eso mostraba un valor distinto en cada página.
-    return {"counts": counts, "total": total, "monto_total": monto_total}
+
+    # ── Métricas ACUMULADAS reales (no estado actual) ────────────────────────
+    # El estado 'contactado' es transitorio (un deudor contactado puede pasar a
+    # pausado, o su última llamada ser sin_contacto) → subcuenta el trabajo real.
+    # Aquí se cuenta desde el historial: cuántas LLAMADAS se hicieron y a cuántas
+    # PERSONAS se les habló al menos una vez (reportado por DPG: "se han hecho
+    # muchas más llamadas que las que muestra Contactados").
+    _CONTACTED = ["contactado", "promesa_de_pago", "pago_reportado",
+                  "reagendado", "escalado", "disputa"]
+    acc_pipeline = [
+        {"$match": {"user_id": user_id, "is_active": {"$ne": False}, "is_test": {"$ne": True}}},
+        {"$project": {
+            "n_calls": {"$size": {"$ifNull": ["$historial_llamadas", []]}},
+            "ever": {"$anyElementTrue": {"$map": {
+                "input": {"$ifNull": ["$historial_llamadas", []]}, "as": "h",
+                "in": {"$in": ["$$h.resultado", _CONTACTED]},
+            }}},
+        }},
+        {"$group": {"_id": None,
+                    "llamadas": {"$sum": "$n_calls"},
+                    "contactados_ever": {"$sum": {"$cond": ["$ever", 1, 0]}}}},
+    ]
+    acc = await db.debtors.aggregate(acc_pipeline).to_list(length=1)
+    llamadas_realizadas = int(acc[0]["llamadas"]) if acc else 0
+    contactados_ever = int(acc[0]["contactados_ever"]) if acc else 0
+
+    return {
+        "counts": counts, "total": total, "monto_total": monto_total,
+        "contactados_ever": contactados_ever,
+        "llamadas_realizadas": llamadas_realizadas,
+    }
 
 
 # ── Get Single Debtor ─────────────────────────────────────────────────────────

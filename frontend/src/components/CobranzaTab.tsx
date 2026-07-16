@@ -1559,7 +1559,7 @@ export function CobranzaTab() {
   }, [addToast]);
 
   // ── Whole-cartera counts per estado (KPIs) ─────────────────────────────────
-  const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number; monto_total?: number } | null>(null);
+  const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number; monto_total?: number; contactados_ever?: number; llamadas_realizadas?: number } | null>(null);
   const fetchFunnel = useCallback(async () => {
     try {
       const r = await apiFetch('/api/cobranza/funnel');
@@ -1789,8 +1789,14 @@ export function CobranzaTab() {
   // persona (no solo 3). pago_reportado/escalado/disputa/reagendado también son
   // contactos: ARIA habló con el deudor. Antes se caían del conteo aunque
   // hubieran generado alerta (p.ej. quien reporta "ya pagué").
-  const contactados = (fc.contactado ?? 0) + (fc.promesa_de_pago ?? 0) + (fc.pagado ?? 0)
+  // Contactados = personas a las que se les HABLÓ alguna vez (acumulado real del
+  // historial, viene de /funnel.contactados_ever). El estado actual subcontaba:
+  // un contactado que pasó a pausado dejaba de sumar. Fallback al estado actual
+  // solo mientras carga el funnel.
+  const contactadosEstadoActual = (fc.contactado ?? 0) + (fc.promesa_de_pago ?? 0) + (fc.pagado ?? 0)
     + (fc.pago_reportado ?? 0) + (fc.reagendado ?? 0) + (fc.escalado ?? 0) + (fc.disputa ?? 0);
+  const contactados = funnel?.contactados_ever ?? contactadosEstadoActual;
+  const llamadasRealizadas = funnel?.llamadas_realizadas ?? 0;
   const promesasActivas = fc.promesa_de_pago ?? 0;
   const pagados = fc.pagado ?? 0;
   // Suma REAL de toda la cartera desde /funnel (monto_total). El fallback a la
@@ -1935,12 +1941,13 @@ export function CobranzaTab() {
         </div>
 
         {/* KPIs (Panel) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14, marginBottom: 20 }}>
           {[
             // Solo 2 colores con significado real aquí: navy = la métrica insignia;
             // verde = dinero efectivamente cobrado. El resto son conteos de
             // actividad, no éxitos/alertas — quedan neutros.
             { label: 'Cartera total', value: formatCOP(carteraMontoPage), color: C.purple, big: false },
+            { label: 'Llamadas realizadas', value: llamadasRealizadas.toLocaleString('es-CO'), color: C.ink, big: true },
             { label: 'Contactados', value: `${contactados}/${carteraCount}`, color: C.ink, big: true },
             { label: 'Promesas activas', value: String(promesasActivas), color: C.ink, big: true },
             { label: 'Pagados', value: String(pagados), color: C.green, big: true },
