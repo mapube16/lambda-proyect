@@ -290,6 +290,21 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
         # no-answer ($0, se reintenta) ANTES de que el buzón conteste. Tunable
         # por env: subir si corta humanos lentos, bajar si aún caen buzones.
         ring_timeout = int(os.getenv("COBRANZA_RING_TIMEOUT_SECS", "18"))
+        # AMD ASÍNCRONO (detección de contestador): el ring_timeout NO frena los
+        # buzones corporativos que contestan rápido (4-17s, observado 16-jul:
+        # GRUPO QUIMBAYA a los 4s). Con async AMD, Twilio conecta al humano de
+        # inmediato (sin demora) y detecta máquina/humano EN PARALELO; si es
+        # máquina, POST a /amd-callback y colgamos. El webhook sync ya cuelga si
+        # AnsweredBy=machine llega ahí. Toggle por COBRANZA_AMD_ENABLED.
+        amd_kwargs = {}
+        if os.getenv("COBRANZA_AMD_ENABLED", "true").lower() == "true":
+            amd_kwargs = {
+                "machine_detection": "Enable",
+                "async_amd": "true",
+                "async_amd_status_callback": f"{webhook_url}/api/cobranza/voice/amd-callback",
+                "async_amd_status_callback_method": "POST",
+                "machine_detection_timeout": int(os.getenv("COBRANZA_AMD_TIMEOUT_SECS", "12")),
+            }
         call = await asyncio.wait_for(
             loop.run_in_executor(None, lambda: client.calls.create(
                 to=to_number, from_=from_number,
@@ -302,6 +317,7 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
                 record=True,
                 recording_status_callback=f"{webhook_url}/api/cobranza/voice/recording-callback",
                 recording_status_callback_method="POST",
+                **amd_kwargs,
                 **call_status_kwargs(),
             )),
             timeout=15,  # latencia del API de Twilio; el ring_timeout es async del lado de Twilio

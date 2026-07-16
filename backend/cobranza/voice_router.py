@@ -513,6 +513,29 @@ async def call_status_callback(request: Request):
     return PlainTextResponse("OK")
 
 
+# ── AMD Callback (detección asíncrona de contestador) ───────────────────────
+
+@router.post("/amd-callback")
+async def amd_callback(request: Request):
+    """Twilio envía AnsweredBy cuando el AMD asíncrono clasifica la llamada.
+    Si es máquina/buzón, colgamos de inmediato: ARIA no le sigue hablando a un
+    contestador (ahorra Gemini + limpia la operación). El humano ya está
+    conectado sin demora (async AMD corre en paralelo)."""
+    form = dict(await request.form())
+    call_sid = form.get("CallSid", "")
+    answered_by = form.get("AnsweredBy", "")
+    logger.info("[AMD] call=%s AnsweredBy=%s", call_sid, answered_by)
+    if call_sid and (answered_by.startswith("machine") or answered_by == "fax"):
+        try:
+            from twilio.rest import Client
+            sid = os.getenv("TWILIO_ACCOUNT_SID"); tok = os.getenv("TWILIO_AUTH_TOKEN")
+            Client(sid, tok).calls(call_sid).update(status="completed")
+            logger.warning("[AMD] %s = %s → colgada (contestador)", call_sid, answered_by)
+        except Exception:
+            logger.exception("[AMD] no se pudo colgar %s", call_sid)
+    return PlainTextResponse("ok")
+
+
 # ── Recording Callback ──────────────────────────────────────────────────────
 
 
