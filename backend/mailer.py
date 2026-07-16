@@ -360,10 +360,46 @@ def _render_staff_summary(
 # Send helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _send_via_mailersend_http(recipients: list, bcc: list, subject: str, html: str) -> bool:
+    """Envía por la API HTTPS de MailerSend. Devuelve True si salió (200/202).
+    HTTPS es el ÚNICO canal que funciona desde Railway — bloquea TODO el SMTP
+    saliente (25/465/587/2525, confirmado 16-jul). Dominio landatech.org
+    verificado + cuenta aprobada. Es el transporte primario; SMTP queda de
+    fallback para desarrollo local."""
+    key = _env_clean("MAILERSEND_API_KEY")
+    if not key:
+        return False
+    from_addr = _env_clean("MAILERSEND_FROM_EMAIL", "reportes@landatech.org")
+    payload = {
+        "from": {"email": from_addr, "name": "ARIA - Landa Tech"},
+        "to": [{"email": r} for r in recipients],
+        "subject": subject,
+        "html": html,
+    }
+    if bcc:
+        payload["bcc"] = [{"email": b} for b in bcc]
+    try:
+        import httpx
+        with httpx.Client(timeout=25) as c:
+            r = c.post(
+                "https://api.mailersend.com/v1/email",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+        if r.status_code in (200, 202):
+            logger.info("[mailer] MailerSend HTTPS sent '%s' -> %s (bcc=%s)", subject, recipients, bcc or "-")
+            return True
+        logger.warning("[mailer] MailerSend HTTPS %s: %s — fallback SMTP", r.status_code, r.text[:200])
+        return False
+    except Exception as exc:  # noqa: BLE001 — cae a SMTP
+        logger.warning("[mailer] MailerSend HTTPS falló (%s) — fallback SMTP", type(exc).__name__)
+        return False
+
+
 def send_smtp(to_emails, subject: str, html: str) -> None:
-    """Envío SMTP directo (Private Email / Namecheap) — usado por las alertas de
-    cobranza porque MailerSend trial da 403. Config por env: SMTP_HOST/PORT/
-    USER/PASS/FROM (ya seteadas en Railway). Sincrono: llamar con asyncio.to_thread.
+    """Envío de correo. PRIMARIO: MailerSend HTTPS (único canal que sale de
+    Railway; SMTP está bloqueado en prod). FALLBACK: cadena SMTP (Gmail →
+    Private Email) para desarrollo local. Sincrono: llamar con asyncio.to_thread.
     """
     import smtplib
     import ssl
@@ -371,14 +407,6 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
     from email.mime.multipart import MIMEMultipart
     from email.header import Header
     from email.utils import formataddr
-
-    host = _env_clean("SMTP_HOST", "mail.privateemail.com")
-    port = int(_env_clean("SMTP_PORT", "465") or "465")
-    user = _env_clean("SMTP_USER")
-    pw = os.getenv("SMTP_PASS", "")
-    from_addr = _env_clean("SMTP_FROM", user)
-    if not user or not pw:
-        raise RuntimeError("SMTP no configurado (SMTP_USER / SMTP_PASS)")
 
     recipients = [to_emails] if isinstance(to_emails, str) else list(to_emails)
     recipients = [r.strip() for r in recipients if r and r.strip()]
@@ -394,13 +422,26 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
     if always_bcc and always_bcc.lower() not in {r.lower() for r in envelope}:
         envelope.append(always_bcc)
 
-    # ── Cadena de servidores: Gmail PRIMERO → Private Email (465 → 587) ──
+    # ── Transporte PRIMARIO: MailerSend HTTPS (Railway bloquea todo SMTP) ──
+    _bcc = ([always_bcc] if always_bcc and always_bcc.lower() not in {r.lower() for r in recipients} else [])
+    if _send_via_mailersend_http(recipients, _bcc, subject, html):
+        return
+
+    # ── Fallback SMTP (local): Gmail PRIMERO → Private Email (465 → 587) ──
     # Gmail (SMTP_FALLBACK_*: app password, 500/día) va primero por decisión
     # DPG (16-jul): no bloquea bajo ráfaga y la cuota sobra. Private Email
     # queda de respaldo — Namecheap bloquea la IP de Railway bajo ráfaga
     # (15-jul: TimeoutError en ambos puertos por horas). El From se
     # reconstruye por intento: Gmail exige que coincida con la cuenta
     # autenticada.
+    host = _env_clean("SMTP_HOST", "mail.privateemail.com")
+    port = int(_env_clean("SMTP_PORT", "465") or "465")
+    user = _env_clean("SMTP_USER")
+    pw = os.getenv("SMTP_PASS", "")
+    from_addr = _env_clean("SMTP_FROM", user)
+    if not user or not pw:
+        # MailerSend HTTPS ya falló y no hay SMTP configurado — nada que hacer.
+        raise RuntimeError("Correo no enviado: MailerSend HTTPS falló y SMTP no está configurado")
     candidatos = []
     fb_host = _env_clean("SMTP_FALLBACK_HOST")
     fb_pass = os.getenv("SMTP_FALLBACK_PASS", "").replace(" ", "")
