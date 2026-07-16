@@ -443,8 +443,8 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
             return
         except Exception as exc:  # noqa: BLE001 — probar el siguiente servidor
             last_exc = exc
-            logger.warning("[mailer] SMTP %s:%s falló (%s) — probando siguiente",
-                           c["host"], c["port"], type(exc).__name__)
+            logger.warning("[mailer] SMTP %s:%s falló (%s: %s) — probando siguiente",
+                           c["host"], c["port"], type(exc).__name__, str(exc)[:160])
     raise last_exc if last_exc else RuntimeError("sin servidores SMTP")
 
 
