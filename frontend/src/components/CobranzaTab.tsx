@@ -1559,7 +1559,7 @@ export function CobranzaTab() {
   }, [addToast]);
 
   // ── Whole-cartera counts per estado (KPIs) ─────────────────────────────────
-  const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number; monto_total?: number; contactados_ever?: number; llamadas_realizadas?: number } | null>(null);
+  const [funnel, setFunnel] = useState<{ counts: Record<string, number>; total: number; monto_total?: number; contactados_ever?: number; llamadas_realizadas?: number; marcaciones_total?: number } | null>(null);
   const fetchFunnel = useCallback(async () => {
     try {
       const r = await apiFetch('/api/cobranza/funnel');
@@ -1797,6 +1797,9 @@ export function CobranzaTab() {
     + (fc.pago_reportado ?? 0) + (fc.reagendado ?? 0) + (fc.escalado ?? 0) + (fc.disputa ?? 0);
   const contactados = funnel?.contactados_ever ?? contactadosEstadoActual;
   const llamadasRealizadas = funnel?.llamadas_realizadas ?? 0;
+  // Marcaciones = TODOS los intentos (contesten o no) — la cifra que cartera
+  // reconoce como "llamadas hechas". llamadasRealizadas = solo las contestadas.
+  const marcacionesTotal = funnel?.marcaciones_total ?? 0;
   const promesasActivas = fc.promesa_de_pago ?? 0;
   const pagados = fc.pagado ?? 0;
   // Suma REAL de toda la cartera desde /funnel (monto_total). El fallback a la
@@ -1947,7 +1950,7 @@ export function CobranzaTab() {
             // verde = dinero efectivamente cobrado. El resto son conteos de
             // actividad, no éxitos/alertas — quedan neutros.
             { label: 'Cartera total', value: formatCOP(carteraMontoPage), color: C.purple, big: false },
-            { label: 'Llamadas realizadas', value: llamadasRealizadas.toLocaleString('es-CO'), color: C.ink, big: true },
+            { label: 'Llamadas (marcadas / contestadas)', value: `${marcacionesTotal.toLocaleString('es-CO')} / ${llamadasRealizadas.toLocaleString('es-CO')}`, color: C.ink, big: true },
             { label: 'Contactados', value: `${contactados}/${carteraCount}`, color: C.ink, big: true },
             { label: 'Promesas activas', value: String(promesasActivas), color: C.ink, big: true },
             { label: 'Pagados', value: String(pagados), color: C.green, big: true },

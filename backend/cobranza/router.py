@@ -734,8 +734,11 @@ async def funnel(current_user: dict = Depends(get_current_user)):
     # muchas más llamadas que las que muestra Contactados").
     _CONTACTED = ["contactado", "promesa_de_pago", "pago_reportado",
                   "reagendado", "escalado", "disputa"]
+    # SIN filtro is_active: la métrica es ACUMULADA — si el sync marca a alguien
+    # como pagado, sus llamadas pasadas no deben desaparecer del total
+    # (observado: 'Llamadas realizadas' BAJÓ de 200 a 182 tras un sync).
     acc_pipeline = [
-        {"$match": {"user_id": user_id, "is_active": {"$ne": False}, "is_test": {"$ne": True}}},
+        {"$match": {"user_id": user_id, "is_test": {"$ne": True}}},
         {"$project": {
             "n_calls": {"$size": {"$ifNull": ["$historial_llamadas", []]}},
             "ever": {"$anyElementTrue": {"$map": {
@@ -751,10 +754,20 @@ async def funnel(current_user: dict = Depends(get_current_user)):
     llamadas_realizadas = int(acc[0]["llamadas"]) if acc else 0
     contactados_ever = int(acc[0]["contactados_ever"]) if acc else 0
 
+    # Marcaciones TOTALES (intentos de llamada, contesten o no) — la cifra que
+    # el cliente reconoce como "llamadas hechas". Viene de daily_stats (lo que
+    # el dispatcher realmente marcó cada día).
+    marc = await db.cobranza_daily_stats.aggregate([
+        {"$match": {"user_id": user_id}},
+        {"$group": {"_id": None, "n": {"$sum": {"$ifNull": ["$llamadas_iniciadas", 0]}}}},
+    ]).to_list(length=1)
+    marcaciones_total = int(marc[0]["n"]) if marc else 0
+
     return {
         "counts": counts, "total": total, "monto_total": monto_total,
         "contactados_ever": contactados_ever,
         "llamadas_realizadas": llamadas_realizadas,
+        "marcaciones_total": marcaciones_total,
     }
 
 
