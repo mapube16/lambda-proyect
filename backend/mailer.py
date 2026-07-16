@@ -373,16 +373,14 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
     if always_bcc and always_bcc.lower() not in {r.lower() for r in envelope}:
         envelope.append(always_bcc)
 
-    # ── Cadena de servidores: Private Email (465 → 587) → Gmail (fallback) ──
-    # Namecheap bloquea la IP de Railway bajo ráfaga (15-jul: TimeoutError en
-    # ambos puertos por horas). El fallback Gmail (SMTP_FALLBACK_*: app
-    # password, 500/día) garantiza que alertas/reportes SIEMPRE salgan; cuando
-    # Namecheap se desbloquea, el primario vuelve solo. El From se reconstruye
-    # por intento: Gmail exige que coincida con la cuenta autenticada.
-    candidatos = [
-        {"host": host, "port": port, "user": user, "pw": pw, "from": from_addr},
-        {"host": host, "port": 587, "user": user, "pw": pw, "from": from_addr},
-    ]
+    # ── Cadena de servidores: Gmail PRIMERO → Private Email (465 → 587) ──
+    # Gmail (SMTP_FALLBACK_*: app password, 500/día) va primero por decisión
+    # DPG (16-jul): no bloquea bajo ráfaga y la cuota sobra. Private Email
+    # queda de respaldo — Namecheap bloquea la IP de Railway bajo ráfaga
+    # (15-jul: TimeoutError en ambos puertos por horas). El From se
+    # reconstruye por intento: Gmail exige que coincida con la cuenta
+    # autenticada.
+    candidatos = []
     fb_host = _env_clean("SMTP_FALLBACK_HOST")
     fb_pass = os.getenv("SMTP_FALLBACK_PASS", "").replace(" ", "")
     if fb_host and fb_pass:
@@ -393,6 +391,10 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
             "user": fb_user, "pw": fb_pass,
             "from": _env_clean("SMTP_FALLBACK_FROM", fb_user),
         })
+    candidatos += [
+        {"host": host, "port": port, "user": user, "pw": pw, "from": from_addr},
+        {"host": host, "port": 587, "user": user, "pw": pw, "from": from_addr},
+    ]
 
     ctx = ssl.create_default_context()
     last_exc: Exception | None = None
