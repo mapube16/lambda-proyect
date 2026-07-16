@@ -510,6 +510,18 @@ async def call_status_callback(request: Request):
     if call_status == "completed":
         from cobranza import minutes
         await minutes.record_call_consumption(get_db(), call_sid, duration)
+
+    # Liberar el slot de concurrencia en CUALQUIER estado terminal. Las
+    # NO contestadas (~70%) nunca abren WS → su cleanup nunca corría y el
+    # registro en cobranza_calls_in_progress bloqueaba un slot por 10 min
+    # (el cutoff de antigüedad). Con 10 slots eso limitaba el ritmo real a
+    # ~1-2 marcaciones/min (observado 16-jul: 219 en toda la tarde con
+    # capacidad teórica de 1800). Borrar aquí devuelve el slot al instante.
+    if call_status in ("completed", "no-answer", "busy", "failed", "canceled"):
+        try:
+            await get_db().cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
+        except Exception:
+            logger.exception("[CallStatus] cleanup in_progress falló %s", call_sid)
     return PlainTextResponse("OK")
 
 
