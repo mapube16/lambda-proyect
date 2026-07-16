@@ -48,13 +48,13 @@ DPG_PERSONA = {
             "{monto_natural}. Recuerde que un atraso en el pago podria generar "
             "restricciones en sus coberturas en caso de un siniestro."
         ),
+        # Acortado 15-jul por pedido DPG (Zurrona): se quitó la frase del
+        # siniestro/mora — el speech va directo del dato a la pregunta de pago.
         "vencida": (
             "Senor {first_name}, el motivo de mi llamada es informarle que su poliza "
             "de {ramo}{con_riesgo}, expedida por {aseguradora}, presenta un vencimiento "
             "de {dias_mora} dias{con_modalidad}, con un valor pendiente de "
-            "{monto_natural}. Le recuerdo la importancia de mantener sus pagos al dia: "
-            "en caso de un siniestro, el estado de mora podria generar restricciones o "
-            "incluso afectar la cobertura por parte de la aseguradora."
+            "{monto_natural}."
         ),
         # §9.4 — cliente devuelve una llamada perdida. La identidad ya se
         # confirmo por telefono + nombre ANTES de este pipeline (ver
