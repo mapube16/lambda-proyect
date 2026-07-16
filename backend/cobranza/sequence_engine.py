@@ -284,7 +284,9 @@ async def plan_intentos_job() -> None:
 
 async def dispatch_intentos_job() -> None:
     """Marca a los deudores en hora, respetando franjas, cupo diario y prioridad."""
-    from cobranza.campaign_scheduler import is_autocall_enabled, safe_initiate_call
+    from cobranza.campaign_scheduler import (
+        is_autocall_enabled, safe_initiate_call, is_jornada_authorized,
+    )
 
     if not await is_autocall_enabled():
         return
@@ -310,6 +312,14 @@ async def dispatch_intentos_job() -> None:
                 continue
 
             if not is_within_tenant_franjas(horarios, now):
+                continue
+
+            # Gate de jornada AQUÍ (no solo en safe_initiate_call): si no está
+            # autorizada, se salta el tenant ANTES de tocar el cupo. Bug 16-jul:
+            # safe_initiate_call abortaba per-deudor pero el $inc de
+            # llamadas_iniciadas ya había corrido -> 300 abortos quemaron el
+            # cupo del día y no marcó ni cuando autorizaron.
+            if not await is_jornada_authorized(user_id):
                 continue
 
             # Cupo diario del tenant (jornada de arranque = mismo cupo, alto).

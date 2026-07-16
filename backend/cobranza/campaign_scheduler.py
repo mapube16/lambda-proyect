@@ -161,10 +161,15 @@ async def set_jornada_authorized(user_id: str, authorized: bool, actor: str = ""
             upsert=True,
         )
     else:
-        fecha = None
+        # Desautorizar = pausar SOLO el día indicado (por defecto HOY), NO borrar
+        # las pre-autorizaciones futuras. Bug 16-jul: desautorizar borraba TODA
+        # la lista → al pausar la tarde de ayer se perdió la pre-auto de hoy y no
+        # arrancó a las 9am.
+        fecha = _manana_habil_bogota() if dia == "manana" else _today_bogota()
         await db.cobranza_runtime.update_one(
             {"_id": _id},
-            {"$set": {"authorized_dates": [], "authorized_date": None, "by": actor, "at": now}},
+            {"$pull": {"authorized_dates": fecha},
+             "$set": {"authorized_date": None, "by": actor, "at": now}},
             upsert=True,
         )
     logger.warning("[jornada] autorizacion=%s dia=%s user=%s por=%s", authorized, dia, user_id, actor)
