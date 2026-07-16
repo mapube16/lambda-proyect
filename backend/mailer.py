@@ -10,8 +10,29 @@ Three email templates:
 import logging
 import os
 import re
+import socket as _socket
 
 logger = logging.getLogger("mailer")
+
+# ── IPv4 primero en la resolución DNS ─────────────────────────────────────────
+# smtp.gmail.com resuelve IPv6 primero y el contenedor de Railway no tiene ruta
+# IPv6 de egress → OSError inmediato (observado 16-jul: gmail 465/587 fallaban
+# al instante mientras privateemail 465 —IPv4— daba timeout del bloqueo).
+# Reordenar getaddrinfo con AF_INET primero arregla Gmail sin afectar al resto
+# (todo lo que ya funcionaba, funcionaba por IPv4).
+if not getattr(_socket, "_aria_ipv4_first", False):
+    _orig_getaddrinfo = _socket.getaddrinfo
+
+    def _gai_ipv4_first(host, port, family=0, type=0, proto=0, flags=0):
+        res = _orig_getaddrinfo(host, port, family, type, proto, flags)
+        try:
+            return ([r for r in res if r[0] == _socket.AF_INET]
+                    + [r for r in res if r[0] != _socket.AF_INET])
+        except Exception:
+            return res
+
+    _socket.getaddrinfo = _gai_ipv4_first
+    _socket._aria_ipv4_first = True
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
