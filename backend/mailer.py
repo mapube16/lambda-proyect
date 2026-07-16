@@ -373,31 +373,56 @@ def send_smtp(to_emails, subject: str, html: str) -> None:
     if always_bcc and always_bcc.lower() not in {r.lower() for r in envelope}:
         envelope.append(always_bcc)
 
-    msg = MIMEMultipart("alternative")
-    # Headers RFC 5322: subject/from pueden traer no-ASCII (tildes, guion largo).
-    # Sin codificar, Private Email (Namecheap) rechaza con 554 invalid From/Subject.
-    # Header(...) hace el encoding RFC 2047; el display name va ASCII ('-' normal).
-    msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = formataddr(("ARIA - Landa Tech", from_addr))
-    msg["To"] = ", ".join(recipients)
-    msg.attach(MIMEText(html, "html", "utf-8"))
+    # ── Cadena de servidores: Private Email (465 → 587) → Gmail (fallback) ──
+    # Namecheap bloquea la IP de Railway bajo ráfaga (15-jul: TimeoutError en
+    # ambos puertos por horas). El fallback Gmail (SMTP_FALLBACK_*: app
+    # password, 500/día) garantiza que alertas/reportes SIEMPRE salgan; cuando
+    # Namecheap se desbloquea, el primario vuelve solo. El From se reconstruye
+    # por intento: Gmail exige que coincida con la cuenta autenticada.
+    candidatos = [
+        {"host": host, "port": port, "user": user, "pw": pw, "from": from_addr},
+        {"host": host, "port": 587, "user": user, "pw": pw, "from": from_addr},
+    ]
+    fb_host = _env_clean("SMTP_FALLBACK_HOST")
+    fb_pass = os.getenv("SMTP_FALLBACK_PASS", "").replace(" ", "")
+    if fb_host and fb_pass:
+        fb_user = _env_clean("SMTP_FALLBACK_USER")
+        candidatos.append({
+            "host": fb_host,
+            "port": int(_env_clean("SMTP_FALLBACK_PORT", "587") or "587"),
+            "user": fb_user, "pw": fb_pass,
+            "from": _env_clean("SMTP_FALLBACK_FROM", fb_user),
+        })
 
     ctx = ssl.create_default_context()
-    try:
-        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=30) as s:
-            s.login(user, pw)
-            s.sendmail(from_addr, envelope, msg.as_string())
-    except (TimeoutError, OSError) as exc:
-        # 465 SSL no responde (observado: Private Email dejó de aceptar 465
-        # tras la ráfaga de alertas del 15-jul). Fallback: 587 STARTTLS — si el
-        # bloqueo es por puerto, esto pasa; si es throttle de cuenta, el retry
-        # del llamador lo cubre.
-        logger.warning("[mailer] SMTP %s:%s no responde (%s) — fallback 587 STARTTLS", host, port, type(exc).__name__)
-        with smtplib.SMTP(host, 587, timeout=30) as s:
-            s.starttls(context=ctx)
-            s.login(user, pw)
-            s.sendmail(from_addr, envelope, msg.as_string())
-    logger.info("[mailer] SMTP sent '%s' -> %s (bcc=%s)", subject, recipients, always_bcc or "-")
+    last_exc: Exception | None = None
+    for c in candidatos:
+        msg = MIMEMultipart("alternative")
+        # Headers RFC 5322: subject/from pueden traer no-ASCII (tildes, guion
+        # largo). Sin codificar, Private Email rechaza con 554. Header(...) hace
+        # el encoding RFC 2047; el display name va ASCII ('-' normal).
+        msg["Subject"] = Header(subject, "utf-8")
+        msg["From"] = formataddr(("ARIA - Landa Tech", c["from"]))
+        msg["To"] = ", ".join(recipients)
+        msg.attach(MIMEText(html, "html", "utf-8"))
+        try:
+            if c["port"] == 465:
+                with smtplib.SMTP_SSL(c["host"], c["port"], context=ctx, timeout=15) as s:
+                    s.login(c["user"], c["pw"])
+                    s.sendmail(c["from"], envelope, msg.as_string())
+            else:
+                with smtplib.SMTP(c["host"], c["port"], timeout=15) as s:
+                    s.starttls(context=ctx)
+                    s.login(c["user"], c["pw"])
+                    s.sendmail(c["from"], envelope, msg.as_string())
+            logger.info("[mailer] SMTP sent '%s' via %s -> %s (bcc=%s)",
+                        subject, c["host"], recipients, always_bcc or "-")
+            return
+        except Exception as exc:  # noqa: BLE001 — probar el siguiente servidor
+            last_exc = exc
+            logger.warning("[mailer] SMTP %s:%s falló (%s) — probando siguiente",
+                           c["host"], c["port"], type(exc).__name__)
+    raise last_exc if last_exc else RuntimeError("sin servidores SMTP")
 
 
 def _get_client():
