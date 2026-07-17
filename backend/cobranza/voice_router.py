@@ -522,6 +522,22 @@ async def call_status_callback(request: Request):
             await get_db().cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
         except Exception:
             logger.exception("[CallStatus] cleanup in_progress falló %s", call_sid)
+
+    # Llamada que NUNCA conectó (no abre WS → no hay PostCall): el intento
+    # cuenta y el deudor pasa al SIGUIENTE día hábil AQUÍ MISMO — sin esto el
+    # dispatcher lo re-marcaba cada 15 min todo el día (17-jul: 700 marcaciones
+    # para ~140 personas). 'completed' no entra: eso lo maneja PostCall.
+    if call_status in ("no-answer", "busy", "failed", "canceled"):
+        try:
+            db = get_db()
+            debtor = await db.debtors.find_one({"vapi_call_id": call_sid, "estado": "llamando"})
+            if debtor:
+                from cobranza.campaign_scheduler import reschedule_intento_fallido
+                final = await reschedule_intento_fallido(db, debtor)
+                logger.info("[CallStatus] %s %s → debtor %s reprogramado (%s, siguiente día hábil)",
+                            call_sid, call_status, debtor["_id"], final)
+        except Exception:
+            logger.exception("[CallStatus] reprogramación falló %s", call_sid)
     return PlainTextResponse("OK")
 
 

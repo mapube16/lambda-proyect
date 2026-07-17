@@ -217,13 +217,27 @@ def _fmt_pct(x: float) -> str:
     return f"{x * 100:.0f}%"
 
 
+_MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+             "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def _fecha_es(d: date) -> str:
+    """'17 de julio de 2026' — strftime %B sale en inglés en el contenedor."""
+    return f"{d.day} de {_MESES_ES[d.month - 1]} de {d.year}"
+
+
 def render_daily_html(metrics: dict, qualitative: dict, fecha: date, tenant_nombre: str = "DPG Seguros") -> str:
+    # Etiquetas del embudo, sin ambigüedad (petición DPG 17-jul: 'programadas
+    # 700 / realizadas 141' confundía — nadie sabía cuál era cuál):
+    #   marcaciones = intentos que el bot disparó (contesten o no)
+    #   conectadas  = alguien atendió (persona o buzón)
+    #   conversaciones = habló una persona real
     filas = [
-        ("Llamadas programadas", metrics["llamadas_programadas"]),
-        ("Llamadas realizadas", metrics["llamadas_realizadas"]),
-        ("Contestadas", metrics["llamadas_contestadas"]),
-        ("No contestadas", metrics["llamadas_no_contestadas"]),
-        ("Tasa de efectividad", _fmt_pct(metrics["tasa_efectividad"])),
+        ("Marcaciones (intentos de llamada)", metrics["llamadas_programadas"]),
+        ("Conectadas (alguien atendió)", metrics["llamadas_realizadas"]),
+        ("Conversaciones con la persona", metrics["llamadas_contestadas"]),
+        ("Buzón / colgó sin hablar", metrics["llamadas_no_contestadas"]),
+        ("Tasa de conversación (de las conectadas)", _fmt_pct(metrics["tasa_efectividad"])),
         ("Solicitaron link de pago", metrics["links_solicitados"]),
         ("Solicitaron cupón de pago", metrics["cupones_solicitados"]),
         ("Informaron que ya pagaron", metrics["pago_reportado"]),
@@ -252,7 +266,7 @@ def render_daily_html(metrics: dict, qualitative: dict, fecha: date, tenant_nomb
 <div style="max-width:640px;margin:0 auto;padding:24px 16px">
   <div style="background:#234876;border-radius:12px 12px 0 0;padding:20px 24px">
     <div style="color:#AEC2DA;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase">Reporte diario · ARIA</div>
-    <div style="color:#fff;font-size:20px;font-weight:800;margin-top:4px">{tenant_nombre} — {fecha.strftime('%d de %B de %Y')}</div>
+    <div style="color:#fff;font-size:20px;font-weight:800;margin-top:4px">{tenant_nombre} — {_fecha_es(fecha)}</div>
   </div>
   <div style="background:#fff;border:1px solid #E7E6E2;border-top:none;border-radius:0 0 12px 12px;padding:20px 24px">
     <table style="width:100%;border-collapse:collapse;font-size:13px">{filas_html}</table>
@@ -468,7 +482,7 @@ async def run_fin_jornada_report(db, user_id: str, fecha: Optional[date] = None)
         "</body></html>",
         f"""<div style="max-width:640px;margin:12px auto 0;padding:0 16px">
   <div style="background:#fff;border:1px solid #E7E6E2;border-radius:12px;padding:20px 24px">
-    <h3 style="color:#0F6B64;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Jornada de mañana — {manana.strftime('%A %d de %B').capitalize()}</h3>
+    <h3 style="color:#0F6B64;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Jornada de mañana — {_fecha_es(manana)}</h3>
     <p style="font-size:13px;color:#374151;margin:0 0 12px"><b>{prog['total']}</b> clientes en cola
       (se marcarán hasta <b>{prog['dentro_cupo']}</b> según el cupo diario de {cupo}), en orden de mayor mora.
       Los primeros de la lista:</p>

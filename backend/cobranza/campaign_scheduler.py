@@ -347,12 +347,59 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
 # Job 3: Rescue stuck 'llamando' debtors (call may not complete cleanly)
 # ---------------------------------------------------------------------------
 
+async def reschedule_intento_fallido(db, debtor: dict) -> str:
+    """
+    Regla del informe: UN intento por deudor por día. Cuando la llamada NO
+    conecta (no contestó / ocupado / falló), el intento CUENTA y la próxima
+    cita pasa al SIGUIENTE día hábil — nunca al mismo día. Sin esto, el
+    dispatcher re-marcaba a los mismos cada 15 min hasta quemar el cupo
+    (observado 17-jul: 700 marcaciones para ~140 personas). Si con este
+    intento llega a max_intentos → 'agotado' + alerta a cartera.
+    Devuelve el estado final asignado.
+    """
+    import pytz
+    from cobranza.config_cache import get_tenant_config
+    from cobranza.call_scheduler import add_business_days
+    from cobranza.sequence_engine import _at_franja_inicio, _parse_festivos
+
+    user_id = str(debtor.get("user_id"))
+    cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
+    timings, horarios = cfg.get("timings") or {}, cfg.get("horarios") or {}
+    max_intentos = int(timings.get("max_intentos") or 3)
+    nuevos = int(debtor.get("intentos") or 0) + 1
+    now = datetime.now(timezone.utc)
+
+    if nuevos >= max_intentos:
+        await db.debtors.update_one(
+            {"_id": debtor["_id"]},
+            {"$set": {"estado": "agotado", "intentos": nuevos, "updated_at": now},
+             "$unset": {"proximo_intento_at": "", "proximo_intento_numero": "", "vapi_call_id": ""}},
+        )
+        try:
+            from cobranza.alerts import crear_alerta
+            await crear_alerta(db, user_id, debtor, "sin_contacto_agotado")
+        except Exception:
+            logger.exception("[reschedule] alerta agotado falló (no fatal)")
+        return "agotado"
+
+    hoy = datetime.now(pytz.timezone("America/Bogota")).date()
+    manana = add_business_days(hoy, 1, _parse_festivos(horarios))
+    cita = _at_franja_inicio(manana, horarios)
+    await db.debtors.update_one(
+        {"_id": debtor["_id"]},
+        {"$set": {"estado": "sin_contacto", "intentos": nuevos,
+                  "proximo_intento_at": cita, "proximo_intento_numero": nuevos + 1,
+                  "updated_at": now},
+         "$unset": {"vapi_call_id": ""}},
+    )
+    return "sin_contacto"
+
+
 async def rescue_stuck_llamando_job() -> None:
     """
-    Resets debtors stuck in estado='llamando' for more than 15 minutes back to
-    'sin_contacto' so they are eligible for retry by the next job run.
-
-    Handles edge case where WebSocket/Pipecat pipeline may not complete cleanly.
+    Deudores atascados en 'llamando' >15 min (la llamada nunca conectó o el
+    pipeline murió): se reprograman para el SIGUIENTE día hábil vía
+    reschedule_intento_fallido — nunca re-marcado el mismo día.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
 
@@ -369,14 +416,12 @@ async def rescue_stuck_llamando_job() -> None:
         logger.warning("[rescue_stuck_llamando_job] Rescuing %d debtors stuck in 'llamando'", len(stuck))
 
     for debtor in stuck:
-        logger.warning(
-            "[rescue_stuck_llamando_job] Debtor %s stuck in llamando since %s — resetting to sin_contacto",
-            debtor["_id"], debtor.get("updated_at"),
-        )
-        await db.debtors.update_one(
-            {"_id": debtor["_id"]},
-            {"$set": {"estado": "sin_contacto", "updated_at": datetime.now(timezone.utc)}},
-        )
+        try:
+            final = await reschedule_intento_fallido(db, debtor)
+            logger.warning("[rescue_stuck_llamando_job] Debtor %s -> %s (cita: siguiente dia habil)",
+                           debtor["_id"], final)
+        except Exception:
+            logger.exception("[rescue_stuck_llamando_job] fallo debtor %s", debtor["_id"])
 
 
 # ---------------------------------------------------------------------------
