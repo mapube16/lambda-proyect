@@ -320,6 +320,7 @@ async def jornada_hoy(
             "user_id": user_id,
             "is_active": {"$ne": False},
             "no_llamar": {"$ne": True},  # entidades estatales / opt-out (informe §2)
+            "excluir_llamada": {"$ne": True},  # débito automático / póliza inactiva
             "estado": {"$in": list(CALLABLE_ESTADOS)},
         },
         {

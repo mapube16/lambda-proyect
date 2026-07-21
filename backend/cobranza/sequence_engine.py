@@ -244,6 +244,7 @@ async def plan_intentos_job() -> None:
                 "user_id": user_id,
                 "is_active": {"$ne": False},
                 "no_llamar": {"$ne": True},   # entidades estatales / opt-out (informe SS2)
+                "excluir_llamada": {"$ne": True},  # débito automático / póliza inactiva
                 # Sin tipo_entidad resuelto (regex+LLM) no sabemos si es estatal — no
                 # se planifica hasta que la clasificación termine (ver entidad_estatal.py).
                 "tipo_entidad": {"$ne": None},
@@ -343,6 +344,7 @@ async def dispatch_intentos_job() -> None:
                 "user_id": user_id,
                 "is_active": {"$ne": False},
                 "no_llamar": {"$ne": True},   # entidades estatales / opt-out (informe SS2)
+                "excluir_llamada": {"$ne": True},  # débito automático / póliza inactiva
                 # Mismo criterio que el planner: sin clasificar todavía, no se marca.
                 "tipo_entidad": {"$ne": None},
                 "estado": {"$in": list(CALLABLE_ESTADOS)},
