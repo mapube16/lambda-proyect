@@ -816,7 +816,12 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
             except Exception:
                 max_intentos = debtor.get("max_intentos", 3)
             new_intentos = debtor.get("intentos", 0) + 1
-            if new_intentos >= max_intentos and new_estado not in _TERMINAL_ESTADOS:
+            # 'agotado' = 3 intentos SIN CONTACTO. Solo aplica si esta llamada NO
+            # fue un contacto real. Bug 21-jul (Jaime Alberto): contestó y pidió
+            # el link en su 3er intento pero se le forzó a 'agotado' + alerta
+            # "agotó 3 intentos sin contacto" — contradictorio. Un contacto en el
+            # último intento se queda 'contactado', no agotado.
+            if new_intentos >= max_intentos and new_estado == "sin_contacto":
                 new_estado = "agotado"
 
         # Build call record for historial
