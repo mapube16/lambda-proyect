@@ -126,27 +126,51 @@ async def _notificar_alerta(tipo: str, doc: dict, alertas_cfg: dict, user_id: st
     if isinstance(email_to, str):
         email_to = [e.strip() for e in email_to.split(",") if e.strip()]
     if email_to:
-        try:
-            import asyncio as _asyncio
-            from mailer import send_smtp
-            await _asyncio.to_thread(
-                send_smtp, email_to,
-                f"[ARIA] {_TITULOS.get(tipo, tipo)} — {doc.get('debtor_nombre') or 'deudor'}",
-                _alerta_email_html(tipo, doc),
-            )
-        except Exception:
-            logger.exception("[alerts] envío EMAIL falló (no fatal) tipo=%s user=%s", tipo, user_id)
+        import asyncio as _asyncio
+        from mailer import send_smtp
+        # 3 intentos con backoff: con 20 llamadas/min la ráfaga de alertas hace
+        # que Private Email a veces no responda (TimeoutError observado) — un
+        # reintento a los 20/60s casi siempre pasa. Corre en background, no
+        # afecta la llamada.
+        for _intento, _espera in ((1, 0), (2, 20), (3, 60)):
+            if _espera:
+                await _asyncio.sleep(_espera)
+            try:
+                await _asyncio.to_thread(
+                    send_smtp, email_to,
+                    f"[ARIA] {_TITULOS.get(tipo, tipo)} — {doc.get('debtor_nombre') or 'deudor'}",
+                    _alerta_email_html(tipo, doc),
+                )
+                break
+            except Exception:
+                if _intento == 3:
+                    logger.exception("[alerts] envío EMAIL falló 3/3 (no fatal) tipo=%s user=%s", tipo, user_id)
+                else:
+                    logger.warning("[alerts] envío EMAIL falló (intento %d/3, reintenta) tipo=%s", _intento, tipo)
+
+
+# Tipos que NO se notifican en el momento (no spamear): se registran y se
+# consolidan en el informe de fin de jornada. Petición DPG 21-jul: "las alertas
+# de que agotó su máximo de intentos hazlas en un informe aparte al final del
+# día". Se listan en run_fin_jornada_report.
+TIPOS_SOLO_INFORME = {"sin_contacto_agotado"}
 
 
 async def crear_alerta(
     db, user_id: str, debtor: dict, tipo: str, *,
-    detalle: str = "", extra: Optional[dict] = None,
+    detalle: str = "", extra: Optional[dict] = None, notificar: Optional[bool] = None,
 ) -> dict:
     """
     Registra la alerta, resuelve el responsable por §11, y la envía por
-    WhatsApp si el canal está habilitado. Nunca lanza — un fallo de
+    email/WhatsApp si el canal está habilitado. Nunca lanza — un fallo de
     notificación no puede tumbar una llamada en curso ni el sync.
+
+    `notificar`: si es False no se manda correo/WhatsApp (la alerta igual se
+    inserta y sale en el dashboard + informe de fin de jornada). Por defecto,
+    los tipos en TIPOS_SOLO_INFORME no notifican (evita spam).
     """
+    if notificar is None:
+        notificar = tipo not in TIPOS_SOLO_INFORME
     if tipo not in TIPOS:
         raise ValueError(f"tipo de alerta desconocido: {tipo!r}")
 
@@ -190,14 +214,15 @@ async def crear_alerta(
     # (observado: solicitar_link_cupon "timed out after 10.0 seconds" en
     # CA8f9eb1 — ARIA nunca recibió el resultado). El insert ya está hecho; la
     # alerta existe. El envío no debe retrasar a ARIA.
-    import asyncio as _asyncio
-    task = _asyncio.create_task(_notificar_alerta(tipo, doc, alertas_cfg, user_id))
-    _notify_tasks.add(task)
-    task.add_done_callback(_notify_tasks.discard)
+    if notificar:
+        import asyncio as _asyncio
+        task = _asyncio.create_task(_notificar_alerta(tipo, doc, alertas_cfg, user_id))
+        _notify_tasks.add(task)
+        task.add_done_callback(_notify_tasks.discard)
 
     logger.info(
-        "[alerts] tipo=%s area=%s responsable=%s user=%s debtor=%s",
-        tipo, doc["area"], doc["responsable"], user_id, doc["debtor_id"],
+        "[alerts] tipo=%s area=%s responsable=%s notificar=%s user=%s debtor=%s",
+        tipo, doc["area"], doc["responsable"], notificar, user_id, doc["debtor_id"],
     )
     return doc
 

@@ -464,6 +464,20 @@ async def run_fin_jornada_report(db, user_id: str, fecha: Optional[date] = None)
     muestras = await _muestras_del_dia(db, user_id, start, end)
     qualitative = await synthesize_qualitative(muestras)
 
+    # Consolidado del día de "agotó sus intentos sin contacto" — estas alertas
+    # NO se notifican una por una (DPG 21-jul: "no spamear a todos"); se juntan
+    # acá una sola vez al cierre.
+    agotados_hoy = [a async for a in db[ALERTS_COLLECTION].find(
+        {"user_id": user_id, "tipo": "sin_contacto_agotado", "created_at": {"$gte": start, "$lt": end}},
+        {"debtor_nombre": 1, "debtor_telefono": 1, "numero_poliza": 1},
+    )]
+    agotados_html = "".join(
+        f'<tr><td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#374151">{a.get("debtor_nombre") or "N/D"}</td>'
+        f'<td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#6B7280">{a.get("debtor_telefono") or ""}</td>'
+        f'<td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#6B7280">{a.get("numero_poliza") or ""}</td></tr>'
+        for a in agotados_hoy
+    ) or '<tr><td colspan="3" style="padding:8px 12px;color:#6B7280">Ninguno hoy.</td></tr>'
+
     # Programación de MAÑANA (próximo día hábil, misma prioridad del dispatcher)
     from cobranza.call_scheduler import add_business_days
     manana = add_business_days(fecha, 1)
@@ -481,6 +495,16 @@ async def run_fin_jornada_report(db, user_id: str, fecha: Optional[date] = None)
     ).replace(
         "</body></html>",
         f"""<div style="max-width:640px;margin:12px auto 0;padding:0 16px">
+  <div style="background:#fff;border:1px solid #E7E6E2;border-radius:12px;padding:20px 24px;margin-bottom:12px">
+    <h3 style="color:#B45309;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Agotaron sus intentos sin contacto ({len(agotados_hoy)})</h3>
+    <p style="font-size:12.5px;color:#374151;margin:0 0 10px">Clientes a los que ARIA llamó el máximo de veces sin lograr comunicación hoy — requieren gestión manual de cartera:</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <tr><th style="text-align:left;padding:5px 12px;color:#6B7280;font-size:11px">CLIENTE</th>
+          <th style="text-align:left;padding:5px 12px;color:#6B7280;font-size:11px">TELÉFONO</th>
+          <th style="text-align:left;padding:5px 12px;color:#6B7280;font-size:11px">PÓLIZA</th></tr>
+      {agotados_html}
+    </table>
+  </div>
   <div style="background:#fff;border:1px solid #E7E6E2;border-radius:12px;padding:20px 24px">
     <h3 style="color:#0F6B64;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Jornada de mañana — {_fecha_es(manana)}</h3>
     <p style="font-size:13px;color:#374151;margin:0 0 12px"><b>{prog['total']}</b> clientes en cola
