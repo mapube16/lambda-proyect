@@ -279,6 +279,24 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
 
         client = Client(account_sid, auth_token)
         to_number = debtor.get("telefono")
+        # Pre-validación de teléfono. Un número inválido (vacío, '+57', malformado)
+        # hace fallar el create de Twilio; el deudor volvía a 'pendiente' y —con
+        # mora alta— se re-seleccionaba cada minuto, atascando la cola e inflando
+        # el contador (observado 21-jul: ~34 números basura loopeando y
+        # bloqueando a los buenos). Se excluye ANTES de llamar a Twilio.
+        import re as _re
+        if not _re.match(r"^\+57\d{10}$", str(to_number or "")):
+            logger.warning("[scheduler] telefono invalido %r debtor %s — excluido de la cola", to_number, debtor["_id"])
+            await db.debtors.update_one(
+                {"_id": debtor["_id"]},
+                {"$set": {"excluir_llamada": True, "excluir_motivo": "telefono_invalido",
+                          "estado": "sin_contacto", "updated_at": datetime.now(timezone.utc)}},
+            )
+            await db.cobranza_daily_stats.update_one(
+                {"user_id": user_id, "fecha": _today_bogota()},
+                {"$inc": {"llamadas_iniciadas": -1}},   # deshacer el $inc del despachador
+            )
+            return
         # El SDK de Twilio es sync (HTTP bloqueante): en el event loop congela
         # TODAS las llamadas activas ~0.5-1s por marcación. Igual que initiate-v2.
         loop = asyncio.get_event_loop()
@@ -336,10 +354,30 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
             {"$set": {"vapi_call_id": call_sid, "updated_at": datetime.now(timezone.utc)}},
         )
     except Exception as e:
+        msg = str(e)
         logger.error("[scheduler] Call failed for debtor %s: %s", debtor["_id"], e)
-        await db.debtors.update_one(
-            {"_id": debtor["_id"]},
-            {"$set": {"estado": "pendiente", "updated_at": datetime.now(timezone.utc)}},
+        # Número inválido de Twilio (21211/21201/21214/21215/21217…): NO reintentar
+        # (re-loop infinito) → excluir de la cola. Cualquier otro error = transitorio
+        # → vuelve a pendiente para reintentar.
+        _num_invalido = (
+            any(code in msg for code in ("21211", "21201", "21214", "21215", "21217"))
+            or "is not valid" in msg or "No 'To'" in msg or "not authorized to call" in msg
+        )
+        if _num_invalido:
+            await db.debtors.update_one(
+                {"_id": debtor["_id"]},
+                {"$set": {"excluir_llamada": True, "excluir_motivo": "telefono_invalido",
+                          "estado": "sin_contacto", "updated_at": datetime.now(timezone.utc)}},
+            )
+        else:
+            await db.debtors.update_one(
+                {"_id": debtor["_id"]},
+                {"$set": {"estado": "pendiente", "updated_at": datetime.now(timezone.utc)}},
+            )
+        # Deshacer el $inc del despachador — contó una marcación que no ocurrió.
+        await db.cobranza_daily_stats.update_one(
+            {"user_id": user_id, "fecha": _today_bogota()},
+            {"$inc": {"llamadas_iniciadas": -1}},
         )
 
 
