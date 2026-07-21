@@ -1028,7 +1028,24 @@ async def run_bot(
         # ("no es aqui", "se equivoco", "numero incorrecto") — no una respuesta
         # ambigua de baja confianza que solo cayó al fallback LLM.
         if result.get("confirmed") is False and result.get("confidence") == "high":
-            await _fire_alerta("numero_equivocado", detalle=utterance[:200])
+            # ALERTA solo con negación EXPLÍCITA de identidad. Un "No." seco,
+            # ruido de STT o el audio de un contestador generaban alertas basura
+            # a cartera (observado 17-jul: 10 alertas, la mayoría "No." o
+            # gibberish). La despedida sin revelar datos se mantiene igual;
+            # lo que se filtra es solo la ALERTA.
+            import re as _re
+            _explicito = _re.search(
+                r"equivocad|n[uú]mero (incorrecto|errado|nuevo)|no (lo|la) conozco|"
+                r"no conozco a|no vive|no trabaja|ya no (vive|trabaja|usa)|"
+                r"no es (el|mi|su) (n[uú]mero|tel[eé]fono)|qui[eé]n es .{0,15}\?|"
+                r"vendi[oó]? (el|la|este)|cambi[oó] de n[uú]mero",
+                utterance, _re.IGNORECASE)
+            _es_maquina = _re.search(
+                r"buz[oó]n|contestador|mensaje autom|dej[ae] (su|tu) mensaje|"
+                r"despu[eé]s del tono|no contest[oó] directamente",
+                utterance, _re.IGNORECASE)
+            if _explicito and not _es_maquina:
+                await _fire_alerta("numero_equivocado", detalle=utterance[:200])
             # Instrucción explícita en el propio resultado: es la ruta donde la
             # conversación se muere si ARIA no sabe qué decir. Sin mencionar la
             # deuda a un tercero (§7): disculparse, despedirse y colgar.
@@ -1039,11 +1056,20 @@ async def run_bot(
             )
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
+    # Alertas ya disparadas en ESTA llamada — una por tipo por llamada. El
+    # modelo a veces re-llama la misma tool (observado: 2-3 alertas idénticas
+    # de pago_reportado/link en una sola llamada) y cartera recibía spam.
+    _alertas_disparadas: set = set()
+
     async def _fire_alerta(tipo: str, *, detalle: str = "", extra: dict = None) -> dict:
         """Helper compartido: registra + envía una alerta tipada (informe §7/§11).
         Nunca lanza — el llamador decide qué poner en el result_callback."""
         if not user_id:
             return {"ok": False, "error": "sin user_id"}
+        if tipo in _alertas_disparadas:
+            logger.info("[VOICE] alerta %s ya disparada en esta llamada — dedupe", tipo)
+            return {"ok": True, "dedupe": True}
+        _alertas_disparadas.add(tipo)
         try:
             from database import get_db
             from cobranza.alerts import crear_alerta
@@ -1083,6 +1109,33 @@ async def run_bot(
         detalle = params.arguments.get("detalle", "el deudor reporta que ya pago")
         debtor_id = str(debtor.get("_id", ""))
         logger.info("[VOICE] notify_payment_claim: debtor_id=%s detalle=%s", debtor_id, detalle[:80])
+
+        # VALIDACIÓN contra el transcript REAL (falsos positivos observados: el
+        # modelo disparaba esto sin que el cliente dijera "ya pagué" — promesas
+        # a futuro, confusión, o audio de buzón). Solo pasa si algún turno del
+        # DEUDOR contiene una afirmación de pago EN PASADO.
+        import re as _re
+        _habla_deudor = " ".join(
+            t for (_ts, _sp, t) in call_result.transcript if _sp != "ARIA"
+        )
+        _pago_pasado = _re.search(
+            r"ya (lo |la |le )?(pagu[eé]|pag[oó]|cancel[eé]|cancel[oó]|consign[eé]|"
+            r"transfer[ií]|realic[eé])|pagu[eé] (ayer|hoy|antier|la semana|el mes|"
+            r"hace |en (el |la )?banco)|ya (hice|realic[eé]) (el|la) (pago|consignaci[oó]n|"
+            r"transferencia)|ya (qued[oó]|est[aá]) pag|eso ya (lo |)pagu",
+            _habla_deudor, _re.IGNORECASE)
+        if not _pago_pasado:
+            logger.warning("[VOICE] notify_payment_claim RECHAZADO — el deudor no afirmó pago en pasado")
+            await params.result_callback({
+                "ok": False, "motivo": "no_confirmado",
+                "instruccion": (
+                    "El cliente NO ha dicho claramente que YA pagó. NO registres el pago. "
+                    "Si prometió pagar a futuro usa informar_fecha_pago; si hay duda, "
+                    "pregúntale directamente: '¿Me confirma si el pago ya fue realizado?'"
+                ),
+            }, properties=FunctionCallResultProperties(run_llm=True))
+            return
+
         result = {"ok": False, "error": "orchestrator unavailable"}
         if orchestrator and debtor_id:
             try:
