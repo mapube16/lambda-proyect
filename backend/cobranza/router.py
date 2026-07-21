@@ -699,8 +699,17 @@ async def today_summary(current_user: dict = Depends(get_current_user)):
     # Sin contacto (accumulated — needs attention, not just today)
     sin_contacto = await db.debtors.count_documents({**base, "estado": "sin_contacto"})
 
+    # Llamadas TOTALES marcadas hoy (lo que el dispatcher realmente disparó) —
+    # de cobranza_daily_stats, la fuente real; excluye las que fallaron por
+    # numero invalido (el scheduler hace $inc -1 en esos casos).
+    import pytz as _pytz
+    fecha_local = now.astimezone(_pytz.timezone("America/Bogota")).date().isoformat()
+    _ds = await db.cobranza_daily_stats.find_one({"user_id": user_id, "fecha": fecha_local})
+    llamadas_hoy = int((_ds or {}).get("llamadas_iniciadas") or 0)
+
     return {
         "llamando_ahora": llamando,
+        "llamadas_hoy": llamadas_hoy,
         "contactados_hoy": contactados_hoy,
         "promesas_hoy": promesas_hoy,
         "pagado_hoy": pagado_hoy,

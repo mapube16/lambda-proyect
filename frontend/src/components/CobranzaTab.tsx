@@ -1438,6 +1438,7 @@ export function CobranzaTab() {
   // ── Today's activity KPIs + funnel (whole-cartera, not the current page) ─────
   const [todayKpis, setTodayKpis] = useState<{
     llamando_ahora: number;
+    llamadas_hoy: number;
     contactados_hoy: number;
     promesas_hoy: { count: number; monto: number };
     pagado_hoy: { count: number; monto: number };
@@ -1984,6 +1985,7 @@ export function CobranzaTab() {
               color: (todayKpis?.llamando_ahora ?? llamandoNow) > 0 ? C.teal : C.ink,
               pulse: (todayKpis?.llamando_ahora ?? 0) > 0,
             },
+            { label: 'Llamadas hoy', value: String(todayKpis?.llamadas_hoy ?? '—'), sub: 'marcadas hoy', color: C.ink, pulse: false },
             { label: 'Contactados hoy', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.ink, pulse: false },
             { label: 'Promesas hoy', value: String(todayKpis?.promesas_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.promesas_hoy.monto) : '', color: C.green, pulse: false },
             { label: 'Pagado hoy', value: String(todayKpis?.pagado_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.pagado_hoy.monto) : '', color: C.green, pulse: false },
