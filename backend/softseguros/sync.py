@@ -306,6 +306,12 @@ def _num(v) -> Optional[float]:
         return None
 
 
+# Catálogo Softseguros /api/estadopoliza/ (codigo_generico → nombre). El código
+# es COMPARTIDO por varios estados: 01 = Vigente/Nueva/Vencida (todas activas y
+# cobrables). Estos tres NO se deben llamar (DPG doc jul-2026):
+_CODIGO_POLIZA_INACTIVA = {"03": "devengada", "05": "no_renovada", "06": "cancelada"}
+
+
 def _es_debito_automatico(medio_pago) -> bool:
     """El cobro por DÉBITO AUTOMÁTICO se descuenta solo — no hay que llamar a
     recordarle (informe: 'skip clients on automatic debit'). PSE/Efectivo SÍ se
@@ -330,6 +336,7 @@ def _pago_to_debtor_doc(pago: dict, bucket: str, alias_aseguradoras: Optional[di
     poliza_activa = pago.get("poliza_activa")
     forma_pago = (pago.get("poliza_forma_pago") or "").strip() or None
     es_financiada = bool(forma_pago) and "financiad" in forma_pago.lower()
+    cod_poliza = str(pago.get("poliza_estado_poliza_codigo_generico") or "").strip().zfill(2)
     # excluir_llamada: NO marcar (pero SÍ conservar en cartera) — el dispatcher lo
     # salta. Campo SEPARADO de no_llamar (opt-out manual / estatales) para que un
     # re-sync no pise una exclusión hecha por el equipo. Se recomputa cada sync:
@@ -341,6 +348,13 @@ def _pago_to_debtor_doc(pago: dict, bucket: str, alias_aseguradoras: Optional[di
         excluir, motivo = True, "financiada"
     elif poliza_activa is False:
         excluir, motivo = True, "poliza_inactiva"
+    elif cod_poliza in _CODIGO_POLIZA_INACTIVA:
+        # DPG doc: no llamar canceladas/devengadas/no renovadas. El filtro
+        # estadopolizas_selected del API NO las tumba del cartera_por_cobrar
+        # (el codigo_generico es compartido — 01=Vigente/Nueva/Vencida — o la
+        # póliza cambió de estado tras crearse la cuota), así que se colaban a la
+        # cola. Defensa en profundidad por código de estado. Ver /api/estadopoliza/.
+        excluir, motivo = True, "poliza_" + _CODIGO_POLIZA_INACTIVA[cod_poliza]
     else:
         excluir, motivo = False, None
     return {
