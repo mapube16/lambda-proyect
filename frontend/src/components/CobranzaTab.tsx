@@ -1451,7 +1451,8 @@ export function CobranzaTab() {
     contactados_hoy: number;
     promesas_hoy: { count: number; monto: number };
     pagado_hoy: { count: number; monto: number };
-    sin_contacto: number;
+    sin_contacto_hoy: number;
+    programadas_hoy: number;
   } | null>(null);
   const fetchTodaySummary = useCallback(async () => {
     try {
@@ -1616,6 +1617,17 @@ export function CobranzaTab() {
     if (!iso) return '—';
     try { return new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }); }
     catch { return '—'; }
+  };
+  // "actualizada hace Xh/Xm" — el doc DPG pide saber CUÁNDO se actualizó la cartera.
+  const fmtHace = (iso: string | null | undefined): string => {
+    if (!iso) return 'sin dato';
+    try {
+      const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+      if (mins < 1) return 'hace un momento';
+      if (mins < 60) return `hace ${mins} min`;
+      const h = Math.floor(mins / 60);
+      return h < 24 ? `hace ${h} h` : `hace ${Math.floor(h / 24)} d`;
+    } catch { return 'sin dato'; }
   };
 
   // ── Real-time WS updates ───────────────────────────────────────────────────
@@ -1811,7 +1823,6 @@ export function CobranzaTab() {
   // reconoce como "llamadas hechas". llamadasRealizadas = solo las contestadas.
   const marcacionesTotal = funnel?.marcaciones_total ?? 0;
   const promesasActivas = fc.promesa_de_pago ?? 0;
-  const pagados = fc.pagado ?? 0;
   // Suma REAL de toda la cartera desde /funnel (monto_total). El fallback a la
   // página visible solo aplica mientras el funnel carga — antes ese fallback
   // era el valor permanente y "Cartera total" cambiaba con cada página.
@@ -1953,39 +1964,34 @@ export function CobranzaTab() {
           </div>
         </div>
 
-        {/* KPIs (Panel) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14, marginBottom: 20 }}>
+        {/* Cartera / Histórico (acumulado — NO del día) */}
+        <div style={{ ...lbl(C.faint, 10), marginBottom: 8 }}>CARTERA · HISTÓRICO (ACUMULADO)</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
           {[
             // Solo 2 colores con significado real aquí: navy = la métrica insignia;
-            // verde = dinero efectivamente cobrado. El resto son conteos de
-            // actividad, no éxitos/alertas — quedan neutros.
-            { label: 'Cartera total', value: formatCOP(carteraMontoPage), color: C.purple, big: false },
-            { label: 'Llamadas (marcadas / contestadas)', value: `${marcacionesTotal.toLocaleString('es-CO')} / ${llamadasRealizadas.toLocaleString('es-CO')}`, color: C.ink, big: true },
-            { label: 'Contactados', value: `${contactados}/${carteraCount}`, color: C.ink, big: true },
-            { label: 'Promesas activas', value: String(promesasActivas), color: C.ink, big: true },
-            { label: 'Pagados', value: String(pagados), color: C.green, big: true },
-          ].map(({ label, value, color, big }) => (
+            // el resto son conteos de actividad, no éxitos/alertas — quedan neutros.
+            // "Pagados" acumulado se quitó: el sistema no confirma pagos (nota del doc)
+            // y se solapaba con "Pagado hoy".
+            { label: 'Cartera total', value: formatCOP(carteraMontoPage), sub: `actualizada ${fmtHace(syncStatus?.last_sync_at)}`, color: C.purple, big: false },
+            { label: 'Llamadas (marcadas / contestadas)', value: `${marcacionesTotal.toLocaleString('es-CO')} / ${llamadasRealizadas.toLocaleString('es-CO')}`, sub: 'total histórico', color: C.ink, big: true },
+            { label: 'Contactados (histórico)', value: `${contactados} de ${carteraCount}`, sub: 'personas con al menos un contacto', color: C.ink, big: true },
+            { label: 'Promesas activas', value: String(promesasActivas), sub: 'vigentes ahora', color: C.ink, big: true },
+          ].map(({ label, value, sub, color, big }) => (
             <div key={label} className="card" style={{ padding: '16px 18px' }}>
               <div style={lbl(C.faint, 11)}>{label}</div>
               <div style={{ fontFamily: C.SG, fontWeight: 800, fontSize: big ? 28 : 18, color, marginTop: 8, lineHeight: 1.05 }}>
                 {value}
               </div>
+              {sub && <div style={{ fontFamily: C.IN, fontSize: 11, color: C.muted, marginTop: 3 }}>{sub}</div>}
             </div>
           ))}
         </div>
 
-        {/* Actividad de hoy (backend today-summary) — secondary strip */}
+        {/* Actividad de hoy (backend today-summary) — todo día a día */}
         <div style={{ ...lbl(C.faint, 10), marginBottom: 8 }}>ACTIVIDAD DE HOY</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 22 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 22 }}>
           {[
-            {
-              label: 'Minutos',
-              value: minutos ? minutos.minutos_restantes.toLocaleString('es-CO') : '—',
-              sub: minutos ? `de ${minutos.minutos_comprados.toLocaleString('es-CO')} del paquete` : '',
-              // <15% restante = alerta real (ámbar); si no, es un saldo normal (neutro).
-              color: minutos && minutos.minutos_restantes < 0.15 * (minutos.minutos_comprados || 1) ? C.orange : C.ink,
-              pulse: false,
-            },
+            { label: 'Programadas hoy', value: String(todayKpis?.programadas_hoy ?? '—'), sub: 'en cola de hoy', color: C.ink, pulse: false },
             {
               label: 'Llamando ahora',
               value: String(todayKpis?.llamando_ahora ?? llamandoNow),
@@ -1995,10 +2001,18 @@ export function CobranzaTab() {
               pulse: (todayKpis?.llamando_ahora ?? 0) > 0,
             },
             { label: 'Llamadas hoy', value: String(todayKpis?.llamadas_hoy ?? '—'), sub: 'marcadas hoy', color: C.ink, pulse: false },
-            { label: 'Contactados hoy', value: String(todayKpis?.contactados_hoy ?? '—'), sub: '', color: C.ink, pulse: false },
+            { label: 'Contestaron hoy', value: String(todayKpis?.contactados_hoy ?? '—'), sub: 'hablaron con ARIA', color: C.ink, pulse: false },
+            { label: 'Sin contacto hoy', value: String(todayKpis?.sin_contacto_hoy ?? '—'), sub: 'no contestaron hoy', color: C.orange, pulse: false },
             { label: 'Promesas hoy', value: String(todayKpis?.promesas_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.promesas_hoy.monto) : '', color: C.green, pulse: false },
             { label: 'Pagado hoy', value: String(todayKpis?.pagado_hoy.count ?? '—'), sub: todayKpis ? formatCOP(todayKpis.pagado_hoy.monto) : '', color: C.green, pulse: false },
-            { label: 'Sin contacto', value: String(todayKpis?.sin_contacto ?? '—'), sub: 'requiere atención', color: C.orange, pulse: false },
+            {
+              label: 'Minutos disponibles',
+              value: minutos ? minutos.minutos_restantes.toLocaleString('es-CO') : '—',
+              sub: minutos ? `de ${minutos.minutos_comprados.toLocaleString('es-CO')} del paquete` : '',
+              // <15% restante = alerta real (ámbar); si no, es un saldo normal (neutro).
+              color: minutos && minutos.minutos_restantes < 0.15 * (minutos.minutos_comprados || 1) ? C.orange : C.ink,
+              pulse: false,
+            },
           ].map(({ label, value, sub, color, pulse }) => (
             <div key={label} className="card" style={{ padding: '12px 14px' }}>
               <div style={{ ...lbl(C.faint, 9), display: 'flex', alignItems: 'center', gap: 5 }}>

@@ -697,24 +697,43 @@ async def today_summary(current_user: dict = Depends(get_current_user)):
     pg = await db.debtors.aggregate(pagado_pipeline).to_list(length=1)
     pagado_hoy = {"count": pg[0]["n"], "monto": float(pg[0]["monto"] or 0)} if pg else {"count": 0, "monto": 0.0}
 
-    # Sin contacto (accumulated — needs attention, not just today)
-    sin_contacto = await db.debtors.count_documents({**base, "estado": "sin_contacto"})
+    # Sin contacto HOY (día a día, no acumulado — petición DPG doc): deudores que
+    # pasaron a sin_contacto/agotado hoy (el cambio de estado bumpea updated_at).
+    sin_contacto_hoy = await db.debtors.count_documents({
+        **base, "estado": {"$in": ["sin_contacto", "agotado"]},
+        "updated_at": {"$gte": today_start},
+    })
 
     # Llamadas TOTALES marcadas hoy (lo que el dispatcher realmente disparó) —
     # de cobranza_daily_stats, la fuente real; excluye las que fallaron por
     # numero invalido (el scheduler hace $inc -1 en esos casos).
     import pytz as _pytz
-    fecha_local = now.astimezone(_pytz.timezone("America/Bogota")).date().isoformat()
+    tz_bog = _pytz.timezone("America/Bogota")
+    fecha_local = now.astimezone(tz_bog).date().isoformat()
     _ds = await db.cobranza_daily_stats.find_one({"user_id": user_id, "fecha": fecha_local})
     llamadas_hoy = int((_ds or {}).get("llamadas_iniciadas") or 0)
 
+    # Programadas hoy = personas en la cola de HOY (misma semántica que /jornada-hoy:
+    # llamables con cita hasta el fin del día local). Baja a medida que se marcan.
+    # ponytail: no cubre el caso raro de proximo_intento_at=None (planner sin correr);
+    # jornada-hoy sí lo computa, pero en régimen el planner corre cada 15 min.
+    from cobranza.sequence_engine import CALLABLE_ESTADOS
+    fin_hoy_local = now.astimezone(tz_bog).replace(hour=23, minute=59, second=59, microsecond=0)
+    fin_hoy_utc = fin_hoy_local.astimezone(timezone.utc)
+    programadas_hoy = await db.debtors.count_documents({
+        **base, "no_llamar": {"$ne": True}, "excluir_llamada": {"$ne": True},
+        "estado": {"$in": list(CALLABLE_ESTADOS)},
+        "proximo_intento_at": {"$lte": fin_hoy_utc},
+    })
+
     return {
         "llamando_ahora": llamando,
+        "programadas_hoy": programadas_hoy,
         "llamadas_hoy": llamadas_hoy,
         "contactados_hoy": contactados_hoy,
         "promesas_hoy": promesas_hoy,
         "pagado_hoy": pagado_hoy,
-        "sin_contacto": sin_contacto,
+        "sin_contacto_hoy": sin_contacto_hoy,
         "as_of": now,
     }
 
