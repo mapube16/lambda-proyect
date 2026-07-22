@@ -230,13 +230,11 @@ async def run_bot(
     # ── ARIA system prompt ───────────────────────────────────────────────
     tono = estrategia.get("tono", "amable")
 
-    # First name for the in-prompt example molde (the spoken greeting computes
-    # its own `first_name` later; this is just for the prompt's example frase).
-    first_name_for_prompt = (
-        debtor_name.split()[0]
-        if debtor_name and debtor_name != "senor o senora"
-        else ""
-    )
+    # Nombre para identificar/saludar: DOS nombres de pila, SIN género (DPG
+    # 21-jul: "¿hablo con Diana Paola?"). Se usa igual en el molde del prompt y
+    # en el saludo hablado.
+    from cobranza.prompt_builder import nombre_dos as _nombre_dos
+    first_name_for_prompt = _nombre_dos(debtor_name)
 
     # Format monto naturally for speech. The old "{monto/1000:.1f} mil" math
     # produced absurd "962.0 mil pesos" for 962036. Spell the whole integer in
@@ -306,19 +304,18 @@ async def run_bot(
     # tenant config in Mongo (voice_persona), falling back to a generic default;
     # LAYER 3 (runtime) is THIS debtor's data, built here as runtime_block.
     from cobranza.prompt_builder import (
-        resolve_persona, render_greeting, assemble_system_prompt, tratamiento_for,
+        resolve_persona, render_greeting, assemble_system_prompt,
     )
 
-    # Tratamiento por género inferido del primer nombre (Softseguros no lo trae).
-    _trat_rt = tratamiento_for(debtor_name.split()[0] if debtor_name else "")
+    # SIN género (DPG 21-jul): dirigirse por el nombre (dos nombres de pila),
+    # nunca 'señor/señora'.
     runtime_block = (
         "DATOS DE ESTA LLAMADA (datos REALES y exactos de ESTE deudor — usalos directo, "
         "NO necesitas consultar ninguna herramienta para responder sobre su poliza, "
         "saldo o fechas; ya los tienes aqui):\n"
         f"- Nombre: {debtor_name}\n"
-        f"- Tratamiento: {_trat_rt} — dirigete a la persona SIEMPRE como "
-        f"'{_trat_rt}' (y sus pronombres correspondientes). NUNCA uses el "
-        f"tratamiento contrario.\n"
+        f"- Dirigete a la persona por su nombre: '{first_name_for_prompt}'. "
+        f"NUNCA uses 'senor', 'senora', 'don' ni 'dona' — solo el nombre.\n"
         f"- Deuda pendiente: {monto_natural}\n"
         f"- Vencimiento: {vencimiento_str}\n"
         f"{_policy_block}"
@@ -617,7 +614,7 @@ async def run_bot(
             "Usala SIEMPRE que el deudor diga EXPLICITAMENTE que no quiere que lo "
             "vuelvan a llamar ('no me llame mas', 'dejeme en paz', 'no quiero que me "
             "contacten'). Registra la solicitud, detiene TODAS las llamadas futuras a "
-            "este deudor, y alerta al equipo de DPG. Despues di: 'Entiendo senor, asi "
+            "este deudor, y alerta al equipo de DPG. Despues di: 'Entiendo, asi "
             "lo hago. Que este bien.' y llama end_call."
         ),
         properties={},
@@ -795,28 +792,22 @@ async def run_bot(
         logger.info("[VOICE] Gemini activity_handling=NO_INTERRUPTION (barge-in OFF)")
 
     # ── First greeting (spoken as TTS, not LLM-generated) ─────────────
-    # Always address the client as "senor" + first name (per client request),
-    # never "don"/"dona"/"caballero". No diminutives anywhere.
+    # Dirigirse al cliente por su NOMBRE (dos nombres de pila), SIN género —
+    # nunca "señor/señora/don/doña/caballero" (DPG 21-jul). Sin diminutivos.
     # The agent introduces herself as the virtual assistant FROM THE FIRST
     # SECOND, then confirms identity in the same breath (hybrid opener). The
     # greeting text comes from the tenant's persona (Layer 2), so it's
     # per-client and editable without a deploy. The policy detail comes only
     # AFTER the debtor confirms (handled by the prompt flow).
-    first_name = debtor_name.split()[0] if debtor_name and debtor_name != "senor o senora" else ""
-    # Tratamiento por género (tratamiento_for ya importado arriba).
-    # "señora Daniela", no "señor Daniela".
-    _trat = tratamiento_for(first_name)          # "señor" | "señora"
-    _trat_cap = "Señora" if _trat == "señora" else "Señor"
-    _el_trat = ("la " if _trat == "señora" else "el ") + _trat
+    # SIN género (DPG 21-jul): dos nombres de pila, sin 'señor/señora'.
+    first_name = first_name_for_prompt   # ya es nombre_dos(debtor_name)
     if is_inbound:
         # Entrante (§9.4): el saludo pregrabado + Gather YA se presentó y validó
-        # la identidad ANTES de este pipeline. Forzar aquí el saludo saliente
-        # (que termina en "¿Hablo con el señor X?") re-preguntaría la identidad
-        # y contradiría el flujo entrante del prompt. Presentación corta y de
-        # una al recordatorio.
+        # la identidad ANTES de este pipeline. Presentación corta y de una al
+        # recordatorio (sin re-preguntar identidad).
         _brand = persona.get("company_brand") or persona.get("company_name", "")
         first_message = (
-            f"{_trat_cap} {first_name}, le habla {persona.get('agent_name', '')}, "
+            f"{first_name}, le habla {persona.get('agent_name', '')}, "
             f"asistente virtual de {_brand}. Gracias por comunicarse con nosotros."
             if first_name else
             f"Le habla {persona.get('agent_name', '')}, asistente virtual de {_brand}. "
@@ -858,7 +849,7 @@ async def run_bot(
             "retoma tu pregunta de identidad con naturalidad apenas puedas "
             "hablar de nuevo ("
             + (
-                f"'Disculpe, ¿hablo con {_el_trat} {first_name}?'"
+                f"'Disculpe, ¿hablo con {first_name}?'"
                 if first_name else "'Disculpe, ¿con quién tengo el gusto?'"
             )
             + "). Nunca te trabes.\n"
