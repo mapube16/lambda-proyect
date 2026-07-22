@@ -168,6 +168,7 @@ async def get_debtors(
     group: Optional[str] = None,
     min_mora: Optional[int] = None,
     sort: Optional[str] = None,
+    q: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict:
@@ -200,6 +201,17 @@ async def get_debtors(
     # campo (cargas manuales) quedan fuera cuando se pide un umbral > 0.
     if min_mora is not None:
         query["dias_mora"] = {"$gte": min_mora}
+
+    # Búsqueda por texto (el "buscador roto" del doc DPG): nombre, teléfono,
+    # póliza o documento. Regex case-insensitive; se escapan metacaracteres para
+    # que "3.14" o "(57)" no rompan. Cubre TODA la cartera, no solo la página.
+    if q and q.strip():
+        import re as _re
+        rx = {"$regex": _re.escape(q.strip()), "$options": "i"}
+        query["$or"] = [
+            {"nombre": rx}, {"telefono": rx},
+            {"numero_poliza": rx}, {"cliente_documento": rx},
+        ]
 
     # sort="mora" prioriza mayor mora primero (para llamar a los más críticos);
     # por defecto, actividad más reciente. Los docs sin dias_mora caen al final.

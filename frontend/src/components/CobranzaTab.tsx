@@ -1314,6 +1314,8 @@ export function CobranzaTab() {
   const [estadoFilter, setEstadoFilter] = useState<EstadoFilter>(null);
   const [minMora, setMinMora] = useState<number | null>(null);
   const [sortMora, setSortMora] = useState(false);
+  const [search, setSearch] = useState('');
+  const [searchDebounced, setSearchDebounced] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const PAGE_SIZE = 50;
@@ -1348,6 +1350,7 @@ export function CobranzaTab() {
       if (estadoFilter) qs.set('estado', estadoFilter);
       if (minMora != null) qs.set('min_mora', String(minMora));
       if (sortMora) qs.set('sort', 'mora');
+      if (searchDebounced.trim()) qs.set('q', searchDebounced.trim());
       qs.set('page', String(page));
       qs.set('page_size', String(PAGE_SIZE));
       const r = await apiFetch(`/api/cobranza/debtors?${qs.toString()}`);
@@ -1364,12 +1367,18 @@ export function CobranzaTab() {
       }
     } catch { setDebtors([]); setTotal(0); }
     finally { setLoading(false); }
-  }, [estadoFilter, minMora, sortMora, page]);
+  }, [estadoFilter, minMora, sortMora, searchDebounced, page]);
 
   useEffect(() => { fetchDebtors(); }, [fetchDebtors]);
 
-  // Reset to page 1 whenever a filter/sort changes.
-  useEffect(() => { setPage(1); }, [estadoFilter, minMora, sortMora]);
+  // Debounce del buscador (~350 ms) para no pegarle al backend en cada tecla.
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to page 1 whenever a filter/sort/search changes.
+  useEffect(() => { setPage(1); }, [estadoFilter, minMora, sortMora, searchDebounced]);
 
   // ── Autorización de jornada (informe §2.1): el bot NO marca hasta que DPG
   // revisa la lista y autoriza HOY. Sin esto, nada arranca en automático. ──────
@@ -2159,6 +2168,32 @@ export function CobranzaTab() {
                 ))
               )}
             </div>
+          )}
+        </div>
+
+        {/* Buscador por nombre/teléfono/póliza/documento — cubre TODA la cartera */}
+        <div style={{ position: 'relative', marginBottom: 14, maxWidth: 420 }}>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar cliente por nombre, teléfono, póliza o documento…"
+            style={{
+              width: '100%', fontFamily: C.IN, fontSize: 13, color: C.ink,
+              padding: '9px 32px 9px 12px', borderRadius: 10,
+              border: `1px solid ${C.border}`, background: C.s0, outline: 'none',
+            }}
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              title="Limpiar"
+              style={{
+                position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 'none', cursor: 'pointer', color: C.muted,
+                fontSize: 16, lineHeight: 1, padding: 2,
+              }}
+            >×</button>
           )}
         </div>
 

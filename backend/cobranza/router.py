@@ -637,16 +637,17 @@ async def list_debtors(
     group: Optional[str] = Query(None, description="atencion | pendientes | gestion | resueltos"),
     min_mora: Optional[int] = Query(None, ge=0, description="Solo deudores con dias_mora >= este valor"),
     sort: Optional[str] = Query(None, description="'mora' = mayor mora primero; por defecto, más reciente"),
+    q: Optional[str] = Query(None, description="Busca por nombre, teléfono, póliza o documento"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
 ):
-    """Paginated debtors for the authenticated user, filterable by estado, group or min_mora."""
+    """Paginated debtors for the authenticated user, filterable by estado, group, min_mora o búsqueda `q`."""
     user_id = str(current_user["user_id"])
     db = get_db()
     return await get_debtors(
         db, user_id, estado=estado, group=group,
-        min_mora=min_mora, sort=sort, page=page, page_size=page_size,
+        min_mora=min_mora, sort=sort, q=q, page=page, page_size=page_size,
     )
 
 
