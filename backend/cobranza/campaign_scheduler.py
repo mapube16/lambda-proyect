@@ -308,19 +308,17 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
         # no-answer ($0, se reintenta) ANTES de que el buzón conteste. Tunable
         # por env: subir si corta humanos lentos, bajar si aún caen buzones.
         ring_timeout = int(os.getenv("COBRANZA_RING_TIMEOUT_SECS", "18"))
-        # AMD ASÍNCRONO (detección de contestador): el ring_timeout NO frena los
-        # buzones corporativos que contestan rápido (4-17s, observado 16-jul:
-        # GRUPO QUIMBAYA a los 4s). Con async AMD, Twilio conecta al humano de
-        # inmediato (sin demora) y detecta máquina/humano EN PARALELO; si es
-        # máquina, POST a /amd-callback y colgamos. El webhook sync ya cuelga si
-        # AnsweredBy=machine llega ahí. Toggle por COBRANZA_AMD_ENABLED.
+        # AMD SÍNCRONO (DPG 21-jul: reducir costo Twilio/Gemini — cero palabras al
+        # buzón). Twilio clasifica humano/máquina ANTES de entregar el TwiML, así
+        # que el webhook cuelga (AnsweredBy=machine) SIN conectar el stream — ARIA
+        # nunca le habla a un contestador (menos minutos de Media Stream + Gemini).
+        # Costo: ~2-4s de silencio para el humano mientras Twilio clasifica.
+        # (Antes era async: conectaba de una y colgaba en paralelo, pero ARIA
+        # alcanzaba a decir el saludo al buzón.) Toggle por COBRANZA_AMD_ENABLED.
         amd_kwargs = {}
         if os.getenv("COBRANZA_AMD_ENABLED", "true").lower() == "true":
             amd_kwargs = {
                 "machine_detection": "Enable",
-                "async_amd": "true",
-                "async_amd_status_callback": f"{webhook_url}/api/cobranza/voice/amd-callback",
-                "async_amd_status_callback_method": "POST",
                 "machine_detection_timeout": int(os.getenv("COBRANZA_AMD_TIMEOUT_SECS", "12")),
             }
         call = await asyncio.wait_for(

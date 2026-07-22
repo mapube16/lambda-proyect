@@ -328,11 +328,21 @@ def _pago_to_debtor_doc(pago: dict, bucket: str, alias_aseguradoras: Optional[di
     ).strip()
     medio_pago = (pago.get("poliza_medio_pago") or "").strip() or None
     poliza_activa = pago.get("poliza_activa")
+    forma_pago = (pago.get("poliza_forma_pago") or "").strip() or None
+    es_financiada = bool(forma_pago) and "financiad" in forma_pago.lower()
     # excluir_llamada: NO marcar (pero SÍ conservar en cartera) — el dispatcher lo
     # salta. Campo SEPARADO de no_llamar (opt-out manual / estatales) para que un
     # re-sync no pise una exclusión hecha por el equipo. Se recomputa cada sync:
-    # si el cliente deja el débito automático, vuelve a entrar a la cola.
-    excluir = _es_debito_automatico(medio_pago) or (poliza_activa is False)
+    # si el cliente deja el débito / cambia de forma de pago, vuelve a la cola.
+    # Financiada (DPG 21-jul): la prima la cobra la financiera, no DPG → no llamar.
+    if _es_debito_automatico(medio_pago):
+        excluir, motivo = True, "debito_automatico"
+    elif es_financiada:
+        excluir, motivo = True, "financiada"
+    elif poliza_activa is False:
+        excluir, motivo = True, "poliza_inactiva"
+    else:
+        excluir, motivo = False, None
     return {
         # ── idempotency keys ──
         "softseguros_pago_id": pago.get("id"),          # global cuota id (unique)
@@ -363,9 +373,8 @@ def _pago_to_debtor_doc(pago: dict, bucket: str, alias_aseguradoras: Optional[di
         "medio_pago": medio_pago,                       # Débito / PSE / Efectivo / None
         "poliza_activa": bool(poliza_activa) if poliza_activa is not None else None,
         "estado_poliza_codigo": pago.get("poliza_estado_poliza_codigo_generico"),
-        "excluir_llamada": excluir,                     # débito auto o póliza inactiva → no marcar
-        "excluir_motivo": ("debito_automatico" if _es_debito_automatico(medio_pago)
-                           else ("poliza_inactiva" if poliza_activa is False else None)),
+        "excluir_llamada": excluir,                     # débito auto / financiada / inactiva → no marcar
+        "excluir_motivo": motivo,
         "objeto_asegurado": pago.get("poliza_codio_objeto_asegurado"),
         "recaudado": bool(pago.get("recaudado")),
         "status_softseguros": bucket,
