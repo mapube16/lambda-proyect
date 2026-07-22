@@ -464,19 +464,41 @@ async def run_fin_jornada_report(db, user_id: str, fecha: Optional[date] = None)
     muestras = await _muestras_del_dia(db, user_id, start, end)
     qualitative = await synthesize_qualitative(muestras)
 
-    # Consolidado del día de "agotó sus intentos sin contacto" — estas alertas
-    # NO se notifican una por una (DPG 21-jul: "no spamear a todos"); se juntan
-    # acá una sola vez al cierre.
-    agotados_hoy = [a async for a in db[ALERTS_COLLECTION].find(
-        {"user_id": user_id, "tipo": "sin_contacto_agotado", "created_at": {"$gte": start, "$lt": end}},
-        {"debtor_nombre": 1, "debtor_telefono": 1, "numero_poliza": 1},
-    )]
-    agotados_html = "".join(
-        f'<tr><td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#374151">{a.get("debtor_nombre") or "N/D"}</td>'
-        f'<td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#6B7280">{a.get("debtor_telefono") or ""}</td>'
-        f'<td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#6B7280">{a.get("numero_poliza") or ""}</td></tr>'
-        for a in agotados_hoy
-    ) or '<tr><td colspan="3" style="padding:8px 12px;color:#6B7280">Ninguno hoy.</td></tr>'
+    # Consolidado del día: TODAS las alertas que NO se notifican una por una
+    # (DPG 21-jul: correo solo para link/cupón + escalar + ya-pagué; el resto
+    # aquí, una vez al cierre). Se agrupan por tipo.
+    from cobranza.alerts import TIPOS_SOLO_INFORME, _TITULOS
+    consolidadas = {}
+    async for a in db[ALERTS_COLLECTION].find(
+        {"user_id": user_id, "tipo": {"$in": list(TIPOS_SOLO_INFORME)},
+         "created_at": {"$gte": start, "$lt": end}},
+        {"tipo": 1, "debtor_nombre": 1, "debtor_telefono": 1, "numero_poliza": 1, "detalle": 1},
+    ):
+        consolidadas.setdefault(a.get("tipo"), []).append(a)
+    total_consol = sum(len(v) for v in consolidadas.values())
+
+    def _grupo_html(tipo: str, items: list) -> str:
+        filas = "".join(
+            f'<tr><td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#374151">{a.get("debtor_nombre") or "N/D"}</td>'
+            f'<td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#6B7280">{a.get("debtor_telefono") or ""}</td>'
+            f'<td style="padding:5px 12px;border-bottom:1px solid #E7E6E2;color:#6B7280">{a.get("numero_poliza") or ""}</td></tr>'
+            for a in items
+        )
+        return (
+            f'<div style="margin-bottom:14px"><div style="font-size:12.5px;font-weight:700;color:#B45309;margin:0 0 4px">'
+            f'{_TITULOS.get(tipo, tipo)} ({len(items)})</div>'
+            f'<table style="width:100%;border-collapse:collapse;font-size:12px">'
+            f'<tr><th style="text-align:left;padding:4px 12px;color:#6B7280;font-size:10.5px">CLIENTE</th>'
+            f'<th style="text-align:left;padding:4px 12px;color:#6B7280;font-size:10.5px">TELÉFONO</th>'
+            f'<th style="text-align:left;padding:4px 12px;color:#6B7280;font-size:10.5px">PÓLIZA</th></tr>'
+            f'{filas}</table></div>'
+        )
+    # Orden fijo de grupos (agotados primero por volumen)
+    _orden = ["sin_contacto_agotado", "numero_equivocado", "opt_out",
+              "fecha_estimada_pago", "oportunidad_comercial", "llamada_entrante_no_identificada"]
+    consol_html = "".join(
+        _grupo_html(t, consolidadas[t]) for t in _orden if consolidadas.get(t)
+    ) or '<p style="font-size:12.5px;color:#6B7280;margin:0">Ninguna hoy.</p>'
 
     # Programación de MAÑANA (próximo día hábil, misma prioridad del dispatcher)
     from cobranza.call_scheduler import add_business_days
@@ -496,14 +518,9 @@ async def run_fin_jornada_report(db, user_id: str, fecha: Optional[date] = None)
         "</body></html>",
         f"""<div style="max-width:640px;margin:12px auto 0;padding:0 16px">
   <div style="background:#fff;border:1px solid #E7E6E2;border-radius:12px;padding:20px 24px;margin-bottom:12px">
-    <h3 style="color:#B45309;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Agotaron sus intentos sin contacto ({len(agotados_hoy)})</h3>
-    <p style="font-size:12.5px;color:#374151;margin:0 0 10px">Clientes a los que ARIA llamó el máximo de veces sin lograr comunicación hoy — requieren gestión manual de cartera:</p>
-    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-      <tr><th style="text-align:left;padding:5px 12px;color:#6B7280;font-size:11px">CLIENTE</th>
-          <th style="text-align:left;padding:5px 12px;color:#6B7280;font-size:11px">TELÉFONO</th>
-          <th style="text-align:left;padding:5px 12px;color:#6B7280;font-size:11px">PÓLIZA</th></tr>
-      {agotados_html}
-    </table>
+    <h3 style="color:#B45309;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Consolidado del día — seguimiento manual ({total_consol})</h3>
+    <p style="font-size:12.5px;color:#374151;margin:0 0 12px">Casos que NO requieren correo inmediato (agotó intentos, número equivocado, no desea llamadas, fecha estimada de pago, oportunidad comercial). Los urgentes (link/cupón, escalación, ya pagó) llegaron por correo durante el día.</p>
+    {consol_html}
   </div>
   <div style="background:#fff;border:1px solid #E7E6E2;border-radius:12px;padding:20px 24px">
     <h3 style="color:#0F6B64;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px">Jornada de mañana — {_fecha_es(manana)}</h3>

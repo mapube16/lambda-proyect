@@ -149,11 +149,16 @@ async def _notificar_alerta(tipo: str, doc: dict, alertas_cfg: dict, user_id: st
                     logger.warning("[alerts] envío EMAIL falló (intento %d/3, reintenta) tipo=%s", _intento, tipo)
 
 
-# Tipos que NO se notifican en el momento (no spamear): se registran y se
-# consolidan en el informe de fin de jornada. Petición DPG 21-jul: "las alertas
-# de que agotó su máximo de intentos hazlas en un informe aparte al final del
-# día". Se listan en run_fin_jornada_report.
-TIPOS_SOLO_INFORME = {"sin_contacto_agotado"}
+# Tipos que NO mandan correo en el momento (no spamear): se registran (dashboard)
+# y se consolidan en el informe de fin de jornada. Doc DPG 21-jul: "los correos
+# solo serán para link/cupón, escalación a humano, o 'ya pagué'". Todo lo demás
+# va al consolidado. Se listan en run_fin_jornada_report.
+# NOTIFICAN por correo (NO están aquí): solicitud_link_cupon,
+# consulta_fuera_alcance + asesor_humano (escalar), pago_reportado.
+TIPOS_SOLO_INFORME = {
+    "sin_contacto_agotado", "numero_equivocado", "oportunidad_comercial",
+    "fecha_estimada_pago", "opt_out", "llamada_entrante_no_identificada",
+}
 
 
 async def crear_alerta(
