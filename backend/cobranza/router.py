@@ -315,14 +315,23 @@ async def jornada_hoy(
         from cobranza.call_scheduler import add_business_days
         today_local = add_business_days(today_local, 1, extra_fest)
 
+    jornada_q = {
+        "user_id": user_id,
+        "is_active": {"$ne": False},
+        "no_llamar": {"$ne": True},  # entidades estatales / opt-out (informe §2)
+        "excluir_llamada": {"$ne": True},  # débito automático / póliza inactiva
+        "estado": {"$in": list(CALLABLE_ESTADOS)},
+    }
+    if dia == "hoy":
+        # Ley 2300: 1 llamada/persona/día. Los ya marcados hoy NO se pueden volver
+        # a marcar hoy (se retoman mañana) → fuera de la lista de HOY para que no
+        # aparezcan como "programados" y confundan. ($not >= inicio = null/antes de hoy.)
+        inicio_hoy_utc = datetime.now(timezone.utc).astimezone(tz).replace(
+            hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        jornada_q["ultimo_contacto_fecha"] = {"$not": {"$gte": inicio_hoy_utc}}
+
     cursor = db.debtors.find(
-        {
-            "user_id": user_id,
-            "is_active": {"$ne": False},
-            "no_llamar": {"$ne": True},  # entidades estatales / opt-out (informe §2)
-            "excluir_llamada": {"$ne": True},  # débito automático / póliza inactiva
-            "estado": {"$in": list(CALLABLE_ESTADOS)},
-        },
+        jornada_q,
         {
             "nombre": 1, "telefono": 1, "numero_poliza": 1, "ramo_nombre": 1,
             "dias_mora": 1, "edad_cartera": 1, "vencimiento": 1, "fecha_pago": 1,
@@ -713,22 +722,34 @@ async def today_summary(current_user: dict = Depends(get_current_user)):
     _ds = await db.cobranza_daily_stats.find_one({"user_id": user_id, "fecha": fecha_local})
     llamadas_hoy = int((_ds or {}).get("llamadas_iniciadas") or 0)
 
-    # Programadas hoy = personas en la cola de HOY (misma semántica que /jornada-hoy:
-    # llamables con cita hasta el fin del día local). Baja a medida que se marcan.
-    # ponytail: no cubre el caso raro de proximo_intento_at=None (planner sin correr);
-    # jornada-hoy sí lo computa, pero en régimen el planner corre cada 15 min.
+    # Programadas hoy = lo que AÚN se puede marcar hoy (cola de HOY). Clave: se
+    # excluyen los ya marcados hoy — Ley 2300 permite 1 llamada/persona/día, así
+    # que un deudor llamado esta mañana/tarde YA no es marcable hoy aunque su
+    # próximo intento caiga hoy; se retoma mañana. Antes se contaban acá y
+    # confundían (aparecían "programados" pero nunca se marcaban → "todos los días
+    # quedan llamadas en la cola"). `retenidos_ley2300` = esos que esperan a mañana.
+    # ponytail: no cubre proximo_intento_at=None (planner sin correr); en régimen corre c/15min.
     from cobranza.sequence_engine import CALLABLE_ESTADOS
-    fin_hoy_local = now.astimezone(tz_bog).replace(hour=23, minute=59, second=59, microsecond=0)
-    fin_hoy_utc = fin_hoy_local.astimezone(timezone.utc)
-    programadas_hoy = await db.debtors.count_documents({
+    ahora_co = now.astimezone(tz_bog)
+    fin_hoy_utc = ahora_co.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
+    inicio_hoy_co_utc = ahora_co.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    _cola_hoy_base = {
         **base, "no_llamar": {"$ne": True}, "excluir_llamada": {"$ne": True},
         "estado": {"$in": list(CALLABLE_ESTADOS)},
         "proximo_intento_at": {"$lte": fin_hoy_utc},
+    }
+    # $not >= inicio_hoy: matchea null / ausente / anterior a hoy (= NO marcado hoy).
+    programadas_hoy = await db.debtors.count_documents({
+        **_cola_hoy_base, "ultimo_contacto_fecha": {"$not": {"$gte": inicio_hoy_co_utc}},
+    })
+    retenidos_ley2300 = await db.debtors.count_documents({
+        **_cola_hoy_base, "ultimo_contacto_fecha": {"$gte": inicio_hoy_co_utc},
     })
 
     return {
         "llamando_ahora": llamando,
         "programadas_hoy": programadas_hoy,
+        "retenidos_ley2300": retenidos_ley2300,
         "llamadas_hoy": llamadas_hoy,
         "contactados_hoy": contactados_hoy,
         "promesas_hoy": promesas_hoy,

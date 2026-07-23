@@ -1487,6 +1487,7 @@ export function CobranzaTab() {
     pagado_hoy: { count: number; monto: number };
     sin_contacto_hoy: number;
     programadas_hoy: number;
+    retenidos_ley2300?: number;
   } | null>(null);
   const fetchTodaySummary = useCallback(async () => {
     try {
@@ -2025,7 +2026,7 @@ export function CobranzaTab() {
         <div style={{ ...lbl(C.faint, 10), marginBottom: 8 }}>ACTIVIDAD DE HOY</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 22 }}>
           {[
-            { label: 'Programadas hoy', value: String(todayKpis?.programadas_hoy ?? '—'), sub: 'en cola de hoy', color: C.ink, pulse: false },
+            { label: 'Programadas hoy', value: String(todayKpis?.programadas_hoy ?? '—'), sub: todayKpis?.retenidos_ley2300 ? `+${todayKpis.retenidos_ley2300} para mañana (ya marcados hoy · Ley 2300)` : 'marcables hoy', color: C.ink, pulse: false },
             {
               label: 'Llamando ahora',
               value: String(todayKpis?.llamando_ahora ?? llamandoNow),
