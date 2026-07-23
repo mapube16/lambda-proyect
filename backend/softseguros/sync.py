@@ -334,18 +334,15 @@ def _pago_to_debtor_doc(pago: dict, bucket: str, alias_aseguradoras: Optional[di
     ).strip()
     medio_pago = (pago.get("poliza_medio_pago") or "").strip() or None
     poliza_activa = pago.get("poliza_activa")
-    forma_pago = (pago.get("poliza_forma_pago") or "").strip() or None
-    es_financiada = bool(forma_pago) and "financiad" in forma_pago.lower()
     cod_poliza = str(pago.get("poliza_estado_poliza_codigo_generico") or "").strip().zfill(2)
     # excluir_llamada: NO marcar (pero SÍ conservar en cartera) — el dispatcher lo
     # salta. Campo SEPARADO de no_llamar (opt-out manual / estatales) para que un
     # re-sync no pise una exclusión hecha por el equipo. Se recomputa cada sync:
-    # si el cliente deja el débito / cambia de forma de pago, vuelve a la cola.
-    # Financiada (DPG 21-jul): la prima la cobra la financiera, no DPG → no llamar.
+    # si el cliente deja el débito, vuelve a la cola.
+    # Financiadas: DPG las excluyó (21-jul) y luego pidió volver a llamarlas
+    # (23-jul) → ya NO se excluyen por forma_pago.
     if _es_debito_automatico(medio_pago):
         excluir, motivo = True, "debito_automatico"
-    elif es_financiada:
-        excluir, motivo = True, "financiada"
     elif poliza_activa is False:
         excluir, motivo = True, "poliza_inactiva"
     elif cod_poliza in _CODIGO_POLIZA_INACTIVA:
@@ -911,6 +908,11 @@ async def run_cartera_sync(
     ops: list = []
     c = {"scanned": 0, "skipped": 0, "requests": 0, "total": 0}
 
+    # Clientes bloqueados a nivel CLIENTE (todas sus pólizas, no solo una cuota) —
+    # DPG 23-jul. Se marca no_llamar en cada cuota nueva/existente del documento;
+    # así una póliza nueva del cliente entra ya bloqueada.
+    blocked_docs = await debtor_crud.get_no_llamar_clientes(db, user_id)
+
     def _handle(payload: dict):
         for r in payload.get("results", []):
             pid = r.get("id")
@@ -925,6 +927,10 @@ async def run_cartera_sync(
             if bucket not in _COBRABLE_BUCKETS:
                 continue
             doc = _pago_to_debtor_doc(r, bucket, alias)
+            docu = doc.get("cliente_documento")
+            if docu and str(docu) in blocked_docs:
+                doc["no_llamar"] = True
+                doc["no_llamar_motivo"] = "cliente_bloqueado"
             ops.append(debtor_crud.build_softseguros_pago_upsert_op(user_id, pid, doc, pinned=pinned))
 
     created = updated = marked_paid = 0

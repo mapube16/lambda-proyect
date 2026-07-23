@@ -920,6 +920,32 @@ async def pausar_debtor(
     return {"debtor": updated}
 
 
+class NoLlamarClienteBody(BaseModel):
+    bloquear: bool = True
+
+
+@router.post("/debtors/{debtor_id}/no-llamar-cliente")
+async def no_llamar_cliente(
+    debtor_id: str,
+    body: NoLlamarClienteBody,
+    current_user: dict = Depends(get_current_user),
+):
+    """Bloquea (o permite) al CLIENTE COMPLETO — todas sus pólizas/cuotas, no solo
+    esta. Persiste el documento para que las pólizas nuevas del cliente entren ya
+    bloqueadas en el próximo sync (DPG 23-jul)."""
+    user_id = str(current_user["user_id"])
+    db = get_db()
+    from cobranza.debtor_crud import set_cliente_no_llamar
+    debtor = await get_debtor_by_id(db, user_id, debtor_id)
+    if debtor is None:
+        raise HTTPException(status_code=404, detail="Debtor not found")
+    documento = debtor.get("cliente_documento")
+    if not documento:
+        raise HTTPException(status_code=400, detail="Este deudor no tiene documento de cliente")
+    afectados = await set_cliente_no_llamar(db, user_id, documento, body.bloquear)
+    return {"cliente_documento": documento, "bloqueado": body.bloquear, "polizas_afectadas": afectados}
+
+
 @router.post("/debtors/{debtor_id}/reactivar")
 async def reactivar_debtor(
     debtor_id: str,

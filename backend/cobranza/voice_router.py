@@ -793,8 +793,13 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
             new_estado = "sin_contacto"
             _hubo_contacto = False
             logger.info("[PostCall] %s buzón de voz detectado → sin_contacto", result.call_sid)
-        elif result.duration_seconds > 10 and result.user_turn_count > 0:
-            # User spoke — call was answered
+        elif result.user_turn_count >= 2:
+            # Conversó con ARIA: >=2 turnos del deudor = ida y vuelta real. DPG
+            # 23-jul: "si ya contestó y habló con ARIA, no volver a llamar" →
+            # marcar 'contactado' (NO es CALLABLE) cierra la secuencia. Un buzón
+            # da 1 turno largo (el regex de arriba ya lo saca), y un "aló" suelto
+            # sin conversación queda en sin_contacto para reintentar.
+            # ponytail: bar en 2 turnos; bajar a >=1 si quieren cerrar con una sola palabra.
             new_estado = "contactado"
         else:
             new_estado = "sin_contacto"

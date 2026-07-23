@@ -525,6 +525,49 @@ async def list_active_softseguros_pago_ids(db, user_id: str, *, include_pinned: 
     return {d["softseguros_pago_id"] for d in docs if d.get("softseguros_pago_id") is not None}
 
 
+CLIENTE_NO_LLAMAR_COLLECTION = "cobranza_cliente_no_llamar"
+
+
+async def get_no_llamar_clientes(db, user_id: str) -> set:
+    """Documentos de clientes bloqueados a nivel CLIENTE (todas sus pólizas).
+    El sync lo consulta para marcar no_llamar en cada cuota del documento."""
+    cursor = db[CLIENTE_NO_LLAMAR_COLLECTION].find(
+        {"user_id": user_id}, {"cliente_documento": 1})
+    return {str(d["cliente_documento"]) async for d in cursor if d.get("cliente_documento")}
+
+
+async def set_cliente_no_llamar(db, user_id: str, cliente_documento: str, bloquear: bool) -> int:
+    """Bloquea/permite un CLIENTE entero (todas sus cuotas/pólizas). Devuelve
+    cuántos deudores se afectaron. Persiste en una lista para que las pólizas
+    nuevas del cliente entren ya bloqueadas (el sync la consulta)."""
+    documento = str(cliente_documento).strip()
+    if not documento:
+        return 0
+    if bloquear:
+        await db[CLIENTE_NO_LLAMAR_COLLECTION].update_one(
+            {"user_id": user_id, "cliente_documento": documento},
+            {"$setOnInsert": {"user_id": user_id, "cliente_documento": documento,
+                              "created_at": _utcnow()}},
+            upsert=True,
+        )
+        res = await db.debtors.update_many(
+            {"user_id": user_id, "cliente_documento": documento},
+            {"$set": {"no_llamar": True, "no_llamar_motivo": "cliente_bloqueado",
+                      "updated_at": _utcnow()}},
+        )
+    else:
+        await db[CLIENTE_NO_LLAMAR_COLLECTION].delete_one(
+            {"user_id": user_id, "cliente_documento": documento})
+        # Solo libera los que se bloquearon por cliente (no toca estatales/opt-out).
+        res = await db.debtors.update_many(
+            {"user_id": user_id, "cliente_documento": documento,
+             "no_llamar_motivo": "cliente_bloqueado"},
+            {"$set": {"no_llamar": False, "no_llamar_motivo": None,
+                      "updated_at": _utcnow()}},
+        )
+    return int(res.modified_count or 0)
+
+
 async def mark_debtor_paid_by_softseguros_pago_id(db, user_id: str, softseguros_pago_id) -> bool:
     """Soft-mark a cuota-debtor as resolved (paid / fell out of the unpaid window)."""
     result = await db.debtors.update_one(

@@ -434,6 +434,34 @@ function DebtorModal({
     finally { setActing(false); }
   };
 
+  // Bloqueo a nivel CLIENTE: no volver a llamar en NINGUNA de sus pólizas
+  // (durable — pólizas nuevas del cliente entran ya bloqueadas). Distinto del
+  // no_llamar estatal de arriba, que es solo este deudor/póliza.
+  const handleNoLlamarCliente = async () => {
+    const bloqueado = debtor.no_llamar_motivo === 'cliente_bloqueado';
+    const bloquear = !bloqueado;
+    if (bloquear && !window.confirm(`¿No volver a llamar a ${debtor.nombre} en NINGUNA de sus pólizas?`)) return;
+    setActing(true);
+    try {
+      const r = await apiFetch(`/api/cobranza/debtors/${debtor._id}/no-llamar-cliente`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bloquear }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        onAction(debtor._id, { no_llamar: bloquear, no_llamar_motivo: bloquear ? 'cliente_bloqueado' : undefined });
+        showToast(bloquear
+          ? `Cliente excluido — ${d.polizas_afectadas} póliza(s)`
+          : `Cliente reactivado — ${d.polizas_afectadas} póliza(s)`);
+      } else {
+        const e = await r.json().catch(() => ({} as { detail?: string }));
+        showToast(e.detail || 'Error al actualizar');
+      }
+    } catch { showToast('Error de conexión'); }
+    finally { setActing(false); }
+  };
+
   const handleSaveNotas = async () => {
     setSaving(true);
     try {
@@ -753,6 +781,12 @@ function DebtorModal({
                   label: debtor.no_llamar ? '🏛 Permitir llamadas' : '🏛 No llamar (estatal)',
                   onClick: handleToggleNoLlamar,
                   color: debtor.no_llamar ? 'green' : 'gray',
+                },
+                // Bloqueo a nivel CLIENTE (todas sus pólizas), durable — DPG 23-jul.
+                {
+                  label: debtor.no_llamar_motivo === 'cliente_bloqueado' ? '🚫 Permitir cliente' : '🚫 No llamar (cliente)',
+                  onClick: handleNoLlamarCliente,
+                  color: debtor.no_llamar_motivo === 'cliente_bloqueado' ? 'green' : 'gray',
                 },
               ].map(({ label, onClick, color }) => (
                 <Button key={label} onClick={onClick} disabled={acting} variant="light" color={color} size="sm">
