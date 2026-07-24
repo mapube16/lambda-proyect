@@ -104,6 +104,18 @@ def _at_franja_inicio(d: date, horarios: dict) -> datetime:
     return local.astimezone(pytz.utc)
 
 
+def _hora_reintento(last_local_hour: Optional[int], horarios: dict) -> time:
+    """Hora del REINTENTO, alternando mañana↔tarde vs el último intento fallido
+    (DPG 24-jul): a quien no contestó a las 9am se le prueba a las 14:00 y
+    viceversa — la cola va descubriendo el horario en que cada persona SÍ
+    contesta, en vez de insistir siempre a la misma hora.
+    ponytail: alternancia fija con corte a las 13h; si se quiere aprender fino,
+    el paso siguiente es rankear por tasa de contesta histórica por hora."""
+    if last_local_hour is None:
+        return _franja_inicio(horarios)
+    return time(14, 0) if last_local_hour < 13 else _franja_inicio(horarios)
+
+
 def is_within_tenant_franjas(horarios: dict, now_utc: Optional[datetime] = None) -> bool:
     """
     ¿Estamos dentro del horario operativo del TENANT? (La Ley 2300 es el techo
@@ -192,7 +204,20 @@ def compute_proximo_intento(
         target = today if is_business_day(today, extra_fest) \
             else add_business_days(today, 1, extra_fest)
 
-    return ("cita", _at_franja_inicio(target, horarios))
+    # DPG 24-jul: (a) si el último intento fue ese mismo día, la cita salta al
+    # siguiente hábil (Ley 2300: 1 llamada/día — antes quedaba una cita "hoy
+    # 9am" fantasma que el dispatcher filtraba pero ensuciaba la cola del
+    # dashboard); (b) el reintento ALTERNA mañana↔tarde vs el último intento.
+    last = debtor.get("ultimo_contacto_fecha")
+    hora = _franja_inicio(horarios)
+    if isinstance(last, datetime):
+        last_aw = last if last.tzinfo else pytz.utc.localize(last)
+        last_local = last_aw.astimezone(_tz(horarios))
+        if last_local.date() >= target:
+            target = add_business_days(last_local.date(), 1, extra_fest)
+        hora = _hora_reintento(last_local.hour, horarios)
+    local = _tz(horarios).localize(datetime.combine(target, hora))
+    return ("cita", local.astimezone(pytz.utc))
 
 
 def prioridad_informe(debtor: dict, today: date, extra_fest: set) -> tuple:

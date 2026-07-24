@@ -403,7 +403,7 @@ async def reschedule_intento_fallido(db, debtor: dict) -> str:
     import pytz
     from cobranza.config_cache import get_tenant_config
     from cobranza.call_scheduler import add_business_days
-    from cobranza.sequence_engine import _at_franja_inicio, _parse_festivos
+    from cobranza.sequence_engine import _hora_reintento, _parse_festivos, _tz
 
     user_id = str(debtor.get("user_id"))
     cfg = ((await get_tenant_config(user_id)) or {}).get("cobranza") or {}
@@ -425,9 +425,12 @@ async def reschedule_intento_fallido(db, debtor: dict) -> str:
             logger.exception("[reschedule] alerta agotado falló (no fatal)")
         return "agotado"
 
-    hoy = datetime.now(pytz.timezone("America/Bogota")).date()
-    manana = add_business_days(hoy, 1, _parse_festivos(horarios))
-    cita = _at_franja_inicio(manana, horarios)
+    # Alternancia mañana↔tarde (DPG 24-jul): el intento que acaba de fallar fue
+    # AHORA — si fue en la mañana, la cita de mañana va a las 14:00 y viceversa.
+    ahora_local = datetime.now(pytz.timezone("America/Bogota"))
+    manana = add_business_days(ahora_local.date(), 1, _parse_festivos(horarios))
+    hora = _hora_reintento(ahora_local.hour, horarios)
+    cita = _tz(horarios).localize(datetime.combine(manana, hora)).astimezone(pytz.utc)
     await db.debtors.update_one(
         {"_id": debtor["_id"]},
         {"$set": {"estado": "sin_contacto", "intentos": nuevos,
