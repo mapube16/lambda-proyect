@@ -300,14 +300,21 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
         # El SDK de Twilio es sync (HTTP bloqueante): en el event loop congela
         # TODAS las llamadas activas ~0.5-1s por marcación. Igual que initiate-v2.
         loop = asyncio.get_event_loop()
-        # Tope de TIMBRADO (petición DPG: cortar ANTES de entrar a buzón).
-        # No hay señal "va a entrar a buzón"; lo único posible es dejar timbrar
-        # menos que lo que tarda el buzón en contestar. En CO el buzón levanta
-        # ~25-30s; un humano que contesta lo hace en ~4 timbres (~20s). Con
-        # ring_timeout≈20s: si nadie contesta en ese lapso → Twilio marca
-        # no-answer ($0, se reintenta) ANTES de que el buzón conteste. Tunable
-        # por env: subir si corta humanos lentos, bajar si aún caen buzones.
+        # Tope de TIMBRADO (petición DPG 24-jul: evitar buzón A TODA COSTA,
+        # aunque se corte a humanos lentos — un no-answer cuesta $0 y se
+        # reintenta; un buzón factura 1 min sí o sí). Data real (8 días, 1500
+        # llamadas): humano contesta mediana 14s, buzón 15s — se solapan, así
+        # que un timbrado corto corta ~mitad de buzones al precio de reintentar
+        # a los humanos tardíos. Prioridad: tenant_config
+        # (cobranza.volumen.ring_timeout_secs, editable en Mongo SIN deploy) >
+        # env > default.
         ring_timeout = int(os.getenv("COBRANZA_RING_TIMEOUT_SECS", "18"))
+        try:
+            from cobranza.config_cache import get_tenant_config
+            _vol = (((await get_tenant_config(user_id)) or {}).get("cobranza") or {}).get("volumen") or {}
+            ring_timeout = int(_vol.get("ring_timeout_secs") or ring_timeout)
+        except Exception:
+            pass  # config inaccesible → env/default; nunca frenar la marcación
         # AMD SÍNCRONO (DPG 21-jul: reducir costo Twilio/Gemini — cero palabras al
         # buzón). Twilio clasifica humano/máquina ANTES de entregar el TwiML, así
         # que el webhook cuelga (AnsweredBy=machine) SIN conectar el stream — ARIA
