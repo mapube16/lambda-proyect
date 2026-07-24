@@ -1426,6 +1426,25 @@ async def run_bot(
 
     watchdog = _asyncio.create_task(_call_watchdog())
 
+    # ── No-speech watchdog (anti-buzón, DPG 24-jul) ──────────────────────
+    # Un humano que contesta SIEMPRE habla en los primeros segundos (contestó
+    # el teléfono para hablar). Si tras NO_SPEECH_SECS no hay NI UN turno del
+    # deudor, es buzón sin locución (silencio/música) o aire muerto que el AMD
+    # devolvió como 'unknown' — colgar YA. Observado hoy: 9 llamadas 'unknown'
+    # de 61s exactos con 0 turnos → 2 min facturados c/u en vez de 1, más
+    # Gemini y media stream al aire. Los buzones CON locución los corta el
+    # regex _VOICEMAIL_LIVE_RE; este watchdog cubre los mudos.
+    NO_SPEECH_SECS = int(os.getenv("COBRANZA_NO_SPEECH_HANGUP_SECS", "20"))
+
+    async def _no_speech_watchdog():
+        await _asyncio.sleep(NO_SPEECH_SECS)
+        if call_result.user_turn_count == 0:
+            logger.warning("[VOICE] No-speech watchdog: %s sin voz humana tras %ds — colgando (buzón/aire muerto)",
+                           call_sid, NO_SPEECH_SECS)
+            await task.queue_frames([EndFrame()])
+
+    no_speech_wd = _asyncio.create_task(_no_speech_watchdog())
+
     # ── Run ───────────────────────────────────────────────────────────────
     _lap("pipeline built, about to run")
     logger.info("[VOICE] Starting pipeline for call %s...", call_sid)
@@ -1437,6 +1456,7 @@ async def run_bot(
         logger.error("[VOICE] ERROR in pipeline: %s: %s", type(e).__name__, e, exc_info=True)
     finally:
         watchdog.cancel()
+        no_speech_wd.cancel()
 
     call_result.ended_at = time.time()
     call_result.duration_seconds = int(call_result.ended_at - call_result.started_at)
