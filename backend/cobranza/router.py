@@ -706,13 +706,6 @@ async def today_summary(current_user: dict = Depends(get_current_user)):
     pg = await db.debtors.aggregate(pagado_pipeline).to_list(length=1)
     pagado_hoy = {"count": pg[0]["n"], "monto": float(pg[0]["monto"] or 0)} if pg else {"count": 0, "monto": 0.0}
 
-    # Sin contacto HOY (día a día, no acumulado — petición DPG doc): deudores que
-    # pasaron a sin_contacto/agotado hoy (el cambio de estado bumpea updated_at).
-    sin_contacto_hoy = await db.debtors.count_documents({
-        **base, "estado": {"$in": ["sin_contacto", "agotado"]},
-        "updated_at": {"$gte": today_start},
-    })
-
     # Llamadas TOTALES marcadas hoy (lo que el dispatcher realmente disparó) —
     # de cobranza_daily_stats, la fuente real; excluye las que fallaron por
     # numero invalido (el scheduler hace $inc -1 en esos casos).
@@ -721,6 +714,12 @@ async def today_summary(current_user: dict = Depends(get_current_user)):
     fecha_local = now.astimezone(tz_bog).date().isoformat()
     _ds = await db.cobranza_daily_stats.find_one({"user_id": user_id, "fecha": fecha_local})
     llamadas_hoy = int((_ds or {}).get("llamadas_iniciadas") or 0)
+
+    # Sin contacto HOY = marcadas hoy − contestaron hoy. La versión anterior
+    # (estado + updated_at>=hoy) estaba rota: el sync de cartera bumpea
+    # updated_at de TODA la cartera cada corrida → el contador mostraba ~todos
+    # los sin_contacto históricos (550) y "nunca se actualizaba" (DPG 24-jul).
+    sin_contacto_hoy = max(0, llamadas_hoy - contactados_hoy)
 
     # Programadas hoy = lo que AÚN se puede marcar hoy (cola de HOY). Clave: se
     # excluyen los ya marcados hoy — Ley 2300 permite 1 llamada/persona/día, así
