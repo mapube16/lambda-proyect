@@ -141,14 +141,31 @@ def refund_uncontacted_call(db, call_sid: str, *, delay_seconds: int = 20) -> No
             minutos = abs(int(consumo.get("minutos") or 0))
             if minutos <= 0:
                 return
+            # Reembolso PARCIAL (DPG 24-jul: "cóbrales el 35% de las reembolsadas"):
+            # el tenant asume una fracción del minuto de buzón/no-contacto y Landa
+            # el resto. pct = fracción que SE DEVUELVE (DPG: 0.65). Configurable
+            # en tenant_configs.cobranza.facturacion.reembolso_sin_contacto_pct
+            # (Mongo, sin deploy); default 1.0 = reembolso total (comportamiento
+            # histórico, aplica a tenants sin la config).
+            pct = 1.0
+            try:
+                from cobranza.config_cache import get_tenant_config
+                _fact = (((await get_tenant_config(consumo["user_id"])) or {})
+                         .get("cobranza") or {}).get("facturacion") or {}
+                pct = float(_fact.get("reembolso_sin_contacto_pct", 1.0))
+            except Exception:
+                pass
+            minutos_dev = round(minutos * pct, 2)
+            if minutos_dev <= 0:
+                return
             await db[COLLECTION].insert_one({
-                "user_id": consumo["user_id"], "tipo": "ajuste", "minutos": minutos,
+                "user_id": consumo["user_id"], "tipo": "ajuste", "minutos": minutos_dev,
                 "refund_call_sid": call_sid, "debtor_id": consumo.get("debtor_id"),
-                "nota": "reembolso: llamada sin contacto (buzón / no contestó)",
+                "nota": f"reembolso {int(pct*100)}%: llamada sin contacto (buzón / no contestó)",
                 "actor": "sistema", "created_at": _utcnow(),
             })
-            logger.info("[minutes] reembolso user=%s call=%s +%dmin (sin contacto)",
-                        consumo["user_id"], call_sid, minutos)
+            logger.info("[minutes] reembolso user=%s call=%s +%.2fmin (%d%% de %dmin sin contacto)",
+                        consumo["user_id"], call_sid, minutos_dev, int(pct * 100), minutos)
         except Exception:
             logger.exception("[minutes] reembolso falló call=%s", call_sid)
 
