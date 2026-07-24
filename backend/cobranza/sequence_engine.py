@@ -104,6 +104,102 @@ def _at_franja_inicio(d: date, horarios: dict) -> datetime:
     return local.astimezone(pytz.utc)
 
 
+# ── Escalonado de la jornada (tandas a lo largo del día) ───────────────────────
+# El planner NO apila todas las citas al inicio de la franja (antes: todos a las
+# 9:00 → el dispatcher los drenaba de corrido en la mañana y "quemaba" el día
+# temprano). En su lugar reparte los intentos de HOY en TANDAS: N llamadas cada
+# M minutos desde una hora de arranque, fluyendo por las franjas del tenant y
+# saltando los huecos (almuerzo). Así se cubre toda la jornada.
+# Parámetros por tenant en cobranza.volumen (editable sin deploy):
+#   hora_inicio_jornada  (default "11:00")  — desde cuándo arranca el escalonado
+#   llamadas_por_tanda   (default 5)         — cuántas comparten cada slot
+#   intervalo_tandas_min (default 5)         — minutos entre tandas
+DEFAULT_HORA_INICIO_JORNADA = "11:00"
+DEFAULT_LLAMADAS_POR_TANDA = 5
+DEFAULT_INTERVALO_TANDAS_MIN = 5
+
+
+def _hhmm_to_min(s: str, fallback: int) -> int:
+    try:
+        h, m = str(s).split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return fallback
+
+
+def _franjas_del_dia(d: date, horarios: dict) -> list:
+    """
+    Franjas operativas del tenant para el día `d`, como pares (inicio_min,
+    fin_min) locales, ordenadas. Respeta sábado (franjas_sabado), días hábiles
+    del tenant y festivos (nacionales + del tenant). [] si el día no es operativo.
+    """
+    horarios = horarios or {}
+    if d in _parse_festivos(horarios):
+        return []
+    iso_wd = d.weekday() + 1  # 1=lunes … 7=domingo
+    dias = horarios.get("dias_habiles") or [1, 2, 3, 4, 5]
+    if iso_wd == 6:
+        franjas = horarios.get("franjas_sabado") or []
+    elif iso_wd in dias:
+        franjas = horarios.get("franjas") or DEFAULT_FRANJAS
+    else:
+        return []
+    if not is_business_day(d) and iso_wd != 6:
+        return []  # festivo nacional en día hábil
+    out = []
+    for fr in franjas:
+        try:
+            a = _hhmm_to_min(fr[0], -1)
+            b = _hhmm_to_min(fr[1], -1)
+            if 0 <= a < b:
+                out.append((a, b))
+        except Exception:
+            continue
+    return sorted(out)
+
+
+def _stagger_slot(d: date, idx: int, horarios: dict, volumen: dict) -> datetime:
+    """
+    Slot escalonado (datetime UTC) para el intento de índice `idx` (0-based, en
+    orden de prioridad) dentro del día `d`. La tanda `idx // tanda` se cita
+    `intervalo` minutos después de la anterior, arrancando en hora_inicio_jornada
+    y fluyendo por las franjas del día (salta el hueco de almuerzo). Si el volumen
+    se pasa del cierre, se satura al final de la última franja (esos sobrantes los
+    retoma el rescate / el día siguiente). Fallback a inicio de franja si el día
+    no tiene franjas operativas (no debería ocurrir: el dispatcher ya filtra).
+    """
+    volumen = volumen or {}
+    tanda = max(1, int(volumen.get("llamadas_por_tanda") or DEFAULT_LLAMADAS_POR_TANDA))
+    intervalo = max(1, int(volumen.get("intervalo_tandas_min") or DEFAULT_INTERVALO_TANDAS_MIN))
+    hora_inicio = _hhmm_to_min(
+        volumen.get("hora_inicio_jornada") or DEFAULT_HORA_INICIO_JORNADA, 11 * 60
+    )
+
+    franjas = _franjas_del_dia(d, horarios)
+    if not franjas:
+        return _at_franja_inicio(d, horarios)
+
+    # Ventanas recortadas para no arrancar antes de hora_inicio_jornada.
+    ventanas = [(max(a, hora_inicio), b) for a, b in franjas if max(a, hora_inicio) < b]
+    if not ventanas:
+        ventanas = franjas  # hora_inicio cae tras el cierre → usar franjas tal cual
+
+    offset = (idx // tanda) * intervalo  # minutos dentro de la jornada operativa
+    minuto = None
+    rem = offset
+    for a, b in ventanas:
+        dur = b - a
+        if rem < dur:
+            minuto = a + rem
+            break
+        rem -= dur
+    if minuto is None:
+        minuto = ventanas[-1][1] - 1  # excede la capacidad del día → final del cierre
+
+    local = _tz(horarios).localize(datetime.combine(d, time(minuto // 60, minuto % 60)))
+    return local.astimezone(pytz.utc)
+
+
 def is_within_tenant_franjas(horarios: dict, now_utc: Optional[datetime] = None) -> bool:
     """
     ¿Estamos dentro del horario operativo del TENANT? (La Ley 2300 es el techo
@@ -233,13 +329,52 @@ async def _tenant_ids(db) -> list:
 
 # ── Job 1: planner ─────────────────────────────────────────────────────────────
 
+async def _aplicar_cita(db, debtor: dict, at: datetime) -> None:
+    """Persiste proximo_intento_at + numero de intento en el deudor."""
+    await db.debtors.update_one(
+        {"_id": debtor["_id"]},
+        {"$set": {
+            "proximo_intento_at": at,
+            "proximo_intento_numero": int(debtor.get("intentos") or 0) + 1,
+            "updated_at": datetime.now(timezone.utc),
+        }},
+    )
+
+
+async def _citas_hoy_count(db, user_id: str, tz, today_local: date) -> int:
+    """Cuántos deudores del tenant ya tienen cita para HOY (para no re-escalonar
+    encima de las tandas ya asignadas en ticks anteriores)."""
+    day_start = tz.localize(datetime.combine(today_local, time(0, 0))).astimezone(pytz.utc)
+    day_end = day_start + timedelta(days=1)
+    return await db.debtors.count_documents({
+        "user_id": user_id,
+        "estado": {"$in": list(CALLABLE_ESTADOS)},
+        "proximo_intento_at": {"$gte": day_start, "$lt": day_end},
+    })
+
+
 async def plan_intentos_job() -> None:
-    """Asigna proximo_intento_at a los deudores elegibles sin cita (por tenant)."""
+    """
+    Asigna proximo_intento_at a los deudores elegibles sin cita (por tenant).
+
+    Las citas que caen HOY se ESCALONAN en tandas a lo largo de la jornada
+    (ver _stagger_slot): en orden de prioridad del informe, N por tanda cada M
+    minutos desde hora_inicio_jornada, para cubrir todos los horarios del día en
+    vez de apilarse al inicio de la franja. Las citas de días futuros y las
+    reagendadas por el cliente conservan su hora exacta (inicio de franja / la
+    pedida por el cliente).
+    """
     db = get_db()
     for user_id in await _tenant_ids(db):
         try:
             cfg = await _cobranza_cfg(user_id)
-            timings, horarios = cfg.get("timings") or {}, cfg.get("horarios") or {}
+            timings = cfg.get("timings") or {}
+            horarios = cfg.get("horarios") or {}
+            volumen = cfg.get("volumen") or {}
+            tz = _tz(horarios)
+            today_local = datetime.now(tz).date()
+            extra_fest = _parse_festivos(horarios)
+
             cursor = db.debtors.find({
                 "user_id": user_id,
                 "is_active": {"$ne": False},
@@ -251,9 +386,12 @@ async def plan_intentos_job() -> None:
                 "estado": {"$in": list(CALLABLE_ESTADOS)},
                 "proximo_intento_at": None,
             })
-            planned = agotados = 0
+
+            agotados = 0
+            exactas = []   # (debtor, at) — futuras o reagendadas: hora tal cual
+            hoy = []       # debtors cuya cita cae hoy → escalonar en tandas
             async for debtor in cursor:
-                verdict, at = compute_proximo_intento(debtor, timings, horarios)
+                verdict, at = compute_proximo_intento(debtor, timings, horarios, today=today_local)
                 if verdict == "agotado":
                     await db.debtors.update_one(
                         {"_id": debtor["_id"]},
@@ -265,18 +403,30 @@ async def plan_intentos_job() -> None:
                         await crear_alerta(db, user_id, debtor, "sin_contacto_agotado")
                     except Exception:
                         logger.exception("[plan] alerta sin_contacto_agotado falló (no fatal)")
-                elif verdict == "cita":
-                    await db.debtors.update_one(
-                        {"_id": debtor["_id"]},
-                        {"$set": {
-                            "proximo_intento_at": at,
-                            "proximo_intento_numero": int(debtor.get("intentos") or 0) + 1,
-                            "updated_at": datetime.now(timezone.utc),
-                        }},
-                    )
-                    planned += 1
+                    continue
+                if verdict != "cita":
+                    continue
+                # Cita pedida por el cliente (reagendado): hora exacta, no se escalona.
+                es_reagendado = debtor.get("estado") == "reagendado" and debtor.get("fecha_reagendada")
+                if not es_reagendado and at.astimezone(tz).date() <= today_local:
+                    hoy.append(debtor)
+                else:
+                    exactas.append((debtor, at))
+
+            for debtor, at in exactas:
+                await _aplicar_cita(db, debtor, at)
+
+            if hoy:
+                hoy.sort(key=lambda d: prioridad_informe(d, today_local, extra_fest))
+                base_idx = await _citas_hoy_count(db, user_id, tz, today_local)
+                for i, debtor in enumerate(hoy):
+                    at = _stagger_slot(today_local, base_idx + i, horarios, volumen)
+                    await _aplicar_cita(db, debtor, at)
+
+            planned = len(exactas) + len(hoy)
             if planned or agotados:
-                logger.info("[plan] tenant=%s citas=%d agotados=%d", user_id, planned, agotados)
+                logger.info("[plan] tenant=%s citas=%d (escalonadas_hoy=%d) agotados=%d",
+                            user_id, planned, len(hoy), agotados)
         except Exception:
             logger.exception("[plan] tenant=%s failed", user_id)
 

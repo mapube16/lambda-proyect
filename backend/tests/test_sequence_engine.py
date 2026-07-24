@@ -10,6 +10,8 @@ import pytz
 
 from cobranza.sequence_engine import (
     DEFAULT_FRANJAS,
+    _franjas_del_dia,
+    _stagger_slot,
     compute_proximo_intento,
     is_within_tenant_franjas,
     prioridad_informe,
@@ -113,6 +115,48 @@ def test_prioridad_mora_fresca_ignora_dias_mora_stale():
     reciente = {"vencimiento": "2026-07-10", "dias_mora": 999}  # real = 4
     orden = sorted([reciente, stale], key=lambda d: prioridad_informe(d, hoy, set()))
     assert orden == [stale, reciente]
+
+
+# ── escalonado de la jornada en tandas ──────────────────────────────────────────
+
+def test_stagger_arranca_en_hora_inicio_y_reparte_en_tandas():
+    # Defaults: 11:00, tanda 5, cada 5 min. Los primeros 5 → 11:00, los 5
+    # siguientes → 11:05, etc. Franjas default [09-12 / 14-16].
+    assert _co(_stagger_slot(HOY, 0, {}, {})) == (HOY, "11:00")
+    assert _co(_stagger_slot(HOY, 4, {}, {})) == (HOY, "11:00")   # misma tanda
+    assert _co(_stagger_slot(HOY, 5, {}, {})) == (HOY, "11:05")   # tanda 2
+    assert _co(_stagger_slot(HOY, 9, {}, {})) == (HOY, "11:05")
+    assert _co(_stagger_slot(HOY, 10, {}, {})) == (HOY, "11:10")  # tanda 3
+
+
+def test_stagger_salta_el_hueco_de_almuerzo():
+    # Desde 11:00 quedan 60 min en la franja de la mañana (11:00–12:00) = 12
+    # tandas de 5 min (índices de tanda 0..11, hasta 11:55). La tanda 12 (offset
+    # 60 min) debe caer al inicio de la franja de la tarde: 14:00, no 12:00.
+    # idx de tanda 12 → idx de deudor = 12 * tanda(5) = 60.
+    assert _co(_stagger_slot(HOY, 60, {}, {})) == (HOY, "14:00")
+    assert _co(_stagger_slot(HOY, 65, {}, {})) == (HOY, "14:05")
+
+
+def test_stagger_parametros_configurables_por_tenant():
+    vol = {"hora_inicio_jornada": "10:00", "llamadas_por_tanda": 2, "intervalo_tandas_min": 10}
+    hor = {"franjas": [["08:00", "18:00"]]}
+    assert _co(_stagger_slot(HOY, 0, hor, vol)) == (HOY, "10:00")
+    assert _co(_stagger_slot(HOY, 1, hor, vol)) == (HOY, "10:00")  # tanda de 2
+    assert _co(_stagger_slot(HOY, 2, hor, vol)) == (HOY, "10:10")  # +10 min
+
+
+def test_stagger_satura_al_cierre_si_se_pasa_el_volumen():
+    # Franja única corta: 11:00–11:10 (10 min) → 2 tandas (11:00, 11:05). Un
+    # índice que se pasa se satura al final del cierre (11:09), no desborda al día.
+    hor = {"franjas": [["11:00", "11:10"]]}
+    assert _co(_stagger_slot(HOY, 1000, hor, {})) == (HOY, "11:09")
+
+
+def test_franjas_del_dia_respeta_festivo_y_finde():
+    assert _franjas_del_dia(HOY, {}) == [(540, 720), (840, 960)]  # 09-12 / 14-16
+    assert _franjas_del_dia(date(2026, 7, 20), {}) == []          # lunes festivo
+    assert _franjas_del_dia(date(2026, 7, 11), {}) == []          # sábado sin franja
 
 
 # ── franjas del tenant ─────────────────────────────────────────────────────────
