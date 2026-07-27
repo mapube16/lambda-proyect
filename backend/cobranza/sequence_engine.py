@@ -355,13 +355,34 @@ async def dispatch_intentos_job() -> None:
             if cupo <= 0:
                 continue
 
-            # Concurrencia global (mismo criterio que initiate-v2; F2 lo refina).
+            # Ritmo por HORA (petición DPG: ~30 llamadas/hora). Reparte suave a lo
+            # largo de la hora en vez de vaciar el cupo de golpe: en el minuto m se
+            # permiten hasta por_hora*(m+dispatch)/60 marcaciones acumuladas — un
+            # "token-bucket por tiempo transcurrido" que se autocorrige si un tick
+            # se salta y NUNCA pasa del tope. Contador por hora en
+            # cobranza_hourly_stats. Editable sin deploy en volumen.llamadas_por_hora.
             import os
+            por_hora = int(volumen.get("llamadas_por_hora") or 30)
+            now_local = now.astimezone(_tz(horarios))
+            hora_local = now_local.hour
+            dispatch_min = int(os.getenv("COBRANZA_DISPATCH_INTERVAL_MIN", "2"))
+            hstats = await db.cobranza_hourly_stats.find_one(
+                {"user_id": user_id, "fecha": fecha, "hora": hora_local})
+            hechas_hora = int((hstats or {}).get("llamadas_iniciadas") or 0)
+            permitidas = min(
+                por_hora,
+                -(-por_hora * (now_local.minute + dispatch_min) // 60),  # ceil
+            )
+            cupo_hora = permitidas - hechas_hora
+            if cupo_hora <= 0:
+                continue
+
+            # Concurrencia global (mismo criterio que initiate-v2; F2 lo refina).
             cutoff = now - timedelta(minutes=10)
             active = await db.cobranza_calls_in_progress.count_documents(
                 {"started_at": {"$gte": cutoff}}
             )
-            slots = min(cupo, int(os.getenv("MAX_CONCURRENT_CALLS", "5")) - active)
+            slots = min(cupo, cupo_hora, int(os.getenv("MAX_CONCURRENT_CALLS", "5")) - active)
             if slots <= 0:
                 continue
 
@@ -392,8 +413,13 @@ async def dispatch_intentos_job() -> None:
                     {"$inc": {"llamadas_iniciadas": 1}},
                     upsert=True,
                 )
+                await db.cobranza_hourly_stats.update_one(
+                    {"user_id": user_id, "fecha": fecha, "hora": hora_local},
+                    {"$inc": {"llamadas_iniciadas": 1}},
+                    upsert=True,
+                )
                 asyncio.create_task(safe_initiate_call(debtor, user_id))
-            logger.info("[dispatch] tenant=%s marcados=%d (cupo restante=%d, en hora=%d)",
-                        user_id, min(slots, len(due)), cupo, len(due))
+            logger.info("[dispatch] tenant=%s marcados=%d (cupo dia=%d, cupo hora=%d, en hora=%d)",
+                        user_id, min(slots, len(due)), cupo, cupo_hora, len(due))
         except Exception:
             logger.exception("[dispatch] tenant=%s failed", user_id)
