@@ -124,6 +124,11 @@ def _today_bogota() -> str:
     return datetime.now(pytz.timezone("America/Bogota")).date().isoformat()
 
 
+def _hora_bogota() -> int:
+    import pytz
+    return datetime.now(pytz.timezone("America/Bogota")).hour
+
+
 async def is_jornada_authorized(user_id: str) -> bool:
     db = get_db()
     doc = await db.cobranza_runtime.find_one({"_id": f"{_JORNADA_DOC_PREFIX}:{user_id}"})
@@ -296,6 +301,10 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
                 {"user_id": user_id, "fecha": _today_bogota()},
                 {"$inc": {"llamadas_iniciadas": -1}},   # deshacer el $inc del despachador
             )
+            await db.cobranza_hourly_stats.update_one(
+                {"user_id": user_id, "fecha": _today_bogota(), "hora": _hora_bogota()},
+                {"$inc": {"llamadas_iniciadas": -1}},   # idem cupo/hora
+            )
             return
         # El SDK de Twilio es sync (HTTP bloqueante): en el event loop congela
         # TODAS las llamadas activas ~0.5-1s por marcación. Igual que initiate-v2.
@@ -382,6 +391,10 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
         # Deshacer el $inc del despachador — contó una marcación que no ocurrió.
         await db.cobranza_daily_stats.update_one(
             {"user_id": user_id, "fecha": _today_bogota()},
+            {"$inc": {"llamadas_iniciadas": -1}},
+        )
+        await db.cobranza_hourly_stats.update_one(
+            {"user_id": user_id, "fecha": _today_bogota(), "hora": _hora_bogota()},
             {"$inc": {"llamadas_iniciadas": -1}},
         )
 
