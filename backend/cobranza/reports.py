@@ -7,10 +7,11 @@ El reporte diario se arma con datos 100% reales de este repo:
     gpt-5.4-nano — a partir de transcripts/alertas reales del día; si no hay
     material real, NO se inventa nada, se devuelve "sin datos suficientes").
 
-Una métrica del informe (comprobantes de pago recibidos) vive en el canal de
-WhatsApp — landa-agent-service, otro repo — y NO es visible desde aquí. Se
-reporta explícitamente como "no disponible en este canal" en vez de inventar
-un número; el equipo la revisa en Chat Landa Tech como ya hace hoy.
+Las métricas del canal de WhatsApp (comprobantes recibidos, escalaciones,
+respuestas a plantilla…) viven en landa-agent-service y se traen por HTTP
+(GET /metrics/daily, mismo token del puente Fase 6) para que el cliente reciba
+UN solo correo con voz + WhatsApp. Si ese servicio no responde, el reporte se
+envía igual con la nota "no disponible en este canal" (fail-open).
 
 Entrega: HTML renderizado en Python (tabla, sin dependencias de Node/React) +
 envío por MailerSend (MAILERSEND_API_KEY, mismo cliente que ya usa mailer.py
@@ -31,8 +32,43 @@ logger = logging.getLogger("cobranza.reports")
 
 COLOMBIA_TZ = pytz.timezone("America/Bogota")
 
-# El único hueco real del informe §12 que no podemos ver desde este repo.
+# Fallback cuando el canal de WhatsApp no responde (antes era el estado normal).
 _COMPROBANTES_NOTA = "No disponible en este canal — se revisa en Chat Landa Tech (WhatsApp)."
+
+
+async def _fetch_wa_metrics(fecha: date) -> Optional[dict]:
+    """
+    Métricas del canal WhatsApp para `fecha` (GET /metrics/daily del WA service).
+    Mismo día calendario Colombia y mismo bearer que el puente Fase 6.
+
+    Fail-open: cualquier fallo (sin config, timeout, 4xx/5xx, JSON raro) devuelve
+    None y el reporte sale con la nota de "no disponible" — un WA caído nunca
+    debe impedir el envío del reporte de voz.
+    """
+    base_url = os.getenv("LAMBDA_PROYECT_BASE_URL", "").rstrip("/")
+    token = os.getenv("LAMBDA_PROYECT_INTERNAL_TOKEN", "")
+    if not base_url or not token:
+        logger.info("[reports] canal WA no configurado — métricas de WhatsApp omitidas")
+        return None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{base_url}/metrics/daily",
+                params={"day": fecha.isoformat()},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            r.raise_for_status()
+            data = r.json()
+            if not isinstance(data, dict):
+                return None
+            logger.info("[reports] métricas WA %s: comprobantes=%s escalaciones=%s",
+                        fecha, data.get("comprobantes_recibidos"), data.get("escalaciones"))
+            return data
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[reports] métricas WA no disponibles (%s) — reporte sigue",
+                       type(exc).__name__)
+        return None
 
 
 def _utcnow() -> datetime:
@@ -120,7 +156,10 @@ async def aggregate_metrics(db, user_id: str, start: datetime, end: datetime, fe
     """Los 10 puntos cuantitativos del informe §12 que sí podemos calcular aquí."""
     llamadas = await _contar_llamadas(db, user_id, start, end)
     alertas = await _contar_alertas(db, user_id, start, end)
+    wa = await _fetch_wa_metrics(fecha_ref)
     return {
+        # Canal WhatsApp (None si el WA service no respondió → nota en el HTML).
+        "wa": wa,
         "llamadas_programadas": await _contar_programadas(db, user_id, fecha_ref),
         "llamadas_realizadas": llamadas["realizadas"],
         "llamadas_contestadas": llamadas["contestadas"],
@@ -129,7 +168,8 @@ async def aggregate_metrics(db, user_id: str, start: datetime, end: datetime, fe
         "links_solicitados": alertas["links_solicitados"],
         "cupones_solicitados": alertas["cupones_solicitados"],
         "pago_reportado": alertas["pago_reportado"],
-        "comprobantes_recibidos": None,  # ver _COMPROBANTES_NOTA
+        # Vive en el canal WhatsApp; None solo si el WA service no respondió.
+        "comprobantes_recibidos": (wa or {}).get("comprobantes_recibidos"),
         "reagendamientos": await _contar_reagendamientos(db, user_id, start, end),
         "opt_outs": alertas["opt_outs"],
         "escalados": alertas["escalados"],
@@ -241,7 +281,9 @@ def render_daily_html(metrics: dict, qualitative: dict, fecha: date, tenant_nomb
         ("Solicitaron link de pago", metrics["links_solicitados"]),
         ("Solicitaron cupón de pago", metrics["cupones_solicitados"]),
         ("Informaron que ya pagaron", metrics["pago_reportado"]),
-        ("Comprobantes recibidos", _COMPROBANTES_NOTA),
+        ("Comprobantes recibidos",
+         _COMPROBANTES_NOTA if metrics.get("comprobantes_recibidos") is None
+         else metrics["comprobantes_recibidos"]),
         ("Pidieron ser recontactados después", metrics["reagendamientos"]),
         ("No desean más llamadas", metrics["opt_outs"]),
         ("Casos escalados", len(metrics["escalados"])),
@@ -257,6 +299,36 @@ def render_daily_html(metrics: dict, qualitative: dict, fecha: date, tenant_nomb
         f'<li style="margin-bottom:4px"><b>{e["nombre"] or "N/D"}</b>: {e["motivo"] or "sin detalle"}</li>'
         for e in metrics["escalados"]
     ) or "<li>Ninguno hoy.</li>"
+    # Sección "Canal WhatsApp": solo si el WA service respondió (si no, se omite
+    # entera — mejor nada que una tabla de ceros que parezca operación muerta).
+    wa = metrics.get("wa") or {}
+    wa_html = ""
+    if wa:
+        wa_filas = [
+            ("Conversaciones abiertas en WhatsApp", wa.get("conversaciones_total", 0)),
+            ("Respondieron la plantilla de seguimiento", wa.get("respuestas_a_plantilla", 0)),
+            ("Tasa de respuesta a la plantilla", _fmt_pct(wa.get("tasa_respuesta_plantilla") or 0)),
+            ("Comprobantes recibidos", wa.get("comprobantes_recibidos", 0)),
+            ("Pagos aprobados por cartera", wa.get("pagos_aprobados", 0)),
+            ("Escalaciones a una persona", wa.get("escalaciones", 0)),
+            ("Casos cedidos desde una llamada", wa.get("handoffs_de_voz", 0)),
+            ("· Sin responder aún", wa.get("conv_sin_respuesta", 0)),
+            ("· En conversación con ARIA", wa.get("conv_en_conversacion", 0)),
+            ("· Con una persona del equipo", wa.get("conv_escaladas", 0)),
+            ("· Con comprobante enviado", wa.get("conv_con_comprobante", 0)),
+            ("· Con promesa de pago", wa.get("conv_promesa_pago", 0)),
+        ]
+        wa_filas_html = "".join(
+            f'<tr><td style="padding:8px 12px;border-bottom:1px solid #E7E6E2;color:#4B5563">{k}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #E7E6E2;font-weight:700;color:#16161D;text-align:right">{v}</td></tr>'
+            for k, v in wa_filas
+        )
+        wa_html = (
+            '<h3 style="color:#234876;font-size:13px;text-transform:uppercase;'
+            'letter-spacing:.06em;margin:22px 0 8px">Canal WhatsApp</h3>'
+            f'<table style="width:100%;border-collapse:collapse;font-size:13px">{wa_filas_html}</table>'
+        )
+
     consultas_html = "".join(f"<li>{c}</li>" for c in qualitative["principales_consultas"]) \
         or "<li>Sin datos suficientes para identificar patrones hoy.</li>"
     incidencias_html = "".join(f"<li>{c}</li>" for c in qualitative["incidencias"]) \
@@ -270,6 +342,8 @@ def render_daily_html(metrics: dict, qualitative: dict, fecha: date, tenant_nomb
   </div>
   <div style="background:#fff;border:1px solid #E7E6E2;border-top:none;border-radius:0 0 12px 12px;padding:20px 24px">
     <table style="width:100%;border-collapse:collapse;font-size:13px">{filas_html}</table>
+
+    {wa_html}
 
     <h3 style="color:#234876;font-size:13px;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px">Casos escalados y motivo</h3>
     <ul style="margin:0;padding-left:18px;font-size:13px;color:#374151">{escalados_html}</ul>
