@@ -965,6 +965,15 @@ async def run_cartera_sync(
         except Exception:  # noqa: BLE001
             logger.exception("clasificacion estatal fallo (no fatal) user_id=%s", user_id)
 
+        # Contactos de Chatwoot: tras cada sync, poblar nombre/documento/pólizas
+        # en los contactos del equipo (si CHATWOOT_URL/API_KEY están en el env).
+        # Best-effort — un fallo jamás tumba el sync.
+        try:
+            from softseguros.chatwoot_contacts import sync_chatwoot_contacts
+            await sync_chatwoot_contacts(db, user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("chatwoot contacts sync fallo (no fatal) user_id=%s", user_id)
+
         now = _utcnow()
         await db.softseguros_sync_state.update_one(
             {"user_id": user_id},

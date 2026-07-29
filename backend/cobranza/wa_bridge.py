@@ -70,6 +70,14 @@ async def handoff_no_answer(db, debtor: dict) -> dict:
         "cliente_nombre": str(debtor.get("nombre") or "Cliente")[:80] or "Cliente",
         "numero_poliza": str(debtor.get("numero_poliza") or "")[:40] or "N/A",
     }
+    # Con documento, WA resuelve la póliza en SoftSeguros y siembra el hilo:
+    # el cliente que responde a la plantilla entra DIRECTO a respuestas con
+    # contexto (nombre + póliza de la llamada) sin que le pidan la cédula.
+    # Sin documento, el saludo es genérico + pide identificación (decisión
+    # DPG 29-jul: el bot ya debe saber de qué póliza era la llamada).
+    documento = str(debtor.get("cliente_documento") or debtor.get("documento") or "").strip()
+    if documento:
+        body["documento"] = documento
     try:
         import httpx
         async with httpx.AsyncClient(timeout=15) as client:
