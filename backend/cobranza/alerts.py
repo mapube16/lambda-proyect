@@ -113,7 +113,12 @@ async def _notificar_alerta(tipo: str, doc: dict, alertas_cfg: dict, user_id: st
     nunca lanza, nunca bloquea la llamada en curso."""
     if "whatsapp_responsable" in (alertas_cfg.get("canales") or []) and doc.get("responsable_telefono"):
         try:
-            from services.notifications import send_whatsapp_text
+            # WhatsApp OFICIAL (Meta Cloud API) — reemplaza el puente Baileys/Twilio
+            # interino (era "mientras salía Meta"). ponytail: texto libre, solo
+            # entrega dentro de la ventana de 24h del responsable; si hace falta
+            # alertar fuera de ventana, subir a send_whatsapp_template con una
+            # plantilla de alerta aprobada. Por eso el email sigue como respaldo.
+            from whatsapp_sender import send_whatsapp_text
             await send_whatsapp_text(doc["responsable_telefono"], _formatear_mensaje(tipo, doc))
         except Exception:
             logger.exception("[alerts] envío WhatsApp falló (no fatal) tipo=%s user=%s", tipo, user_id)
