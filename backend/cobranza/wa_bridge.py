@@ -28,7 +28,19 @@ async def _ensure_case_id(db, debtor: dict) -> str:
     if existing:
         return existing
     new_id = str(uuid.uuid4())
-    await db.debtors.update_one({"_id": debtor["_id"]}, {"$set": {"case_id": new_id}})
+    # El _id puede venir como str (el dict del pipeline de voz viaja
+    # serializado): sin coerción a ObjectId el update_one no matchea (no-op
+    # silencioso), el case_id nunca se persistía y cada llamada fallida
+    # generaba un case NUEVO → WA re-enviaba la plantilla en cada intento
+    # (el dedupe por case_id quedaba anulado). Observado 29-jul en el smoke.
+    _id = debtor["_id"]
+    if isinstance(_id, str):
+        try:
+            from bson import ObjectId
+            _id = ObjectId(_id)
+        except Exception:
+            pass  # ids no-ObjectId (tests): se intenta tal cual
+    await db.debtors.update_one({"_id": _id}, {"$set": {"case_id": new_id}})
     debtor["case_id"] = new_id
     return new_id
 
