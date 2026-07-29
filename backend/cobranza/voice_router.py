@@ -536,6 +536,14 @@ async def call_status_callback(request: Request):
                 final = await reschedule_intento_fallido(db, debtor)
                 logger.info("[CallStatus] %s %s → debtor %s reprogramado (%s, siguiente día hábil)",
                             call_sid, call_status, debtor["_id"], final)
+                # D-19: no contestó / ocupado → WA envía la plantilla
+                # voice_no_answer_followup ("te llamamos y no pudimos
+                # contactarte"). failed/canceled NO: suelen ser números malos o
+                # cortes del sistema — un WhatsApp ahí confunde. handoff_no_answer
+                # nunca lanza y WA deduplica por case_id (1 plantilla por caso).
+                if call_status in ("no-answer", "busy"):
+                    from cobranza.wa_bridge import handoff_no_answer
+                    await handoff_no_answer(db, debtor)
         except Exception:
             logger.exception("[CallStatus] reprogramación falló %s", call_sid)
     return PlainTextResponse("OK")

@@ -33,6 +33,49 @@ async def _ensure_case_id(db, debtor: dict) -> str:
     return new_id
 
 
+async def handoff_no_answer(db, debtor: dict) -> dict:
+    """
+    D-19: llamada NO contestada → WA abre el caso y envía la plantilla Meta
+    voice_no_answer_followup al deudor (re-abre el canal de WhatsApp).
+    POST /case/handoff/no_answer. WA es idempotente por case_id: el mismo caso
+    solo dispara la plantilla UNA vez aunque haya varios intentos fallidos.
+    Nunca lanza — un fallo aquí no puede afectar el callback de Twilio.
+    """
+    base_url = os.getenv("LAMBDA_PROYECT_BASE_URL", "").rstrip("/")
+    token = os.getenv("LAMBDA_PROYECT_INTERNAL_TOKEN", "")
+    phone = str(debtor.get("telefono", "")).strip()
+
+    if not phone:
+        return {"ok": False, "error": "debtor sin teléfono"}
+    if not base_url or not token:
+        logger.warning("[wa_bridge] no-answer handoff NO configurado (BASE_URL/TOKEN) — plantilla no enviada")
+        return {"ok": False, "error": "puente WA no configurado", "sent": False}
+
+    case_id = await _ensure_case_id(db, debtor)
+    body = {
+        "case_id": case_id,
+        "phone": phone if phone.startswith("+") else f"+{phone}",
+        "cliente_nombre": str(debtor.get("nombre") or "Cliente")[:80] or "Cliente",
+        "numero_poliza": str(debtor.get("numero_poliza") or "")[:40] or "N/A",
+    }
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                f"{base_url}/case/handoff/no_answer",
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+            )
+            r.raise_for_status()
+            data = r.json()
+            logger.info("[wa_bridge] no_answer handoff case=%s debtor=%s sent=%s",
+                        case_id, debtor.get("_id"), data.get("sent"))
+            return {"ok": True, "case_id": case_id, "sent": data.get("sent", False)}
+    except Exception as exc:
+        logger.error("[wa_bridge] no_answer handoff falló case=%s: %s", case_id, exc)
+        return {"ok": False, "case_id": case_id, "error": str(exc)[:200]}
+
+
 async def handoff_to_wa(
     db, user_id: str, debtor: dict, *,
     message: str = "", initial_context: str = "", call_id: str = "",
