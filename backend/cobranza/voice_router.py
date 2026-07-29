@@ -876,6 +876,16 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
                 refund_uncontacted_call(db, result.call_sid)
             except Exception:
                 logger.exception("[PostCall] no se pudo programar reembolso %s", result.call_sid)
+            # D-19: sin contacto real (buzón contestó / nadie habló) también
+            # dispara el followup de WhatsApp — la mayoría de "no contesta"
+            # termina AQUÍ como 'completed' (el buzón atiende y el watchdog
+            # cuelga), NO como no-answer de Twilio. WA deduplica por case_id,
+            # así que entre este hook y el de CallStatus solo sale 1 plantilla.
+            try:
+                from cobranza.wa_bridge import handoff_no_answer
+                await handoff_no_answer(db, debtor)
+            except Exception:
+                logger.exception("[PostCall] handoff no_answer falló %s", result.call_sid)
 
         logger.info("[PostCall] %s -> estado=%s, intentos=%d, duration=%ds",
                      result.call_sid, new_estado, new_intentos, result.duration_seconds)
