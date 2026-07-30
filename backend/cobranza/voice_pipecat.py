@@ -1310,6 +1310,17 @@ async def run_bot(
         tipo = params.arguments.get("tipo", "link")
         logger.info("[VOICE] solicitar_link_cupon: tipo=%s debtor=%s", tipo, debtor.get("_id"))
         result = await _fire_alerta("solicitud_link_cupon", detalle=f"Solicitó {tipo} de pago", extra={"tipo": tipo})
+        # Confirmación ESCRITA al cliente (plantilla solicitud_link_cupon). En la
+        # llamada ARIA promete "en unos momentos le enviamos el cupón"; sin esto
+        # el cliente se quedaba sin nada por WhatsApp hasta que un humano se
+        # acordara. La alerta a cartera (arriba) sigue igual: ellos mandan el
+        # link/cupón real. Nunca lanza — no puede tumbar la llamada en curso.
+        try:
+            from database import get_db
+            from cobranza.wa_bridge import notify_link_cupon
+            await notify_link_cupon(get_db(), debtor, tipo)
+        except Exception:
+            logger.exception("[VOICE] confirmación WhatsApp de link/cupón falló (no fatal)")
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
     async def _handle_registrar_opt_out(params):

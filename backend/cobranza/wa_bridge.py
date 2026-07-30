@@ -96,6 +96,53 @@ async def handoff_no_answer(db, debtor: dict) -> dict:
         return {"ok": False, "case_id": case_id, "error": str(exc)[:200]}
 
 
+async def notify_link_cupon(db, debtor: dict, tipo: str = "link") -> dict:
+    """
+    El cliente pidió link/cupón en la llamada → WA le manda la confirmación
+    escrita (plantilla solicitud_link_cupon). Antes solo se alertaba a cartera
+    y el cliente se quedaba esperando sin nada por WhatsApp.
+
+    Nunca lanza: la alerta a cartera ya salió y una llamada en curso no puede
+    caerse porque WA falle.
+    """
+    base_url = os.getenv("LAMBDA_PROYECT_BASE_URL", "").rstrip("/")
+    token = os.getenv("LAMBDA_PROYECT_INTERNAL_TOKEN", "")
+    phone = str(debtor.get("telefono", "")).strip()
+
+    if not phone:
+        return {"ok": False, "error": "debtor sin teléfono"}
+    if not base_url or not token:
+        logger.warning("[wa_bridge] link/cupón NO confirmado por WhatsApp — puente no configurado")
+        return {"ok": False, "error": "puente WA no configurado", "sent": False}
+
+    case_id = await _ensure_case_id(db, debtor)
+    body = {
+        "case_id": case_id,
+        "phone": phone if phone.startswith("+") else f"+{phone}",
+        "cliente_nombre": str(debtor.get("nombre") or "Cliente")[:80] or "Cliente",
+        "numero_poliza": str(debtor.get("numero_poliza") or "")[:40] or "N/A",
+        "tipo": "cupon" if str(tipo).lower().startswith("cup") else "link",
+    }
+    documento = str(debtor.get("cliente_documento") or debtor.get("documento") or "").strip()
+    if documento:
+        body["documento"] = documento
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                f"{base_url}/case/link_cupon",
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+            )
+            r.raise_for_status()
+            logger.info("[wa_bridge] link/cupón confirmado case=%s tipo=%s debtor=%s",
+                        case_id, body["tipo"], debtor.get("_id"))
+            return {"ok": True, "case_id": case_id, "sent": True}
+    except Exception as exc:
+        logger.error("[wa_bridge] confirmación de link/cupón falló case=%s: %s", case_id, exc)
+        return {"ok": False, "case_id": case_id, "error": str(exc)[:200]}
+
+
 async def handoff_to_wa(
     db, user_id: str, debtor: dict, *,
     message: str = "", initial_context: str = "", call_id: str = "",
