@@ -403,7 +403,24 @@ async def dispatch_intentos_job() -> None:
             extra_fest = _parse_festivos(horarios)
             due.sort(key=lambda d: prioridad_informe(d, today_local, extra_fest))
 
-            for debtor in due[:slots]:
+            # UN SOLO INTENTO POR CLIENTE (petición DPG 31-jul). Cada fila de
+            # `debtors` es una CUOTA, y el 48% de la cartera de DPG tiene varias
+            # (el peor caso: 24 cuotas de un mismo cliente). Sin agrupar, esa
+            # persona recibía 24 llamadas y 24 plantillas de WhatsApp — además
+            # de romper el máximo de 1 contacto por día de la Ley 2300.
+            # Se llama por la cuota de MAYOR prioridad (due ya viene ordenado) y
+            # ARIA anuncia que cartera enviará el estado completo; las hermanas
+            # quedan marcadas como contactadas hoy para que ningún tick
+            # posterior las vuelva a marcar.
+            por_cliente: dict = {}
+            for d in due:
+                k = str(d.get("cliente_documento") or d.get("telefono") or d["_id"])
+                por_cliente.setdefault(k, []).append(d)
+            # dict conserva el orden de inserción → los líderes ya salen ordenados
+            # por prioridad, igual que `due`.
+            lideres = [grupo[0] for grupo in por_cliente.values()]
+
+            for debtor in lideres[:slots]:
                 await db.debtors.update_one(
                     {"_id": debtor["_id"]},
                     {"$set": {"estado": "llamando", "updated_at": datetime.now(timezone.utc)}},
@@ -418,8 +435,39 @@ async def dispatch_intentos_job() -> None:
                     {"$inc": {"llamadas_iniciadas": 1}},
                     upsert=True,
                 )
+                # Las demás cuotas del MISMO cliente: no se marcan hoy. Van con
+                # ultimo_contacto_fecha porque la persona SÍ fue contactada hoy
+                # (es el campo que lee has_been_contacted_today, y es lo correcto
+                # frente a la Ley 2300). `agrupada_en` deja la traza de con qué
+                # llamada se cubrió, para auditar el día.
+                grupo = por_cliente[
+                    str(debtor.get("cliente_documento") or debtor.get("telefono") or debtor["_id"])
+                ]
+                hermanas = [h["_id"] for h in grupo if h["_id"] != debtor["_id"]]
+                if hermanas:
+                    await db.debtors.update_many(
+                        {"_id": {"$in": hermanas}},
+                        {"$set": {
+                            "ultimo_contacto_fecha": datetime.now(timezone.utc),
+                            "agrupada_en": debtor["_id"],
+                            "updated_at": datetime.now(timezone.utc),
+                        }},
+                    )
+                # El prompt de voz lo lee para anunciar el estado de cartera
+                # completo en vez de recitar una sola cuota (ver prompt_builder).
+                await db.debtors.update_one(
+                    {"_id": debtor["_id"]},
+                    {"$set": {"cuotas_del_cliente": len(grupo)}},
+                )
+                debtor["cuotas_del_cliente"] = len(grupo)
+
                 asyncio.create_task(safe_initiate_call(debtor, user_id))
-            logger.info("[dispatch] tenant=%s marcados=%d (cupo dia=%d, cupo hora=%d, en hora=%d)",
-                        user_id, min(slots, len(due)), cupo, cupo_hora, len(due))
+            agrupadas = len(due) - len(lideres)
+            logger.info(
+                "[dispatch] tenant=%s marcados=%d (cupo dia=%d, cupo hora=%d, en hora=%d, "
+                "clientes=%d, cuotas agrupadas=%d)",
+                user_id, min(slots, len(lideres)), cupo, cupo_hora, len(due),
+                len(lideres), agrupadas,
+            )
         except Exception:
             logger.exception("[dispatch] tenant=%s failed", user_id)

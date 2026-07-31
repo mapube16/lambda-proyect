@@ -363,6 +363,9 @@ async def run_bot(
         dias_mora=_dias_mora,
         numero_cuota=str(debtor.get("numero_cuota") or ""),
         is_inbound=is_inbound,
+        # Lo escribe el despachador al agrupar por cliente: >1 significa que
+        # esta llamada cubre TODA su cartera, no solo esta cuota.
+        cuotas_del_cliente=int(debtor.get("cuotas_del_cliente") or 1),
     )
     logger.info(
         "[VOICE] Assembled 3-layer prompt for user %s (persona=%s, %d chars)",

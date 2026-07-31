@@ -69,7 +69,7 @@ REGLAS DE TRATO DE ESTE CLIENTE:
 {business_rules}
 
 {runtime_block}
-COMO HABLAR DE LA POLIZA: cuando el deudor pregunte por su poliza, PRIMERO dile DE QUE TIPO es para que entienda de que se trata (ej: 'es su seguro de Vida' o 'su poliza de Autos'), y SOLO DESPUES, si viene al caso o lo pide, mencionas el numero de poliza. Nunca arranques soltando el numero.
+{cartera_multiple}COMO HABLAR DE LA POLIZA: cuando el deudor pregunte por su poliza, PRIMERO dile DE QUE TIPO es para que entienda de que se trata (ej: 'es su seguro de Vida' o 'su poliza de Autos'), y SOLO DESPUES, si viene al caso o lo pide, mencionas el numero de poliza. Nunca arranques soltando el numero.
 
 FLUJO DE LA CONVERSACION (apertura hibrida — identidad PRIMERO, luego el detalle):
 Siempre te presentas como {agent_name}, la asistente virtual de {company_name}.
@@ -240,6 +240,29 @@ def render_greeting(persona: dict, first_name: str) -> str:
     return _fmt(tmpl, vals).strip()
 
 
+def _cartera_multiple_block(cuotas_del_cliente: int) -> str:
+    """Instrucción para el cliente con VARIAS cuotas próximas a vencer.
+
+    Vacío en el caso normal (una sola cuota) para no ensuciar el prompt. Con
+    varias, esta es la ÚNICA llamada por toda su cartera: recitar 24 pólizas
+    por teléfono es inmanejable, así que ARIA da el panorama y deriva el
+    detalle al correo/WhatsApp que envía cartera (petición DPG 31-jul).
+    """
+    if (cuotas_del_cliente or 1) <= 1:
+        return ""
+    return (
+        f"ESTE CLIENTE TIENE {cuotas_del_cliente} CUOTAS/POLIZAS proximas a vencer, y esta es la "
+        "UNICA llamada por TODAS. Reglas para este caso:\n"
+        "- NO recites una por una ni des el detalle de cada poliza: seria interminable por telefono.\n"
+        "- Menciona que tiene VARIAS polizas con pagos proximos (puedes decir cuantas) y usa la de "
+        "'DATOS DE ESTA LLAMADA' solo como ejemplo si el cliente pide una referencia concreta.\n"
+        "- Di CLARAMENTE que una persona del equipo de cartera le enviara el ESTADO DE CARTERA "
+        "COMPLETO por correo electronico o WhatsApp, con el detalle de cada poliza y su valor.\n"
+        "- Si pregunta por el total exacto o por una poliza puntual que no tienes arriba, NO lo "
+        "inventes: dile que ese detalle va en el estado de cartera que le enviaran.\n\n"
+    )
+
+
 def assemble_system_prompt(
     persona: dict,
     *,
@@ -254,8 +277,15 @@ def assemble_system_prompt(
     dias_mora: int = 0,
     numero_cuota: str = "",
     is_inbound: bool = False,
+    cuotas_del_cliente: int = 1,
 ) -> str:
-    """Render the full ENGINE with persona values + the runtime data block."""
+    """Render the full ENGINE with persona values + the runtime data block.
+
+    ``cuotas_del_cliente`` > 1 → el cliente tiene varias pólizas/cuotas
+    próximas a vencer y esta es la ÚNICA llamada por todas (ver la agrupación
+    por cliente en sequence_engine): ARIA no recita cuota por cuota, anuncia
+    que cartera le enviará el estado completo por correo o WhatsApp.
+    """
     brand = persona.get("company_brand") or persona.get("company_name", "")
     persona_vals = {
         "agent_name": persona.get("agent_name", ""),
@@ -327,6 +357,7 @@ def assemble_system_prompt(
         "tono": persona.get("tono", "amable"),
         "business_rules": business,
         "runtime_block": runtime_block,
+        "cartera_multiple": _cartera_multiple_block(cuotas_del_cliente),
         "apertura_paso1": apertura_paso1,
         "pitch": pitch,
         "monto_natural": monto_natural,
