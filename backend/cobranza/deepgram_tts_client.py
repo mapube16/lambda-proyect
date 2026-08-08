@@ -1,29 +1,47 @@
+"""Cliente de Deepgram Speak (Aura-2).
+
+OJO con el formato: Deepgram IGNORA el header `Accept` en /v1/speak y devuelve
+MP3 por defecto. La versión anterior pedía `Accept: audio/l16;rate=24000`,
+recibía `audio/mpeg` y trataba esos bytes como PCM16 crudo → lo que llegaba al
+deudor era ruido. El formato se pide por QUERY (`encoding`/`sample_rate`/
+`container`), y pedirle mu-law 8kHz directamente entrega el payload exacto que
+consume el media-stream de Twilio, sin remuestrear nada de nuestro lado.
+"""
 import logging
 import os
 from typing import Optional, Tuple
 
 import httpx
 
-from cobranza.audio_utils import (
-    parse_sample_rate_from_content_type,
-    pcm16_from_wav_bytes,
-    pcm16_mono_resample,
-    pcm16_to_mulaw,
-)
+from cobranza.audio_utils import pcm16_from_wav_bytes
 
 logger = logging.getLogger("cobranza.deepgram_tts")
 
 
 DEEPGRAM_SPEAK_URL = "https://api.deepgram.com/v1/speak"
 
+# Voces colombianas de Aura-2: celeste (clara, enérgica) y gloria (natural, suave).
+# El resto del catálogo es peninsular/mexicano/argentino.
+DEFAULT_MODEL = "aura-2-celeste-es"
 
-def _default_model() -> str:
-    return os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-celeste-es")
+
+def _api_key(api_key: Optional[str]) -> str:
+    key = api_key or os.getenv("DEEPGRAM_API_KEY")
+    if not key:
+        raise RuntimeError("DEEPGRAM_API_KEY not set")
+    return key
 
 
-def _default_accept() -> str:
-    # Deepgram often returns raw PCM with this accept.
-    return os.getenv("DEEPGRAM_TTS_ACCEPT", "audio/l16;rate=24000")
+async def _speak(text: str, key: str, model: str, params: dict, timeout_s: float) -> bytes:
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        resp = await client.post(
+            DEEPGRAM_SPEAK_URL,
+            params={"model": model, **params},
+            json={"text": text},
+            headers={"Authorization": f"Token {key}", "Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        return resp.content
 
 
 async def speak_raw(
@@ -31,47 +49,15 @@ async def speak_raw(
     *,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
-    accept: Optional[str] = None,
+    sample_rate: int = 24000,
     timeout_s: float = 30.0,
 ) -> Tuple[bytes, int]:
-    """Call Deepgram Speak and return (pcm16_mono_bytes, sample_rate_hz).
-
-    If the API responds with WAV, this extracts PCM frames automatically.
-    """
-    api_key = api_key or os.getenv("DEEPGRAM_API_KEY")
-    if not api_key:
-        raise RuntimeError("DEEPGRAM_API_KEY not set")
-
-    model = model or _default_model()
-    accept = accept or _default_accept()
-
-    headers = {
-        "Authorization": f"Token {api_key}",
-        "Accept": accept,
-        "Content-Type": "application/json",
-    }
-
-    params = {"model": model}
-    payload = {"text": text}
-
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
-        resp = await client.post(DEEPGRAM_SPEAK_URL, params=params, json=payload, headers=headers)
-        resp.raise_for_status()
-
-        content_type = resp.headers.get("content-type")
-        data = resp.content
-
-    # If we accidentally got a WAV container, extract.
-    if data.startswith(b"RIFF"):
-        pcm, rate = pcm16_from_wav_bytes(data)
-        return pcm, rate
-
-    rate = (
-        parse_sample_rate_from_content_type(content_type)
-        or parse_sample_rate_from_content_type(accept)
-        or 24000
+    """Deepgram Speak → (pcm16 mono, sample_rate). Para escuchar/guardar en alta."""
+    wav = await _speak(
+        text, _api_key(api_key), model or os.getenv("DEEPGRAM_TTS_MODEL", DEFAULT_MODEL),
+        {"encoding": "linear16", "sample_rate": sample_rate, "container": "wav"}, timeout_s,
     )
-    return data, rate
+    return pcm16_from_wav_bytes(wav)
 
 
 async def speak_mulaw_8k(
@@ -79,10 +65,11 @@ async def speak_mulaw_8k(
     *,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
-    accept: Optional[str] = None,
+    timeout_s: float = 30.0,
 ) -> bytes:
-    """Deepgram Speak → 8kHz μ-law (Twilio media-stream friendly)."""
-    pcm, rate = await speak_raw(text, api_key=api_key, model=model, accept=accept)
-    if rate != 8000:
-        pcm = pcm16_mono_resample(pcm, rate, 8000)
-    return pcm16_to_mulaw(pcm)
+    """Deepgram Speak → μ-law 8kHz sin cabecera: el payload crudo del media-stream
+    de Twilio. `container=none` evita tener que quitarle el RIFF a mano."""
+    return await _speak(
+        text, _api_key(api_key), model or os.getenv("DEEPGRAM_TTS_MODEL", DEFAULT_MODEL),
+        {"encoding": "mulaw", "sample_rate": 8000, "container": "none"}, timeout_s,
+    )
