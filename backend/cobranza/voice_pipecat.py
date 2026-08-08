@@ -685,6 +685,13 @@ async def run_bot(
         str(tenant_config.get("vad_start_sensitivity") or "HIGH").upper(),
         StartSensitivity.START_SENSITIVITY_HIGH,
     )
+    # Motor de VOZ (rama voz-deepgram): "gemini" = S2S nativo (produccion);
+    # "deepgram" = hibrido — Gemini escucha/piensa en TEXT y una voz colombiana
+    # de Deepgram (celeste/gloria) pronuncia. Por tenant (tts_engine en Mongo)
+    # o por env para pruebas locales. Default: gemini, produccion intacta.
+    _tts_engine = str(
+        tenant_config.get("tts_engine") or os.getenv("COBRANZA_TTS_ENGINE", "gemini")
+    ).lower()
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         # Model trade-off (see commit notes): native-audio sounds natural but on
@@ -713,10 +720,13 @@ async def run_bot(
             # cobranza wants consistent, on-script answers more than creative ones.
             # Per-tenant override via tenant_config.voice_temperature.
             temperature=float(tenant_config.get("voice_temperature") or 0.5),
-            # CRITICAL: force AUDIO output. Without this, Gemini Live returns
-            # only text — the pipeline emits "bot speaking" events but ZERO
-            # audio frames, so the caller hears nothing.
-            modalities=GeminiModalities.AUDIO,
+            # AUDIO = Gemini habla con su propia voz (Aoede etc.). TEXT = modo
+            # HIBRIDO (rama voz-deepgram): Gemini solo escucha y piensa; el
+            # texto lo pronuncia el TTS de Deepgram insertado en el pipeline
+            # (voz colombiana). Sin el TTS downstream, TEXT = llamada muda —
+            # por eso ambos se deciden juntos via _tts_engine (abajo).
+            modalities=(GeminiModalities.TEXT if _tts_engine == "deepgram"
+                        else GeminiModalities.AUDIO),
             # Disable "thinking" (thinking_budget=0): the model otherwise spends
             # extra inference deliberating BEFORE emitting the first audio, which
             # adds dead air to the opening greeting (~2.7s measured answer->speak).
@@ -890,17 +900,26 @@ async def run_bot(
 
     # ── Pipeline ─────────────────────────────────────────────────────────
     # Canonical Pipecat order: assistant aggregator goes AFTER transport.output()
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            context_aggregator.user(),
-            user_collector,
-            llm,
-            bot_collector,
-            transport.output(),
-            context_aggregator.assistant(),
-        ]
-    )
+    # Modo hibrido: el TTS de Deepgram va entre el LLM (que emite texto) y el
+    # bot_collector — el TTS re-emite TTSTextFrame al pronunciar, asi que el
+    # collector y el resto del pipeline ven exactamente los mismos frames que
+    # con Gemini nativo (transcript, bot_speaking, end_call intactos).
+    _stages = [
+        transport.input(),
+        context_aggregator.user(),
+        user_collector,
+        llm,
+        bot_collector,
+        transport.output(),
+        context_aggregator.assistant(),
+    ]
+    if _tts_engine == "deepgram":
+        from cobranza.deepgram_pipecat_tts import DeepgramHttpTTSService
+        _dg_voice = str(tenant_config.get("deepgram_voice") or
+                        os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-celeste-es"))
+        _stages.insert(4, DeepgramHttpTTSService(model=_dg_voice))
+        logger.info("[VOICE] motor hibrido: Gemini TEXT + Deepgram TTS %s", _dg_voice)
+    pipeline = Pipeline(_stages)
 
     # Barge-in OFF por defecto (tenant_config.barge_in_enabled) — mismo switch
     # que NO_INTERRUPTION arriba: la llamada es 100% por turnos. Historia: el
