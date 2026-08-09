@@ -101,6 +101,82 @@ class RecepcionFirewall(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class OidoDeepgram(FrameProcessor):
+    """Bridge STT dedicado → cerebro. Modo 'oido Deepgram': DeepgramSTTService
+    transcribe (con keyterms por llamada) y este procesador convierte cada
+    transcripcion FINAL en un turno de texto para Gemini via el mismo camino
+    probado del DTMF (LLMMessagesAppendFrame run_llm=True → send_client_content
+    + nudge realtime). Gemini nunca recibe audio (STT con audio_passthrough=
+    False), asi que deja de usar su propio oido — el que garblaba el espanol
+    telefonico ("con el hilar de cepo", "a los canadienses").
+
+    La TranscriptionFrame se DEJA pasar tambien: user_collector (aguas arriba)
+    ya la vio para el transcript/anti-buzon; aguas abajo Gemini la ignora.
+    """
+
+    def __init__(self, call_result=None, **kwargs):
+        super().__init__(**kwargs)
+        self._call_result = call_result
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        from pipecat.frames.frames import TranscriptionFrame, LLMMessagesAppendFrame
+        # solo transcripciones FINALES con texto real (las interinas no cuentan)
+        if isinstance(frame, TranscriptionFrame) and (frame.text or "").strip():
+            texto = frame.text.strip()
+            logger.info("[VOICE][oido-dg] turno del cliente: %r", texto[:120])
+            await self.push_frame(frame, direction)  # que siga al collector/llm
+            await self.push_frame(LLMMessagesAppendFrame(
+                messages=[{"role": "user", "content": texto}], run_llm=True))
+            return
+        await self.push_frame(frame, direction)
+
+
+def keyterms_llamada(debtor: dict) -> list:
+    """Vocabulario a reforzar en el STT para ESTA llamada: nombre del deudor,
+    aseguradora, y el vocabulario minado de 372 transcripts reales. Anclar
+    estos terminos reduce los inventos del STT en audio telefonico ruidoso."""
+    base = [
+        "alo", "si", "no", "bueno", "senora", "senor", "gracias", "cupon",
+        "link", "poliza", "pago", "cuota", "pesos", "ya pague", "ya lo pague",
+        "no tengo plata", "no puedo pagar", "manana", "mas tarde", "asesor",
+        "numero equivocado", "de una", "hasta luego", "buenos dias",
+    ]
+    for campo in ("nombre", "aseguradora_nombre"):
+        for w in str(debtor.get(campo) or "").split():
+            w = "".join(c for c in w if c.isalpha())
+            if len(w) > 2:
+                base.append(w)
+    # dedup preservando orden
+    vistos, out = set(), []
+    for t in base:
+        k = t.lower()
+        if k not in vistos:
+            vistos.add(k)
+            out.append(t)
+    return out
+
+
+def crear_stt_deepgram(debtor: dict, sample_rate: int = 8000):
+    """DeepgramSTTService como oido dedicado: nova-2 es, keyterms por llamada,
+    utterance_end para el fin de turno, audio_passthrough=False para que el
+    audio NO llegue a Gemini (que si no haria su propio STT en paralelo)."""
+    from pipecat.services.deepgram.stt import DeepgramSTTService, LiveOptions
+    return DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY", ""),
+        audio_passthrough=False,
+        sample_rate=sample_rate,
+        live_options=LiveOptions(
+            model="nova-2", language="es",
+            encoding="linear16", channels=1, sample_rate=sample_rate,
+            smart_format=True, punctuate=True,
+            interim_results=True, utterance_end_ms=1000, vad_events=True,
+            endpointing=300,
+            keywords=keyterms_llamada(debtor),
+        ),
+    )
+
+
 class DescartarVozGemini(FrameProcessor):
     """Entre Gemini Live (AUDIO) y el TTS: bota la voz de Gemini, deja su texto.
 

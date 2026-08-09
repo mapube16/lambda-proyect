@@ -827,6 +827,15 @@ async def run_bot(
     _tts_engine = str(
         tenant_config.get("tts_engine") or os.getenv("COBRANZA_TTS_ENGINE", "gemini")
     ).lower()
+    # Motor de OIDO (STT): "gemini" = el oido nativo de Gemini Live (default);
+    # "deepgram" = STT dedicado (nova-2 es + keyterms) que reemplaza el oido de
+    # Gemini — este garblaba el espanol telefonico 8k. Deepgram-oido IMPLICA
+    # Deepgram-voz (Gemini queda de puro cerebro texto→texto).
+    _stt_engine = str(
+        tenant_config.get("stt_engine") or os.getenv("COBRANZA_STT_ENGINE", "gemini")
+    ).lower()
+    if _stt_engine == "deepgram":
+        _tts_engine = "deepgram"
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         # Model trade-off (see commit notes): native-audio sounds natural but on
@@ -1106,13 +1115,25 @@ async def run_bot(
         _stages.insert(4, crear_tts_deepgram(_dg_voice))
         _stages.insert(4, DescartarVozGemini())
         logger.info("[VOICE] motor hibrido: Gemini AUDIO (descartado) + Deepgram TTS %s", _dg_voice)
+    if _stt_engine == "deepgram":
+        # Oido dedicado: STT come el audio (audio_passthrough=False → Gemini no
+        # lo recibe → no hace su propio STT), y OidoDeepgram convierte cada
+        # transcripcion final en un turno de texto para Gemini. Se QUITA
+        # context_aggregator.user() (Gemini mantiene su contexto server-side via
+        # send_client_content; el aggregator ademas duplicaria el turno). El
+        # assistant aggregator queda para rutear resultados de tools.
+        from cobranza.deepgram_pipecat_tts import crear_stt_deepgram, OidoDeepgram
+        _stages.remove(context_aggregator.user())
+        _stages.insert(1, OidoDeepgram(call_result=call_result))
+        _stages.insert(1, crear_stt_deepgram(debtor or {}))
+        logger.info("[VOICE] oido dedicado: Deepgram STT nova-2 es (Gemini sin audio)")
     if modo_recepcion:
         # JUSTO ANTES del llm (despues del aggregator): todo lo inyectado rio
         # arriba (Transcription, LLMContextFrame, LLMMessagesAppendFrame) se lo
         # come el LLMUserAggregator sin disparar inferencia — probado 3 veces.
         # Desde aqui el LLMMessagesAppendFrame llega DIRECTO al servicio, que
         # es quien sabe convertirlo en send_client_content + nudge realtime.
-        _stages.insert(3, CapturaDTMF(context=context, call_result=call_result))
+        _stages.insert(_stages.index(llm), CapturaDTMF(context=context, call_result=call_result))
         # Firewall ANTES del TTS: lo que el modelo alucine sobre polizas/plata
         # sin identificacion confirmada, no llega a la boca (CA2573a3: fabrico
         # una poliza de Equidad). Solo filtra texto — requiere motor deepgram.

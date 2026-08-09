@@ -476,6 +476,71 @@ async def selftest_inbound() -> int:
     return 0
 
 
+async def selftest_audio(wav_path: str) -> int:
+    """Prueba el OIDO Deepgram con audio REAL: streamea una grabacion de Twilio
+    (mulaw 8k) como si fuera el cliente hablando, contra el server local con
+    STT_ENGINE=deepgram. Verifica que Deepgram transcribio (el server loguea
+    [oido-dg] turno del cliente). Sin telefono."""
+    import audioop
+    import wave
+    from datetime import datetime, timezone
+
+    db = _db()
+    debtor = await db.debtors.find_one({"user_id": USER_ID, "telefono": TEL_PRUEBA, "is_test": True})
+    fake_sid = "CAselfaudio%d" % os.getpid()
+    await db.cobranza_calls_in_progress.delete_many({"call_sid": {"$regex": "^CAselfaudio"}})
+    await db.cobranza_calls_in_progress.insert_one({
+        "call_sid": fake_sid, "user_id": USER_ID,
+        "debtor_id": str(debtor["_id"]) if debtor else "",
+        "debtor_name": (debtor or {}).get("nombre"),
+        "debtor_phone": TEL_PRUEBA, "started_at": datetime.now(timezone.utc),
+    })
+
+    # grabacion Twilio: PCM 8k → mulaw 8k, en tramas de 20ms (160 bytes)
+    with wave.open(wav_path, "rb") as w:
+        pcm = w.readframes(w.getnframes())
+        if w.getframerate() != 8000:
+            pcm, _ = audioop.ratecv(pcm, 2, 1, w.getframerate(), 8000, None)
+    ulaw = audioop.lin2ulaw(pcm, 2)
+
+    async with websockets.connect("ws://127.0.0.1:8002/api/cobranza/voice/ws/" + fake_sid) as ws:
+        sid = "MZselfaudio"
+        await ws.send(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        await ws.send(json.dumps({
+            "event": "start", "sequenceNumber": "1", "streamSid": sid,
+            "start": {"accountSid": os.getenv("TWILIO_ACCOUNT_SID", "AC"), "streamSid": sid,
+                      "callSid": fake_sid, "tracks": ["inbound"],
+                      "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1}},
+        }))
+
+        async def reproducir():
+            # 2s de silencio (deja pasar el saludo), luego la grabacion en real-time
+            for _ in range(100):
+                await ws.send(json.dumps({"event": "media", "streamSid": sid,
+                    "media": {"payload": base64.b64encode(b"\xff" * 160).decode()}}))
+                await asyncio.sleep(0.02)
+            for i in range(0, len(ulaw), 160):
+                await ws.send(json.dumps({"event": "media", "streamSid": sid,
+                    "media": {"payload": base64.b64encode(ulaw[i:i+160]).decode()}}))
+                await asyncio.sleep(0.02)
+
+        rep = asyncio.create_task(reproducir())
+        try:
+            async with asyncio.timeout(len(ulaw) / 8000 + 15):
+                async for raw in ws:
+                    pass
+        except (TimeoutError, Exception):
+            pass
+        rep.cancel()
+        await ws.send(json.dumps({"event": "stop", "streamSid": sid}))
+
+    await db.cobranza_calls_in_progress.delete_many({"call_sid": fake_sid})
+    db.client.close()
+    print("selftest-audio: streameados %.0fs de audio real — revisar log para [oido-dg]"
+          % (len(ulaw) / 8000))
+    return 0
+
+
 async def call_prod(base_https: str, destino: str = TEL_PRUEBA) -> None:
     """Marca por el flujo REAL de produccion: url=webhook (TwiML+firma+ws+run_bot).
     Inserta el mapping call_sid->deudor clon que el ws de run_bot busca.
@@ -518,6 +583,8 @@ if __name__ == "__main__":
         sys.exit(asyncio.run(selftest_prod()))
     elif modo == "selftest-inbound":
         sys.exit(asyncio.run(selftest_inbound()))
+    elif modo == "selftest-audio":
+        sys.exit(asyncio.run(selftest_audio(sys.argv[2])))
     elif modo == "call":
         call(sys.argv[2], *sys.argv[3:4])
     elif modo == "call-prod":
