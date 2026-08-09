@@ -171,13 +171,12 @@ class _Dispatcher:
                 return {"ok": True, "confirmar": "Listo, reprogramamos la llamada."}
 
             if name == "notify_payment_claim":
-                # solo si el cliente REALMENTE dijo que pago (anti falso positivo)
-                dicho = " ".join(t for _, who, t in self._transcript if who == "Deudor").lower()
-                if not any(k in dicho for k in ("pagu", "cancel", "consign", "transfer", "abon")):
-                    return {"ok": False, "nota": "no se detecto reporte de pago en el audio"}
-                if self.orch:
-                    await self.orch.update_debtor(str(d["_id"]), {"estado": "pago_reportado"})
-                return await self._alerta("pago_reportado", detalle=args.get("detalle", "reporta pago"))
+                # SOLO alerta a cartera para que un HUMANO verifique el comprobante.
+                # NO cambia el estado del deudor: un "pague" mal transcrito por el
+                # STT (paso 09-ago: se marco pago_reportado sin que el cliente lo
+                # dijera) no puede frenar la cobranza. El humano revisa y decide.
+                return await self._alerta("pago_reportado",
+                                          detalle=args.get("detalle", "el cliente dice que ya pago"))
 
             if name == "escalate":
                 if self.orch:
@@ -264,7 +263,9 @@ def _settings(prompt: str, greeting: str, voz: str, keyterms: list,
             "output": {"encoding": "mulaw", "sample_rate": 8000, "container": "none"},
         },
         "agent": {
-            "listen": {"provider": {"type": "deepgram", "model": "nova-2",
+            # nova-3 (no nova-2): es el modelo del ejemplo oficial Twilio+Deepgram,
+            # el mejor para acento/ruido. keyterms funciona con nova-3.
+            "listen": {"provider": {"type": "deepgram", "model": "nova-3",
                                     "language": "es", "keyterms": keyterms}},
             "think": {"provider": {"type": "google", "model": THINK_MODEL},
                       "prompt": prompt, "functions": _tool_schemas(modo_recepcion)},
@@ -348,7 +349,9 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
     logger.info("[agent] call=%s recepcion=%s voz=%s think=%s keyterms=%d",
                 call_sid, modo_recepcion, voz, THINK_MODEL, len(keyterms))
     from cobranza.cobranza_orchestrator import CobranzaOrchestrator
-    orch = CobranzaOrchestrator(user_id, tenant_config, db) if user_id else None
+    # db=None: el orchestrator hace `db or get_db()` y bool(Database de motor)
+    # revienta; get_db() devuelve el mismo singleton igual.
+    orch = CobranzaOrchestrator(user_id, tenant_config) if user_id else None
     identificado = {"ok": not modo_recepcion}
     dispatch = _Dispatcher(db, user_id, debtor or {}, orch, call_sid,
                            result.transcript, identificado)
@@ -393,7 +396,14 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                         result.transcript.append((time.time(), who, ev.get("content", "")))
                     elif t == "FunctionCallRequest":
                         for f in ev.get("functions", []):
-                            content = await dispatch(f.get("name", ""), f.get("arguments") or {})
+                            # el Voice Agent manda arguments como STRING JSON
+                            _a = f.get("arguments")
+                            if isinstance(_a, str):
+                                try:
+                                    _a = json.loads(_a) if _a.strip() else {}
+                                except json.JSONDecodeError:
+                                    _a = {}
+                            content = await dispatch(f.get("name", ""), _a or {})
                             dispatch.debtor = dispatch.debtor  # (identificar_cliente puede haberlo cambiado)
                             await dg.send(json.dumps({
                                 "type": "FunctionCallResponse", "id": f.get("id"),
