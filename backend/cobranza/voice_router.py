@@ -746,8 +746,43 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             await websocket.close(1008, "Missing debtor")
             return
 
-        logger.info("[WS] Starting Pipecat for call %s (debtor=%s)",
+        logger.info("[WS] Starting call %s (debtor=%s)",
                     call_sid, debtor.get("nombre") if debtor else "<recepcion sin identificar>")
+
+        # ── PIVOTE: motor de voz Deepgram Voice Agent (flag por tenant) ──────
+        # tenant_configs.cobranza.voz_engine == "deepgram_agent" (o el env
+        # COBRANZA_VOZ_ENGINE) enruta la llamada al Voice Agent de Deepgram, que
+        # maneja turnos/eco/barge-in nativo. Default: el pipeline pipecat de
+        # abajo, intacto. Toda la capa Twilio (AMD, minutos, post-call) es la
+        # misma — solo cambia que corre dentro del media stream.
+        _voz_engine = str(
+            (estrategia.get("voz_engine") if isinstance(estrategia, dict) else None)
+            or (config_doc or {}).get("cobranza", {}).get("voz_engine")
+            or os.getenv("COBRANZA_VOZ_ENGINE", "pipecat")
+        ).lower()
+        if _voz_engine == "deepgram_agent":
+            from cobranza.voice_agent import run_voice_agent
+            from cobranza.config_cache import get_tenant_config
+            _tcfg = await get_tenant_config(user_id) if user_id else {}
+            _modo_recepcion = bool(is_inbound and not debtor)
+            logger.info("[WS] motor=deepgram_agent call=%s", call_sid)
+            call_result = await run_voice_agent(
+                websocket=websocket, call_sid=call_sid, debtor=debtor or {},
+                user_id=user_id, stream_id=stream_id, tenant_config=_tcfg,
+                is_inbound=is_inbound, modo_recepcion=_modo_recepcion)
+            # post-call: relee el mapping (recepcion pudo atribuir el deudor)
+            if debtor is None and call_mapping:
+                _fresco = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
+                if _fresco and _fresco.get("debtor_id"):
+                    debtor = await get_debtor_by_id(db, user_id, _fresco["debtor_id"])
+            if call_mapping and debtor:
+                await _process_call_ended(db, debtor, call_result, is_inbound=is_inbound)
+            try:
+                await db.cobranza_calls_in_progress.delete_one({"call_sid": call_sid})
+            except Exception:
+                pass
+            logger.info("[WS] Cleanup done for %s (deepgram_agent)", call_sid)
+            return
 
         # CRITICAL: pass the REAL Twilio stream_id (MZ...) parsed from the
         # handshake — NOT call_sid. The TwilioFrameSerializer tags every
