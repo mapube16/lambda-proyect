@@ -86,6 +86,12 @@ _VOICEMAIL_LIVE_RE = re.compile(
     r"despu[eé]s (del|de escuchar el) tono|al (escuchar|o[ií]r) el tono|"
     r"tecla numeral|lleg[oó] al tiempo l[ií]mite|"
     r"para [a-záéíóúü ]{2,30}marque|"
+    # Minado de 372 transcripts reales (09-ago): las familias que se escapaban.
+    # Los menus con "presiona X" (52 apariciones) solo cubriamos con "marque";
+    # "excedido el tiempo de grabacion" = ARIA ya le grabo un mensaje entero.
+    r"presion[ae] (uno|dos|tres|cuatro|cinco|numeral|la tecla)|"
+    r"excedido el tiempo|servicio de contestador|"
+    r"dej[ae]s? (tu|su) nombre|responde despu[eé]s del tono|"
     r"no se encuentra disponible|no est[aá] disponible en este momento|"
     r"el n[uú]mero que (usted )?marc[oó]",
     re.IGNORECASE,
@@ -324,15 +330,20 @@ async def run_bot(
         # transcribia inventos ("con el hilar de cepo" por "con ella habla,
         # Restrepo"; "a los canadienses"). Darle el vocabulario probable ancla
         # la interpretacion acustica igual que un phrase-list en un STT clasico.
+        # Lista MINADA de 1102 lineas reales de deudor (09-ago), no inventada:
+        # el 90% de lo que dice un humano en estas llamadas esta aqui. "si" fue
+        # transcrito "sim" 5 veces — por eso se pide anclar a estas formas.
         "AUDIO TELEFONICO RUIDOSO — VOCABULARIO PROBABLE DEL CLIENTE (usalo para "
         "desambiguar lo que oigas; lo que NO se parezca a nada de esto ni al "
         "contexto, NO lo completes — pide repetir): "
         f"'{first_name_for_prompt}', "
         f"'{str(debtor.get('aseguradora_nombre') or '').strip()}', "
-        "'alo', 'si', 'no', 'bueno', 'con ella habla', 'con el habla', 'soy yo', "
-        "'cupon', 'link', 'ya pague', 'ya lo pague', 'no tengo plata', "
-        "'no puedo pagar', 'llamame manana', 'mas tarde', 'un asesor', "
-        "'numero equivocado', 'que pena', 'gracias'.\n\n"
+        "'alo', 'si', 'si por favor', 'si claro', 'si senora', 'no', 'no gracias', "
+        "'no senora', 'bueno', 'buenos dias', 'con ella habla', 'con el habla', "
+        "'soy yo', 'un link', 'link de pago', 'un cupon de pago', 'ya pague', "
+        "'ya lo pague', 'ya lo cancele', 'no tengo plata', 'no puedo pagar', "
+        "'llamame manana', 'mas tarde', 'un asesor', 'numero equivocado', "
+        "'gracias', 'hasta luego'.\n\n"
     )
 
     persona = resolve_persona(tenant_config)
