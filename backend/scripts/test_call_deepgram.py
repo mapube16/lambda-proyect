@@ -326,6 +326,69 @@ def call(ws_url: str, destino: str = TEL_PRUEBA) -> None:
     print("llamando a %s — call_sid=%s" % (destino, llamada.sid))
 
 
+async def selftest_prod() -> int:
+    """Se hace pasar por Twilio contra el SERVER LOCAL (:8002): handshake real,
+    silencio entrante, y exige audio de celeste de vuelta — el pipeline entero
+    (webhook aparte) validado SIN quemarle un timbre a nadie."""
+    from datetime import datetime, timezone
+
+    db = _db()
+    debtor = await db.debtors.find_one({"user_id": USER_ID, "telefono": TEL_PRUEBA, "is_test": True})
+    if not debtor:
+        raise SystemExit("no existe el deudor clon")
+    fake_sid = "CAselftest%d" % os.getpid()
+    await db.cobranza_calls_in_progress.delete_many({"call_sid": {"$regex": "^CAselftest"}})
+    await db.cobranza_calls_in_progress.insert_one({
+        "call_sid": fake_sid, "user_id": USER_ID,
+        "debtor_id": str(debtor["_id"]), "debtor_name": debtor.get("nombre"),
+        "debtor_phone": TEL_PRUEBA, "started_at": datetime.now(timezone.utc),
+    })
+
+    audio = 0
+    async with websockets.connect("ws://127.0.0.1:8002/api/cobranza/voice/ws/" + fake_sid) as ws:
+        sid = "MZselftest"
+        await ws.send(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        await ws.send(json.dumps({
+            "event": "start", "sequenceNumber": "1", "streamSid": sid,
+            "start": {"accountSid": os.getenv("TWILIO_ACCOUNT_SID", "AC"), "streamSid": sid,
+                      "callSid": fake_sid, "tracks": ["inbound"],
+                      "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1}},
+        }))
+        silencio = base64.b64encode(b"\xff" * 160).decode()
+
+        async def bombear():
+            n = 0
+            while True:
+                n += 1
+                await ws.send(json.dumps({
+                    "event": "media", "streamSid": sid,
+                    "media": {"track": "inbound", "chunk": str(n),
+                              "timestamp": str(n * 20), "payload": silencio},
+                }))
+                await asyncio.sleep(0.02)
+
+        bomba = asyncio.create_task(bombear())
+        try:
+            async with asyncio.timeout(40):   # Gemini+Deepgram tardan en el saludo
+                async for raw in ws:
+                    m = json.loads(raw)
+                    if m.get("event") == "media":
+                        audio += len(base64.b64decode(m["media"]["payload"]))
+                        if audio > 8000 * 3:
+                            break
+        except TimeoutError:
+            pass
+        bomba.cancel()
+        await ws.send(json.dumps({"event": "stop", "streamSid": sid}))
+
+    await db.cobranza_calls_in_progress.delete_many({"call_sid": fake_sid})
+    db.client.close()
+    print("selftest-prod: %.1fs de audio del agente recibidos" % (audio / 8000))
+    assert audio > 8000 * 2, "sin audio del pipeline — revisar log del server"
+    print("selftest-prod OK")
+    return 0
+
+
 async def call_prod(base_https: str, destino: str = TEL_PRUEBA) -> None:
     """Marca por el flujo REAL de produccion: url=webhook (TwiML+firma+ws+run_bot).
     Inserta el mapping call_sid->deudor clon que el ws de run_bot busca.
@@ -333,9 +396,13 @@ async def call_prod(base_https: str, destino: str = TEL_PRUEBA) -> None:
     from twilio.rest import Client
 
     db = _db()
-    debtor = await db.debtors.find_one({"user_id": USER_ID, "telefono": TEL_PRUEBA, "is_test": True})
+    # el deudor de prueba se busca por el TELEFONO DESTINO (hay varios: el clon
+    # de cartera real y los ficticios de demo), nunca por una constante fija.
+    debtor = await db.debtors.find_one({"user_id": USER_ID, "telefono": destino, "is_test": True})
     if not debtor:
-        raise SystemExit("no existe el deudor clon")
+        raise SystemExit(f"no hay deudor de prueba con telefono {destino}")
+    print("deudor de prueba: %s (%s #%s)" % (
+        debtor.get("nombre"), debtor.get("ramo_nombre"), debtor.get("numero_poliza")))
 
     c = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
     llamada = c.calls.create(
@@ -360,6 +427,8 @@ if __name__ == "__main__":
         asyncio.run(serve())
     elif modo == "selftest":
         sys.exit(asyncio.run(selftest()))
+    elif modo == "selftest-prod":
+        sys.exit(asyncio.run(selftest_prod()))
     elif modo == "call":
         call(sys.argv[2], *sys.argv[3:4])
     elif modo == "call-prod":

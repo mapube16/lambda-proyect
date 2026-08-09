@@ -1,48 +1,74 @@
-"""TTS de Deepgram (Aura-2) como servicio de Pipecat — la "boca" del modo híbrido.
+"""Modo híbrido de voz (rama feat/voz-deepgram): Gemini Live escucha/piensa,
+la voz colombiana de Deepgram (aura-2-celeste-es / gloria) pronuncia.
 
-Modo híbrido (rama feat/voz-deepgram): Gemini Live sigue siendo oído + cerebro
-(STT telefónico probado, tools, turnos), pero con modalities=TEXT — el texto que
-genera lo pronuncia una voz COLOMBIANA de Deepgram (aura-2-celeste-es / gloria).
-Veredicto de las 6 llamadas de prueba: la voz de Deepgram gusta, su STT no.
+El TTS es el DeepgramHttpTTSService OFICIAL de pipecat (solo usa aiohttp, no el
+SDK de deepgram) — aquí solo vive el pegamento:
 
-Va montado en el pipeline entre el LLM y transport.output(). La base TTSService
-de pipecat agrega tokens en oraciones y llama run_tts() por oración; el audio
-sale en PCM 24k y el serializer del transporte lo baja a mulaw 8k (mismo camino
-que recorría el audio nativo de Gemini).
+  - crear_tts_deepgram(): fábrica con la sesión aiohttp compartida del proceso.
+  - DescartarVozGemini: ningún modelo Live vigente acepta response_modalities=
+    TEXT (probado 2026-08-08: 3.1-flash-live y los native-audio devuelven 1007;
+    los half-cascade viejos ya no existen en la API). Así que Gemini genera su
+    voz normal — conservando VAD, turnos y tools EXACTOS de producción — y este
+    procesador bota su audio y re-emite su transcripción (TTSTextFrame, la misma
+    del transcript de siempre) como TextFrame para que el TTS la pronuncie.
 
-ponytail: sintesis por oración completa via HTTP (~200-400ms por frase). Si la
-latencia percibida molesta, el paso siguiente es el WS streaming de Deepgram.
+ponytail: se pagan los tokens de audio de Gemini que se botan; si algún día la
+API re-admite TEXT en Live, DescartarVozGemini sobra y se quita del pipeline.
 """
 import logging
+import os
+from typing import Optional
 
-from pipecat.frames.frames import TTSAudioRawFrame, TTSStartedFrame, TTSStoppedFrame
-from pipecat.services.tts_service import TTSService
+import aiohttp
 
-from cobranza.deepgram_tts_client import DEFAULT_MODEL, speak_raw
+from pipecat.frames.frames import (
+    TextFrame,
+    TTSAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
+    TTSTextFrame,
+)
+from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.services.deepgram.tts import DeepgramHttpTTSService
 
 logger = logging.getLogger("cobranza.deepgram_pipecat_tts")
 
+# Sesión aiohttp compartida del proceso (pooling); se crea en el primer call —
+# aiohttp exige un event loop corriendo. Nunca se cierra: vive lo que el server.
+_session: Optional[aiohttp.ClientSession] = None
 
-class DeepgramHttpTTSService(TTSService):
-    """Deepgram Speak /v1/speak (HTTP) → frames de audio PCM para el pipeline."""
 
-    def __init__(self, *, model: str = DEFAULT_MODEL, sample_rate: int = 24000, **kwargs):
-        super().__init__(sample_rate=sample_rate, **kwargs)
-        self._model = model
+def crear_tts_deepgram(voz: str) -> DeepgramHttpTTSService:
+    global _session
+    if _session is None:
+        _session = aiohttp.ClientSession()
+    return DeepgramHttpTTSService(
+        api_key=os.getenv("DEEPGRAM_API_KEY", ""),
+        voice=voz,
+        aiohttp_session=_session,
+        # 8000, no 24000: la linea telefonica es 8k igual, y a 24k el que
+        # remuestrea es Pipecat. Pidiendoselo a 8k lo hace Deepgram, que es
+        # justo lo que hacia el Voice Agent (mulaw 8k nativo) y por eso sonaba
+        # mejor. Un downsample menos en la cadena.
+        sample_rate=8000,
+    )
 
-    def can_generate_metrics(self) -> bool:
-        return True
 
-    async def run_tts(self, text: str):
-        await self.start_ttfb_metrics()
-        try:
-            pcm, rate = await speak_raw(text, model=self._model, sample_rate=self.sample_rate)
-        except Exception:
-            # Nunca tumbar la llamada por una frase que no sintetizó: se pierde
-            # esa oración y la conversación sigue (Gemini repite si hace falta).
-            logger.exception("[deepgram-tts] fallo sintetizando %r", text[:80])
-            return
-        await self.stop_ttfb_metrics()
-        yield TTSStartedFrame()
-        yield TTSAudioRawFrame(audio=pcm, sample_rate=rate, num_channels=1)
-        yield TTSStoppedFrame()
+class DescartarVozGemini(FrameProcessor):
+    """Entre Gemini Live (AUDIO) y el TTS: bota la voz de Gemini, deja su texto.
+
+    Gemini Live emite CADA frase DOS veces (gemini_live/llm.py:1977-1982): una
+    como LLMTextFrame y otra como TTSTextFrame. El TTS aguas abajo agrega
+    cualquier TextFrame, asi que dejar pasar las dos hacia celeste producia
+    "Le habla Le habla ARIA, ARIA, asistente asistente virtual virtual..."
+    (llamada CAc87038). Se deja pasar SOLO el LLMTextFrame; el TTSTextFrame que
+    alimenta el transcript lo vuelve a emitir nuestro TTS al hablar
+    (push_text_frames=True), asi que bot_collector no pierde nada.
+    """
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, (TTSAudioRawFrame, TTSTextFrame,
+                              TTSStartedFrame, TTSStoppedFrame)):
+            return              # voz y eco de texto de Gemini: a la basura
+        await self.push_frame(frame, direction)

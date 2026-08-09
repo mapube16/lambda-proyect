@@ -320,6 +320,19 @@ async def run_bot(
         f"- Vencimiento: {vencimiento_str}\n"
         f"{_policy_block}"
         "\n"
+        # Keyterms para el oido: el audio telefonico 8k es ruidoso y el modelo
+        # transcribia inventos ("con el hilar de cepo" por "con ella habla,
+        # Restrepo"; "a los canadienses"). Darle el vocabulario probable ancla
+        # la interpretacion acustica igual que un phrase-list en un STT clasico.
+        "AUDIO TELEFONICO RUIDOSO — VOCABULARIO PROBABLE DEL CLIENTE (usalo para "
+        "desambiguar lo que oigas; lo que NO se parezca a nada de esto ni al "
+        "contexto, NO lo completes — pide repetir): "
+        f"'{first_name_for_prompt}', "
+        f"'{str(debtor.get('aseguradora_nombre') or '').strip()}', "
+        "'alo', 'si', 'no', 'bueno', 'con ella habla', 'con el habla', 'soy yo', "
+        "'cupon', 'link', 'ya pague', 'ya lo pague', 'no tengo plata', "
+        "'no puedo pagar', 'llamame manana', 'mas tarde', 'un asesor', "
+        "'numero equivocado', 'que pena', 'gracias'.\n\n"
     )
 
     persona = resolve_persona(tenant_config)
@@ -720,13 +733,13 @@ async def run_bot(
             # cobranza wants consistent, on-script answers more than creative ones.
             # Per-tenant override via tenant_config.voice_temperature.
             temperature=float(tenant_config.get("voice_temperature") or 0.5),
-            # AUDIO = Gemini habla con su propia voz (Aoede etc.). TEXT = modo
-            # HIBRIDO (rama voz-deepgram): Gemini solo escucha y piensa; el
-            # texto lo pronuncia el TTS de Deepgram insertado en el pipeline
-            # (voz colombiana). Sin el TTS downstream, TEXT = llamada muda —
-            # por eso ambos se deciden juntos via _tts_engine (abajo).
-            modalities=(GeminiModalities.TEXT if _tts_engine == "deepgram"
-                        else GeminiModalities.AUDIO),
+            # CRITICAL: force AUDIO output. Without this, Gemini Live returns
+            # only text — the pipeline emits "bot speaking" events but ZERO
+            # audio frames, so the caller hears nothing. Nota hibrido: TEXT no
+            # existe en los modelos Live vigentes (probado 2026-08-08, error
+            # 1007) — el modo deepgram descarta este audio y re-sintetiza la
+            # transcripcion (ver DescartarVozGemini).
+            modalities=GeminiModalities.AUDIO,
             # Disable "thinking" (thinking_budget=0): the model otherwise spends
             # extra inference deliberating BEFORE emitting the first audio, which
             # adds dead air to the opening greeting (~2.7s measured answer->speak).
@@ -914,11 +927,13 @@ async def run_bot(
         context_aggregator.assistant(),
     ]
     if _tts_engine == "deepgram":
-        from cobranza.deepgram_pipecat_tts import DeepgramHttpTTSService
+        from cobranza.deepgram_pipecat_tts import DescartarVozGemini, crear_tts_deepgram
         _dg_voice = str(tenant_config.get("deepgram_voice") or
                         os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-celeste-es"))
-        _stages.insert(4, DeepgramHttpTTSService(model=_dg_voice))
-        logger.info("[VOICE] motor hibrido: Gemini TEXT + Deepgram TTS %s", _dg_voice)
+        # llm(AUDIO) → descartar voz Gemini → TTS Deepgram → bot_collector
+        _stages.insert(4, crear_tts_deepgram(_dg_voice))
+        _stages.insert(4, DescartarVozGemini())
+        logger.info("[VOICE] motor hibrido: Gemini AUDIO (descartado) + Deepgram TTS %s", _dg_voice)
     pipeline = Pipeline(_stages)
 
     # Barge-in OFF por defecto (tenant_config.barge_in_enabled) — mismo switch
