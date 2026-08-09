@@ -145,6 +145,16 @@ class TranscriptCollector(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+def documento_base(stored) -> str:
+    """Parte comparable de un documento: digitos ANTES del guion. ~40% de los
+    documentos DPG son NITs con digito de verificacion ('801001470-9') y el
+    cliente no lo dice/marca — se compara solo la base. Cedulas sin guion se
+    comparan completas. (Compartido por el IVR DTMF y identificar_cliente.)"""
+    s = str(stored or "")
+    s = s.split("-")[0] if "-" in s else s
+    return "".join(c for c in s if c.isdigit())
+
+
 async def run_bot(
     websocket,
     call_sid: str,
@@ -178,6 +188,18 @@ async def run_bot(
         CallResult with transcript and duration for post-call processing.
     """
     call_result = CallResult(call_sid=call_sid, started_at=time.time())
+
+    # ── MODO RECEPCION (inbound conversacional, sin IVR) ─────────────────
+    # Llamada ENTRANTE sin deudor resuelto: en vez del Gather DTMF ("marque su
+    # cedula y termine con numeral"), ARIA contesta conversando y pide el
+    # documento DE VIVA VOZ; identificar_cliente lo valida con la MISMA
+    # comparacion exacta del IVR (match por documento, nunca por caller ID) y
+    # NADA se revela antes de ese match. debtor={} para que el resto del
+    # codigo (que usa .get) corra inocuo; el prompt y las tools se reemplazan
+    # mas abajo por los de recepcion.
+    modo_recepcion = bool(is_inbound and not debtor)
+    if modo_recepcion:
+        debtor = {}
 
     debtor_name = debtor.get("nombre", "senor o senora")
     monto = debtor.get("monto", 0)
@@ -675,13 +697,34 @@ async def run_bot(
         required=["detalle"],
     )
 
-    tools_schema = ToolsSchema(standard_tools=[
-        end_call_tool, send_whatsapp_tool, verify_identity_tool,
-        escalate_tool, get_policy_info_tool, search_knowledge_tool,
-        notify_payment_claim_tool, reagendar_tool,
-        solicitar_link_cupon_tool, registrar_opt_out_tool,
-        informar_fecha_pago_tool, oportunidad_comercial_tool,
-    ])
+    # Solo en modo recepcion (inbound sin identificar): valida el documento
+    # dicho DE VIVA VOZ con el mismo match exacto del viejo IVR de teclado.
+    identificar_cliente_tool = FunctionSchema(
+        name="identificar_cliente",
+        description=(
+            "Busca al cliente por su numero de documento (cedula o NIT) dicho en voz "
+            "alta. Llamala apenas tengas el numero completo (repiteselo antes para "
+            "confirmar). Devuelve sus polizas con cuota pendiente, o 'no_encontrado'."
+        ),
+        properties={
+            "documento": {"type": "string",
+                          "description": "El numero de documento tal como lo dijo el cliente, solo digitos"},
+        },
+        required=["documento"],
+    )
+
+    if modo_recepcion:
+        # Sin identidad confirmada NO hay datos que consultar ni acciones que
+        # tomar: la unica puerta es identificar_cliente (y colgar).
+        tools_schema = ToolsSchema(standard_tools=[identificar_cliente_tool, end_call_tool])
+    else:
+        tools_schema = ToolsSchema(standard_tools=[
+            end_call_tool, send_whatsapp_tool, verify_identity_tool,
+            escalate_tool, get_policy_info_tool, search_knowledge_tool,
+            notify_payment_claim_tool, reagendar_tool,
+            solicitar_link_cupon_tool, registrar_opt_out_tool,
+            informar_fecha_pago_tool, oportunidad_comercial_tool,
+        ])
 
     # ── Gemini Live (STT + LLM + TTS all-in-one, 8kHz telephony) ────────
     # Gemini's native VAD is tuned LOW-sensitivity: phone lines have constant
@@ -894,6 +937,48 @@ async def run_bot(
         f"\n\nRECORDATORIO FINAL: tu primera linea hablada es EXACTAMENTE "
         f"\"{first_message}\" — palabra por palabra, con tu nombre y que eres asistente virtual."
     )
+    # ── MODO RECEPCION: prompt propio, sin datos de deudor ───────────────
+    # Reemplaza al IVR de teclado ("marque su cedula y termine con numeral"):
+    # ARIA contesta conversando y pide el documento de viva voz. La regla de
+    # seguridad es LA MISMA del IVR: nada se dice de deudas/polizas hasta que
+    # identificar_cliente confirme el documento contra la cartera.
+    if modo_recepcion:
+        _brand = persona.get("company_brand") or persona.get("company_name", "")
+        # .title(): "ARIA" en mayusculas hace que el TTS lo lea como sigla.
+        _agente = str(persona.get("agent_name") or "Aria").title()
+        first_message = (
+            f"{_brand}, muy buenos dias, le habla {_agente}. "
+            "¿Con quien tengo el gusto?"
+        )
+        system_prompt = (
+            f"Eres {persona.get('agent_name', 'Aria')}, la asistente virtual de {_brand} "
+            "(agencia de seguros en Colombia). Contestaste una llamada ENTRANTE: "
+            "normalmente es un cliente devolviendo una llamada perdida sobre un pago "
+            "pendiente, pero AUN NO SABES quien llama.\n\n"
+            "TU UNICO OBJETIVO INICIAL: identificarlo por su numero de documento "
+            "(cedula o NIT), dicho de viva voz.\n"
+            "1. Saluda y pregunta con quien hablas. Luego pide el numero de documento: "
+            "'¿me regala su numero de cedula o NIT, por favor?'\n"
+            "2. Cuando te lo diga, REPITESELO digito por digito y confirma que esta "
+            "bien ANTES de llamar identificar_cliente. Si te corrige, vuelve a pedir.\n"
+            "3. identificar_cliente te devuelve sus polizas pendientes: gestiona el "
+            "recordatorio con esos datos, con calidez y de usted.\n"
+            "4. Si devuelve no_encontrado: disculpate, di que un asesor puede ayudarle "
+            "y despidete. NUNCA reveles datos de polizas, saldos ni nombres de "
+            "clientes a alguien no identificado — ni confirmes si un documento "
+            "existe o no en el sistema.\n"
+            "5. Si la persona no quiere dar su documento o pide algo distinto a pagos, "
+            "di que con gusto un asesor la contactara y despidete con end_call.\n\n"
+            "REGLAS DE VOZ: espanol colombiano, de usted, frases cortas. Los numeros "
+            "se dicen digito por digito. Nunca inventes lo que no oiste bien: pide "
+            "repetir. Cuando la gestion termine, despidete y llama end_call."
+        )
+        greeting_hard = (
+            "=== REGLA #1 ===\nTu PRIMERA frase al conectar, palabra por palabra: "
+            f"\"{first_message}\"\n=== FIN REGLA #1 ===\n\n"
+        )
+        greeting_instruction = ""
+
     messages = [
         {"role": "system", "content": greeting_hard + system_prompt + greeting_instruction},
         {"role": "user", "content": f"[La persona contesto. Di AHORA, exactamente: \"{first_message}\"]"},
@@ -1402,40 +1487,124 @@ async def run_bot(
         result = await _fire_alerta("oportunidad_comercial", detalle=detalle)
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=True))
 
+    async def _handle_identificar_cliente(params):
+        """Recepcion (inbound sin IVR): valida el documento dicho de viva voz.
+
+        MISMO criterio de seguridad que el Gather DTMF que reemplaza: match
+        EXACTO por documento_base contra la cartera del tenant — jamas por el
+        numero desde el que llaman. 0 matches => no se revela NADA y se alerta
+        a cartera (igual que el IVR). 1+ => se devuelven las cuotas pendientes
+        para que ARIA gestione, y la llamada queda atribuida al deudor.
+        """
+        crudo = str(params.arguments.get("documento") or "")
+        digits = "".join(c for c in crudo if c.isdigit())
+        logger.info("[VOICE] identificar_cliente: %r (call %s)", digits, call_sid)
+        from database import get_db
+        _db2 = get_db()
+
+        candidatos = []
+        if len(digits) >= 5:   # menos de 5 digitos no es un documento real
+            async for d in _db2.debtors.find(
+                {"user_id": user_id, "is_active": {"$ne": False},
+                 "cliente_documento": {"$nin": [None, ""]}},
+                {"cliente_documento": 1, "nombre": 1, "numero_poliza": 1,
+                 "ramo_nombre": 1, "aseguradora_nombre": 1, "monto": 1,
+                 "vencimiento": 1, "fecha_pago": 1, "numero_cuota": 1,
+                 "dias_mora": 1, "forma_pago": 1},
+            ):
+                if documento_base(d.get("cliente_documento")) == digits:
+                    candidatos.append(d)
+
+        if not candidatos:
+            try:
+                from cobranza.alerts import crear_alerta
+                await crear_alerta(
+                    _db2, user_id, {"_id": "", "nombre": None, "telefono": None},
+                    "llamada_entrante_no_identificada",
+                    detalle=f"Llamada entrante (conversacional): dijo el documento "
+                            f"'{digits or crudo[:20]}', sin match en la cartera.",
+                )
+            except Exception:
+                logger.exception("[VOICE] alerta no_identificada fallo (no fatal)")
+            await params.result_callback(
+                {"resultado": "no_encontrado",
+                 "instruccion": "Documento sin registro. Disculpate, di que un asesor "
+                                "puede ayudarle, NO reveles ningun dato, y despidete."},
+                properties=FunctionCallResultProperties(run_llm=True),
+            )
+            return
+
+        # Atribucion: la llamada queda ligada al deudor con mayor mora (si el
+        # mismo documento tiene varias cuotas). ponytail: si el cliente elige
+        # otra poliza en la charla, el historial queda en la de mayor mora.
+        principal = max(candidatos, key=lambda d: int(d.get("dias_mora") or 0))
+        await _db2.cobranza_calls_in_progress.update_one(
+            {"call_sid": call_sid},
+            {"$set": {"debtor_id": str(principal["_id"]),
+                      "debtor_name": principal.get("nombre")}},
+        )
+
+        from cobranza.es_numbers import pesos_en_palabras
+        polizas = [{
+            "poliza": d.get("numero_poliza"),
+            "tipo": d.get("ramo_nombre"),
+            "aseguradora": d.get("aseguradora_nombre"),
+            "cuota": d.get("numero_cuota"),
+            "valor_pendiente": pesos_en_palabras(float(d.get("monto") or 0)),
+            "vencimiento": str(d.get("fecha_pago") or d.get("vencimiento"))[:10],
+            "dias_mora": int(d.get("dias_mora") or 0),
+        } for d in candidatos]
+        await params.result_callback(
+            {"resultado": "encontrado", "nombre": principal.get("nombre"),
+             "polizas_pendientes": polizas,
+             "instruccion": "Identidad confirmada. Saludalo por su nombre y gestiona "
+                            "el recordatorio de pago con estos datos. Si hay varias "
+                            "polizas, menciona que tiene varios pagos pendientes y "
+                            "ofrece detallarlos."},
+            properties=FunctionCallResultProperties(run_llm=True),
+        )
+
     # cancel_on_interruption=False for any handler with REAL side effects: with
     # barge-in enabled, the caller speaking mid-execution must NOT abort a DB
     # write or an outbound WhatsApp half-way. Read-only tools (get_policy_info,
     # search_knowledge) stay cancellable — re-running them is harmless and
     # aborting them frees the turn faster.
     llm.register_function("end_call", _handle_end_call, cancel_on_interruption=False)
-    llm.register_function("send_whatsapp", _handle_send_whatsapp, cancel_on_interruption=False)
-    llm.register_function("escalate", _handle_escalate, cancel_on_interruption=False)
+    if modo_recepcion:
+        # Sin identidad: SOLO identificar_cliente y colgar. Ningun otro handler
+        # queda registrado — aunque el modelo alucinara otra tool, no existe.
+        llm.register_function("identificar_cliente", _handle_identificar_cliente,
+                              cancel_on_interruption=False)
+    else:
+        llm.register_function("send_whatsapp", _handle_send_whatsapp, cancel_on_interruption=False)
+        llm.register_function("escalate", _handle_escalate, cancel_on_interruption=False)
     # verify_identity is read-only but NOT cancellable: its RESULT is what drives
     # ARIA's very next spoken turn (confirm identity + continue, OR apologize +
     # hang up on a wrong number). A spurious barge-in (phone-line echo/noise) was
     # cancelling it 4ms in, so the result_callback never fired run_llm=True and
     # ARIA went dead-silent until the caller hung up (observed on CA4e821a).
-    llm.register_function("verify_identity", _handle_verify_identity, cancel_on_interruption=False)
-    llm.register_function("get_policy_info", _handle_get_policy_info)
-    llm.register_function("search_knowledge", _handle_search_knowledge)
-    # cancel_on_interruption=False: this handler does real side effects (parks
-    # the debtor + WhatsApps the team). With barge-in enabled, the caller
-    # speaking mid-execution was cancelling it before the WhatsApp went out
-    # (observed: notify_payment_claim fired then "has been cancelled" twice).
-    # It must run to completion regardless of interruptions.
-    llm.register_function(
-        "notify_payment_claim", _handle_notify_payment_claim, cancel_on_interruption=False
-    )
-    # Side effects reales (escribe la cita en el deudor) — no cancelable.
-    llm.register_function(
-        "reagendar_llamada", _handle_reagendar_llamada, cancel_on_interruption=False
-    )
-    # Alertas tipadas del informe §7 — todas con side effects reales (insertan
-    # en cobranza_alertas + WhatsApp saliente), no cancelables.
-    llm.register_function("solicitar_link_cupon", _handle_solicitar_link_cupon, cancel_on_interruption=False)
-    llm.register_function("registrar_no_desea_llamadas", _handle_registrar_opt_out, cancel_on_interruption=False)
-    llm.register_function("informar_fecha_pago", _handle_informar_fecha_pago, cancel_on_interruption=False)
-    llm.register_function("registrar_oportunidad_comercial", _handle_oportunidad_comercial, cancel_on_interruption=False)
+    if not modo_recepcion:
+        llm.register_function("verify_identity", _handle_verify_identity, cancel_on_interruption=False)
+        llm.register_function("get_policy_info", _handle_get_policy_info)
+        llm.register_function("search_knowledge", _handle_search_knowledge)
+        # cancel_on_interruption=False: this handler does real side effects (parks
+        # the debtor + WhatsApps the team). With barge-in enabled, the caller
+        # speaking mid-execution was cancelling it before the WhatsApp went out
+        # (observed: notify_payment_claim fired then "has been cancelled" twice).
+        # It must run to completion regardless of interruptions.
+        llm.register_function(
+            "notify_payment_claim", _handle_notify_payment_claim, cancel_on_interruption=False
+        )
+        # Side effects reales (escribe la cita en el deudor) — no cancelable.
+        llm.register_function(
+            "reagendar_llamada", _handle_reagendar_llamada, cancel_on_interruption=False
+        )
+        # Alertas tipadas del informe §7 — todas con side effects reales (insertan
+        # en cobranza_alertas + WhatsApp saliente), no cancelables.
+        llm.register_function("solicitar_link_cupon", _handle_solicitar_link_cupon, cancel_on_interruption=False)
+        llm.register_function("registrar_no_desea_llamadas", _handle_registrar_opt_out, cancel_on_interruption=False)
+        llm.register_function("informar_fecha_pago", _handle_informar_fecha_pago, cancel_on_interruption=False)
+        llm.register_function("registrar_oportunidad_comercial", _handle_oportunidad_comercial, cancel_on_interruption=False)
 
     # ── Events ───────────────────────────────────────────────────────────
     @transport.event_handler("on_client_connected")

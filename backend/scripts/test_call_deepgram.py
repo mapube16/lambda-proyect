@@ -389,6 +389,67 @@ async def selftest_prod() -> int:
     return 0
 
 
+async def selftest_inbound() -> int:
+    """Simula una llamada ENTRANTE conversacional (sin IVR) contra el server
+    local: mapping sin deudor -> modo_recepcion -> exige el saludo de recepcion
+    ('¿con quien tengo el gusto?') sin revelar datos. Sin telefono de por medio."""
+    from datetime import datetime, timezone
+
+    db = _db()
+    fake_sid = "CAselftestin%d" % os.getpid()
+    await db.cobranza_calls_in_progress.delete_many({"call_sid": {"$regex": "^CAselftestin"}})
+    await db.cobranza_calls_in_progress.insert_one({
+        "call_sid": fake_sid, "user_id": USER_ID,
+        "debtor_id": "", "debtor_name": None, "debtor_phone": "+573001112233",
+        "direction": "inbound", "inbound_sin_identificar": True,
+        "started_at": datetime.now(timezone.utc),
+    })
+
+    audio = 0
+    async with websockets.connect("ws://127.0.0.1:8002/api/cobranza/voice/ws/" + fake_sid) as ws:
+        sid = "MZselftestin"
+        await ws.send(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        await ws.send(json.dumps({
+            "event": "start", "sequenceNumber": "1", "streamSid": sid,
+            "start": {"accountSid": os.getenv("TWILIO_ACCOUNT_SID", "AC"), "streamSid": sid,
+                      "callSid": fake_sid, "tracks": ["inbound"],
+                      "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1}},
+        }))
+        silencio = base64.b64encode(b"\xff" * 160).decode()
+
+        async def bombear():
+            n = 0
+            while True:
+                n += 1
+                await ws.send(json.dumps({
+                    "event": "media", "streamSid": sid,
+                    "media": {"track": "inbound", "chunk": str(n),
+                              "timestamp": str(n * 20), "payload": silencio},
+                }))
+                await asyncio.sleep(0.02)
+
+        bomba = asyncio.create_task(bombear())
+        try:
+            async with asyncio.timeout(40):
+                async for raw in ws:
+                    m = json.loads(raw)
+                    if m.get("event") == "media":
+                        audio += len(base64.b64decode(m["media"]["payload"]))
+                        if audio > 8000 * 3:
+                            break
+        except TimeoutError:
+            pass
+        bomba.cancel()
+        await ws.send(json.dumps({"event": "stop", "streamSid": sid}))
+
+    await db.cobranza_calls_in_progress.delete_many({"call_sid": fake_sid})
+    db.client.close()
+    print("selftest-inbound: %.1fs de audio de recepcion recibidos" % (audio / 8000))
+    assert audio > 8000 * 2, "recepcion no hablo — revisar log del server"
+    print("selftest-inbound OK")
+    return 0
+
+
 async def call_prod(base_https: str, destino: str = TEL_PRUEBA) -> None:
     """Marca por el flujo REAL de produccion: url=webhook (TwiML+firma+ws+run_bot).
     Inserta el mapping call_sid->deudor clon que el ws de run_bot busca.
@@ -429,6 +490,8 @@ if __name__ == "__main__":
         sys.exit(asyncio.run(selftest()))
     elif modo == "selftest-prod":
         sys.exit(asyncio.run(selftest_prod()))
+    elif modo == "selftest-inbound":
+        sys.exit(asyncio.run(selftest_inbound()))
     elif modo == "call":
         call(sys.argv[2], *sys.argv[3:4])
     elif modo == "call-prod":

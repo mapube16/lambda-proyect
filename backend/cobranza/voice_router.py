@@ -67,6 +67,43 @@ async def twilio_webhook(request: Request):
         )
 
     if direction == "inbound":
+        # Inbound CONVERSACIONAL (sin IVR): si el tenant activo el flag, no hay
+        # saludo pregrabado ni Gather de teclado — se conecta el stream directo
+        # y ARIA pide el documento de viva voz (modo_recepcion de run_bot, tool
+        # identificar_cliente con el mismo match exacto del IVR). Flag por
+        # tenant en tenant_configs.cobranza.inbound_conversacional; default
+        # False = IVR clasico intacto.
+        try:
+            from cobranza.sequence_engine import _tenant_ids
+            from cobranza.config_cache import get_tenant_config
+            db = get_db()
+            # ponytail: hoy hay UN tenant con cobranza (DPG); con varios, el
+            # numero To debe mapear al tenant dueno de esa linea.
+            tenant_ids = await _tenant_ids(db)
+            _uid = tenant_ids[0] if tenant_ids else ""
+            _cobr = ((await get_tenant_config(_uid)) or {}).get("cobranza") or {} if _uid else {}
+            if _cobr.get("inbound_conversacional"):
+                await db.cobranza_calls_in_progress.insert_one({
+                    "call_sid": call_sid, "user_id": _uid,
+                    "debtor_id": "", "debtor_name": None,
+                    "debtor_phone": form.get("From", ""),
+                    "direction": "inbound", "inbound_sin_identificar": True,
+                    "started_at": datetime.now(timezone.utc),
+                })
+                host = (os.getenv("VOICE_WEBHOOK_HOST", "http://localhost:8002")
+                        .replace("https://", "").replace("http://", ""))
+                logger.info("[Webhook][Inbound] %s conversacional (sin IVR) from=%s",
+                            call_sid, form.get("From"))
+                return PlainTextResponse(
+                    '<?xml version="1.0" encoding="UTF-8"?><Response>'
+                    f'<Connect><Stream url="wss://{host}/api/cobranza/voice/ws/{call_sid}" /></Connect>'
+                    "</Response>",
+                    media_type="application/xml",
+                )
+        except Exception:
+            # Cualquier fallo del camino nuevo cae al IVR clasico — una llamada
+            # entrante jamas se pierde por el flag.
+            logger.exception("[Webhook][Inbound] fallo modo conversacional — fallback a IVR")
         return await _handle_inbound_call(call_sid, form)
 
     host = (
@@ -635,6 +672,11 @@ async def get_inbound_greeting(variante: str):
 # ── WebSocket (Pipecat handles everything) ───────────────────────────────────
 
 
+async def _noop_none():
+    """Compañero de asyncio.gather cuando no hay debtor_id que buscar."""
+    return None
+
+
 @router.websocket("/ws/{call_sid}")
 async def voice_websocket(websocket: WebSocket, call_sid: str):
     """
@@ -683,11 +725,12 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             user_id = call_mapping["user_id"]
             debtor_id = call_mapping["debtor_id"]
             is_inbound = call_mapping.get("direction") == "inbound"
+            inbound_sin_identificar = bool(call_mapping.get("inbound_sin_identificar"))
             caller_stated_document = call_mapping.get("caller_stated_document", "")
             # Parallelize the two Atlas round-trips — they're independent. Run in
             # series this added ~one extra RTT of dead air before ARIA could greet.
             debtor, config_doc = await asyncio.gather(
-                get_debtor_by_id(db, user_id, debtor_id),
+                get_debtor_by_id(db, user_id, debtor_id) if debtor_id else _noop_none(),
                 db.cobranza_config.find_one({"user_id": user_id}),
             )
             estrategia = (config_doc or {}).get("estrategia", {})
@@ -696,12 +739,15 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             await websocket.close(1008, "No call mapping found")
             return
 
-        if not debtor:
+        # Inbound conversacional (sin IVR): arranca SIN deudor — run_bot entra en
+        # modo_recepcion y la identidad la resuelve identificar_cliente en vivo.
+        if not debtor and not inbound_sin_identificar:
             logger.error("[WS] No debtor for %s, closing", call_sid)
             await websocket.close(1008, "Missing debtor")
             return
 
-        logger.info("[WS] Starting Pipecat for call %s (debtor=%s)", call_sid, debtor.get("nombre"))
+        logger.info("[WS] Starting Pipecat for call %s (debtor=%s)",
+                    call_sid, debtor.get("nombre") if debtor else "<recepcion sin identificar>")
 
         # CRITICAL: pass the REAL Twilio stream_id (MZ...) parsed from the
         # handshake — NOT call_sid. The TwilioFrameSerializer tags every
@@ -723,7 +769,17 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
         logger.info("[WS] Pipecat finished for call %s (duration=%ss)", call_sid, call_result.duration_seconds)
 
         # ── Post-call: update debtor status & log history ────────────
-        if call_mapping:
+        # Recepcion sin identificar: identificar_cliente pudo haber atribuido la
+        # llamada a un deudor a mitad de conversacion — se relee el mapping. Si
+        # nadie se identifico, no hay a quien escribirle historial (la alerta de
+        # desconocido ya salio desde la tool).
+        if debtor is None and call_mapping:
+            _fresco = await db.cobranza_calls_in_progress.find_one({"call_sid": call_sid})
+            if _fresco and _fresco.get("debtor_id"):
+                debtor = await get_debtor_by_id(db, user_id, _fresco["debtor_id"])
+                logger.info("[WS] llamada de recepcion atribuida a %s",
+                            (debtor or {}).get("nombre"))
+        if call_mapping and debtor:
             await _process_call_ended(db, debtor, call_result, is_inbound=is_inbound)
 
     except Exception as e:
@@ -755,6 +811,12 @@ _VOICEMAIL_RE = re.compile(
     r"lleg[oó] al tiempo l[ií]mite|"
     r"para [a-záéíóúü ]{2,30}marque|"
     r"llamada (ser[aá]|est[aá] siendo|ha sido) transferida|"
+    # Minado de 372 transcripts (09-ago): familias que se escapaban — menus con
+    # "presiona X" (52 apariciones), "excedido el tiempo de grabacion" (= ARIA
+    # ya grabo un mensaje entero), "servicio de contestador para <numero>".
+    r"presion[ae] (uno|dos|tres|cuatro|cinco|numeral|la tecla)|"
+    r"excedido el tiempo|servicio de contestador|"
+    r"dej[ae]s? (tu|su) nombre|responde despu[eé]s del tono|"
     r"grab[ae]r? (su|el) mensaje",
     re.IGNORECASE,
 )
