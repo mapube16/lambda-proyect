@@ -358,6 +358,15 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
 
     key = os.getenv("DEEPGRAM_API_KEY", "")
     colgar = {"pedido": False}
+    # Half-duplex anti-eco (doc Deepgram "audio-preprocessing-barge-in"): mientras
+    # ARIA habla, la voz que vuelve por la linea es su propio eco (grave en
+    # ALTAVOZ). En vez de reenviarlo a Deepgram —que lo transcribia como turnos
+    # del cliente e inventaba frases— se le manda SILENCIO hasta ~0.5s despues
+    # del ultimo audio del agente. Deepgram no oye lo que no le llega. Costo:
+    # no hay barge-in durante ese ratito (aceptable en cobranza; turnos cortos).
+    _SILENCIO = base64.b64encode(b"\xff" * 160).decode()
+    agente = {"habla_hasta": 0.0}
+    _COLA_ANTIECO = float(os.getenv("COBRANZA_AGENT_ECHO_TAIL_S", "0.5"))
 
     try:
         async with websockets.connect(
@@ -370,7 +379,12 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                     m = json.loads(raw)
                     ev = m.get("event")
                     if ev == "media":
-                        await dg.send(base64.b64decode(m["media"]["payload"]))
+                        # anti-eco: mientras ARIA habla (o cola de ~0.5s), se le
+                        # manda SILENCIO a Deepgram en vez del audio con eco.
+                        if time.time() < agente["habla_hasta"]:
+                            await dg.send(base64.b64decode(_SILENCIO))
+                        else:
+                            await dg.send(base64.b64decode(m["media"]["payload"]))
                     elif ev == "dtmf":
                         # cedula por teclado en recepcion → turno de texto para el agente
                         dig = "".join(c for c in (m.get("dtmf") or {}).get("digit", "") if c.isdigit())
@@ -383,6 +397,10 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
             async def dg_a_twilio():
                 async for msg in dg:
                     if isinstance(msg, bytes):
+                        # ARIA esta hablando: marca la ventana anti-eco (se refresca
+                        # con cada chunk; el silencio a Deepgram dura mientras dure
+                        # el audio del agente + la cola).
+                        agente["habla_hasta"] = time.time() + _COLA_ANTIECO
                         await websocket.send_json({"event": "media", "streamSid": stream_id,
                                                    "media": {"payload": base64.b64encode(msg).decode()}})
                         continue

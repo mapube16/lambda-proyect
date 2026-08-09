@@ -53,11 +53,17 @@ async def get_redis() -> aioredis.Redis:
     )
     # Upstash uses rediss:// (SSL); Railway/local use redis:// (plain).
     ssl = url.startswith("rediss://")
+    # Timeouts CORTOS: si Redis no responde (p.ej. dev sin Redis, o Upstash
+    # caido), get_tenant_config debe caer a Mongo en ~1s, no colgarse 10s
+    # esperando la conexion. Se vio en local (sin Redis): 10s de retraso ANTES
+    # del primer turno de voz. Con Redis sano el connect es instantaneo.
     _redis_client = aioredis.from_url(
         url,
         encoding="utf-8",
         decode_responses=True,
         ssl=ssl,
+        socket_connect_timeout=1.0,
+        socket_timeout=1.0,
     )
     return _redis_client
 
