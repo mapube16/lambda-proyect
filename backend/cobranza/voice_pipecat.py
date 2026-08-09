@@ -264,6 +264,10 @@ async def run_bot(
     modo_recepcion = bool(is_inbound and not debtor)
     if modo_recepcion:
         debtor = {}
+    # Compartido entre identificar_cliente (lo prende) y RecepcionFirewall (lo
+    # consulta): hasta que sea True, NINGUNA frase con datos de poliza/plata
+    # sale por el TTS. En llamadas normales el deudor ya esta identificado.
+    identificado = {"ok": not modo_recepcion}
 
     debtor_name = debtor.get("nombre", "senor o senora")
     monto = debtor.get("monto", 0)
@@ -1109,6 +1113,11 @@ async def run_bot(
         # Desde aqui el LLMMessagesAppendFrame llega DIRECTO al servicio, que
         # es quien sabe convertirlo en send_client_content + nudge realtime.
         _stages.insert(3, CapturaDTMF(context=context, call_result=call_result))
+        # Firewall ANTES del TTS: lo que el modelo alucine sobre polizas/plata
+        # sin identificacion confirmada, no llega a la boca (CA2573a3: fabrico
+        # una poliza de Equidad). Solo filtra texto — requiere motor deepgram.
+        from cobranza.deepgram_pipecat_tts import RecepcionFirewall
+        _stages.insert(_stages.index(llm) + 2, RecepcionFirewall(identificado))
     pipeline = Pipeline(_stages)
 
     # Barge-in OFF por defecto (tenant_config.barge_in_enabled) — mismo switch
@@ -1616,6 +1625,7 @@ async def run_bot(
         # Atribucion: la llamada queda ligada al deudor con mayor mora (si el
         # mismo documento tiene varias cuotas). ponytail: si el cliente elige
         # otra poliza en la charla, el historial queda en la de mayor mora.
+        identificado["ok"] = True   # abre el firewall de datos sensibles
         principal = max(candidatos, key=lambda d: int(d.get("dias_mora") or 0))
         await _db2.cobranza_calls_in_progress.update_one(
             {"call_sid": call_sid},

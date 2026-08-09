@@ -54,6 +54,53 @@ def crear_tts_deepgram(voz: str) -> DeepgramHttpTTSService:
     )
 
 
+_RE_DATOS_SENSIBLES = None  # compilado perezoso en RecepcionFirewall
+
+
+class RecepcionFirewall(FrameProcessor):
+    """Guardarrail de SERVIDOR para el modo recepcion (inbound sin identificar).
+
+    Llamada real CA2573a3 (09-ago): Gemini Live ignoro el prompt entero y le
+    FABRICO al cliente una poliza ("expedida por Equidad, valor pendiente de
+    cero pesos") sin haber corrido identificar_cliente. El prompt no basta —
+    este filtro va en el pipeline, entre el LLM y el TTS: mientras la llamada
+    no este atribuida a un deudor (identificado["ok"]), CUALQUIER frase del bot
+    que huela a poliza/plata se BOTA y se reemplaza (una sola vez por racha)
+    por la linea fija que redirige a la identificacion. El modelo puede
+    alucinar lo que quiera: eso no llega a la boca.
+    """
+
+    def __init__(self, identificado: dict, **kwargs):
+        super().__init__(**kwargs)
+        self._identificado = identificado   # {"ok": bool} — lo escribe identificar_cliente
+        self._redirigido = False            # anti-loop: una redireccion por racha
+        global _RE_DATOS_SENSIBLES
+        if _RE_DATOS_SENSIBLES is None:
+            import re
+            _RE_DATOS_SENSIBLES = re.compile(
+                r"p[oó]liza|pesos|pendiente|cuota|deuda|mora|vencimiento|"
+                r"aseguradora|expedida|saldo|pagar|pago", re.IGNORECASE)
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if (not self._identificado.get("ok")
+                and isinstance(frame, TextFrame)
+                and not isinstance(frame, TTSTextFrame)
+                and frame.text and _RE_DATOS_SENSIBLES.search(frame.text)):
+            logger.warning("[VOICE][firewall] frase sensible SIN identificar, bloqueada: %r",
+                           frame.text[:100])
+            if not self._redirigido:
+                self._redirigido = True
+                await self.push_frame(TextFrame(
+                    text="Para poder darle informacion, primero necesito validar su "
+                         "identidad. ¿Me marca su numero de cedula o NIT en el teclado "
+                         "del telefono, terminando con la tecla numeral, por favor?"))
+            return
+        if self._identificado.get("ok"):
+            self._redirigido = False
+        await self.push_frame(frame, direction)
+
+
 class DescartarVozGemini(FrameProcessor):
     """Entre Gemini Live (AUDIO) y el TTS: bota la voz de Gemini, deja su texto.
 
