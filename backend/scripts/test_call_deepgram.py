@@ -429,7 +429,9 @@ async def selftest_inbound() -> int:
                 await asyncio.sleep(0.02)
 
         bomba = asyncio.create_task(bombear())
+        audio_post_dtmf = 0
         try:
+            # fase 1: saludo de recepcion
             async with asyncio.timeout(40):
                 async for raw in ws:
                     m = json.loads(raw)
@@ -437,6 +439,28 @@ async def selftest_inbound() -> int:
                         audio += len(base64.b64decode(m["media"]["payload"]))
                         if audio > 8000 * 3:
                             break
+            # fase 2: "marcar" la cedula del deudor ficticio (Isabela) por DTMF
+            for d in "1032456789#":
+                await ws.send(json.dumps({"event": "dtmf", "streamSid": sid,
+                                          "dtmf": {"track": "inbound_track", "digit": d}}))
+                await asyncio.sleep(0.12)
+            # fase 3: identificar_cliente debe disparar y ARIA recitar la poliza.
+            # Criterio: AUDIO TOTAL post-DTMF > 20s. El saludo completo son
+            # <13s — solo saludo + pitch de poliza (~30s) superan el umbral.
+            # (Version anterior esperaba un "silencio separador" que no existe
+            # cuando la respuesta llega rapido y se encadena con el saludo.)
+            import time as _t
+            fin = _t.monotonic() + 75
+            while _t.monotonic() < fin:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=5)
+                except (asyncio.TimeoutError, TimeoutError):
+                    continue
+                m = json.loads(raw)
+                if m.get("event") == "media":
+                    audio_post_dtmf += len(base64.b64decode(m["media"]["payload"]))
+                    if audio_post_dtmf > 8000 * 20:
+                        break
         except TimeoutError:
             pass
         bomba.cancel()
@@ -444,9 +468,11 @@ async def selftest_inbound() -> int:
 
     await db.cobranza_calls_in_progress.delete_many({"call_sid": fake_sid})
     db.client.close()
-    print("selftest-inbound: %.1fs de audio de recepcion recibidos" % (audio / 8000))
+    print("selftest-inbound: saludo=%.1fs · tras DTMF=%.1fs de audio"
+          % (audio / 8000, audio_post_dtmf / 8000))
     assert audio > 8000 * 2, "recepcion no hablo — revisar log del server"
-    print("selftest-inbound OK")
+    assert audio_post_dtmf > 8000 * 18, "audio insuficiente — identificar_cliente no recito la poliza?"
+    print("selftest-inbound OK (saludo + identificacion por teclado)")
     return 0
 
 

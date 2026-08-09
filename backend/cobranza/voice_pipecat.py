@@ -145,6 +145,70 @@ class TranscriptCollector(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class CapturaDTMF(FrameProcessor):
+    """Modo recepcion: captura la cedula MARCADA en el teclado (DTMF).
+
+    Peticion DPG 09-ago: para el documento, teclado > voz — cero ambiguedad de
+    STT. El serializer de Twilio ya emite InputDTMFFrame por tecla; aqui se
+    acumulan y al cerrar (tecla # o 3s sin teclear) se inyecta un turno de
+    usuario "[TECLADO] <digitos>" — el prompt instruye llamar
+    identificar_cliente con eso, reusando el mismo camino de validacion.
+    """
+
+    def __init__(self, context=None, call_result=None, **kwargs):
+        super().__init__(**kwargs)
+        self._digitos = ""
+        self._timer = None
+        self._context = context          # LLMContext vivo de la llamada
+        self._call_result = call_result  # para transcript + watchdog de turnos
+
+    async def _flush(self):
+        digitos, self._digitos = self._digitos, ""
+        if not digitos:
+            return
+        logger.info("[VOICE] DTMF capturado: %s", digitos)
+        # LLMMessagesAppendFrame: el UNICO camino que en gemini_live/llm.py
+        # dispara inferencia de verdad — el servicio lo maneja el mismo
+        # (_create_response: send_client_content(turn_complete=True) + el
+        # send_realtime_input(" ") que Gemini 3.x exige para inferir).
+        # Historial de intentos fallidos: TranscriptionFrame con bracketing de
+        # turno (el aggregator abria/cerraba el turno y jamas empujaba nada) y
+        # LLMContextFrame directo (el servicio re-inicializa contexto pero no
+        # infiere). Cero inferencia en ambos, 3 selftests fallidos.
+        from pipecat.frames.frames import LLMMessagesAppendFrame
+        if self._call_result is not None:
+            self._call_result.transcript.append((time.time(), "Deudor", f"[TECLADO] {digitos}"))
+        await self.push_frame(LLMMessagesAppendFrame(
+            messages=[{
+                "role": "user",
+                "content": f"[TECLADO] {digitos} — el cliente marco su documento en "
+                           f"el teclado; llama identificar_cliente con estos digitos.",
+            }],
+            run_llm=True,
+        ))
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        from pipecat.frames.frames import InputDTMFFrame
+        if isinstance(frame, InputDTMFFrame):
+            tecla = frame.button.value
+            if self._timer:
+                self._timer.cancel()
+            if tecla == "#":
+                await self._flush()
+            else:
+                if tecla.isdigit():
+                    self._digitos += tecla
+                # sin '#': se cierra solo a los 3s de dejar de teclear
+                import asyncio as _a
+                async def _espera():
+                    await _a.sleep(3)
+                    await self._flush()
+                self._timer = _a.create_task(_espera())
+            return  # la tecla cruda no le sirve a nadie mas
+        await self.push_frame(frame, direction)
+
+
 def documento_base(stored) -> str:
     """Parte comparable de un documento: digitos ANTES del guion. ~40% de los
     documentos DPG son NITs con digito de verificacion ('801001470-9') y el
@@ -956,11 +1020,19 @@ async def run_bot(
             "normalmente es un cliente devolviendo una llamada perdida sobre un pago "
             "pendiente, pero AUN NO SABES quien llama.\n\n"
             "TU UNICO OBJETIVO INICIAL: identificarlo por su numero de documento "
-            "(cedula o NIT), dicho de viva voz.\n"
-            "1. Saluda y pregunta con quien hablas. Luego pide el numero de documento: "
-            "'¿me regala su numero de cedula o NIT, por favor?'\n"
-            "2. Cuando te lo diga, REPITESELO digito por digito y confirma que esta "
-            "bien ANTES de llamar identificar_cliente. Si te corrige, vuelve a pedir.\n"
+            "(cedula o NIT), MARCADO EN EL TECLADO del telefono (exacto, sin "
+            "ambiguedad de voz).\n"
+            "1. Saluda y pregunta con quien hablas. Luego pide: 'para validarlo, "
+            "¿me marca su numero de cedula o NIT en el teclado del telefono, y "
+            "termina con la tecla numeral, por favor?' (si es NIT: sin el digito "
+            "de verificacion).\n"
+            "2. Las teclas te llegan como un mensaje '[TECLADO] <digitos>'. Apenas "
+            "lo veas, llama identificar_cliente con esos digitos DE UNA — sin "
+            "leerlos en voz alta ni pedir confirmacion (el teclado es exacto). "
+            "Mientras marca, guarda silencio; si pasan mas de 20 segundos sin "
+            "teclas, recuerdale con amabilidad que puede marcarlo cuando guste. "
+            "Si insiste en DECIRLO de viva voz, aceptalo: repiteselo digito por "
+            "digito, confirma, y llama identificar_cliente.\n"
             "3. identificar_cliente te devuelve sus polizas pendientes: gestiona el "
             "recordatorio con esos datos, con calidez y de usted.\n"
             "4. Si devuelve no_encontrado: disculpate, di que un asesor puede ayudarle "
@@ -1030,6 +1102,13 @@ async def run_bot(
         _stages.insert(4, crear_tts_deepgram(_dg_voice))
         _stages.insert(4, DescartarVozGemini())
         logger.info("[VOICE] motor hibrido: Gemini AUDIO (descartado) + Deepgram TTS %s", _dg_voice)
+    if modo_recepcion:
+        # JUSTO ANTES del llm (despues del aggregator): todo lo inyectado rio
+        # arriba (Transcription, LLMContextFrame, LLMMessagesAppendFrame) se lo
+        # come el LLMUserAggregator sin disparar inferencia — probado 3 veces.
+        # Desde aqui el LLMMessagesAppendFrame llega DIRECTO al servicio, que
+        # es quien sabe convertirlo en send_client_content + nudge realtime.
+        _stages.insert(3, CapturaDTMF(context=context, call_result=call_result))
     pipeline = Pipeline(_stages)
 
     # Barge-in OFF por defecto (tenant_config.barge_in_enabled) — mismo switch
