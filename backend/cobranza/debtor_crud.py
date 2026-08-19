@@ -15,13 +15,22 @@ def _utcnow() -> datetime:
 
 
 def _serialize(doc: Optional[dict]) -> Optional[dict]:
-    """Convert MongoDB document: _id ObjectId -> str, return None if None."""
+    """Convert MongoDB document: every ObjectId -> str, return None if None.
+    Recursivo porque hay ObjectId anidados (p.ej. `agrupada_en` que escribe el
+    despachador de cuotas); uno solo sin convertir tumba el endpoint con 500."""
     if doc is None:
         return None
-    doc = dict(doc)
-    if "_id" in doc:
-        doc["_id"] = str(doc["_id"])
-    return doc
+
+    def _conv(v):
+        if isinstance(v, ObjectId):
+            return str(v)
+        if isinstance(v, dict):
+            return {k: _conv(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [_conv(x) for x in v]
+        return v
+
+    return _conv(dict(doc))
 
 
 async def create_debtor(db, user_id: str, data: dict) -> dict:
