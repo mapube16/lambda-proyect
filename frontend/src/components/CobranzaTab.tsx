@@ -219,6 +219,12 @@ function formatDuration(seconds: number): string {
 }
 
 // ─── Toast ─────────────────────────────────────────────────────────────────────
+// Los polls (KPIs 15 s, alertas 60 s, jornada 120 s) devuelven casi siempre el
+// MISMO JSON, pero cada respuesta era un objeto nuevo y re-renderizaba toda la
+// pestaña en vacío. Si el contenido no cambió, conservamos la referencia previa
+// y React no re-renderiza nada.
+const mismoJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
 interface CobrToast { id: string; message: string; ok: boolean; }
 
 function CobranzaToast({ toast, onDismiss }: { toast: CobrToast; onDismiss: (id: string) => void }) {
@@ -1377,7 +1383,13 @@ export function CobranzaTab() {
   }, []);
 
   // ── Fetch debtors ──────────────────────────────────────────────────────────
+  // Guarda de respuestas viejas: al escribir en el buscador o cambiar filtros se
+  // dispara más de un GET y el que responde ÚLTIMO pinta la tabla, aunque sea el
+  // de la búsqueda anterior (de ahí el "el buscador a veces no sirve / toca
+  // refrescar 3 veces"). Solo la respuesta de la última petición pinta.
+  const reqSeq = useRef(0);
   const fetchDebtors = useCallback(async () => {
+    const seq = ++reqSeq.current;
     setLoading(true);
     try {
       const qs = new URLSearchParams();
@@ -1388,31 +1400,42 @@ export function CobranzaTab() {
       qs.set('page', String(page));
       qs.set('page_size', String(PAGE_SIZE));
       const r = await apiFetch(`/api/cobranza/debtors?${qs.toString()}`);
-      if (!r.ok) { setDebtors([]); setTotal(0); return; }
+      if (seq !== reqSeq.current) return; // respuesta vieja: la descartamos
+      if (!r.ok) {
+        // Antes se vaciaba la tabla en silencio y parecía "no hay nada"; ahora se
+        // avisa y se deja la lista anterior para poder reintentar sin recargar.
+        addToast({ id: 'debtors-error', message: 'No se pudo cargar la cartera. Reintenta.', ok: false });
+        return;
+      }
       const data = await r.json();
+      if (seq !== reqSeq.current) return;
       // Endpoint is now paginated: { items, total, page, page_size }.
       // Tolerate the old array shape just in case.
-      if (Array.isArray(data)) {
-        setDebtors(data);
-        setTotal(data.length);
-      } else {
-        setDebtors(Array.isArray(data.items) ? data.items : []);
-        setTotal(Number(data.total ?? 0));
-      }
-    } catch { setDebtors([]); setTotal(0); }
-    finally { setLoading(false); }
-  }, [estadoFilter, minMora, sortMora, searchDebounced, page]);
+      const items: Debtor[] = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
+      // Refetch tras cualquier acción: si un deudor no cambió, se reusa el objeto
+      // anterior para que memo(DebtorRow) siga saltándose esa fila.
+      setDebtors(prev => items.map(it => {
+        const anterior = prev.find(p => p._id === it._id);
+        return anterior && mismoJson(anterior, it) ? anterior : it;
+      }));
+      setTotal(Array.isArray(data) ? data.length : Number(data.total ?? 0));
+    } catch {
+      if (seq === reqSeq.current) addToast({ id: 'debtors-error', message: 'No se pudo cargar la cartera. Reintenta.', ok: false });
+    }
+    finally { if (seq === reqSeq.current) setLoading(false); }
+  }, [estadoFilter, minMora, sortMora, searchDebounced, page, addToast]);
 
   useEffect(() => { fetchDebtors(); }, [fetchDebtors]);
 
   // Debounce del buscador (~350 ms) para no pegarle al backend en cada tecla.
   useEffect(() => {
-    const t = setTimeout(() => setSearchDebounced(search), 350);
+    const t = setTimeout(() => { setSearchDebounced(search); setPage(1); }, 350);
     return () => clearTimeout(t);
   }, [search]);
 
-  // Reset to page 1 whenever a filter/sort/search changes.
-  useEffect(() => { setPage(1); }, [estadoFilter, minMora, sortMora, searchDebounced]);
+  // Reset to page 1 whenever a filter/sort changes (la búsqueda ya lo hace arriba,
+  // en el mismo batch, para no lanzar dos GET por cada tecleo).
+  useEffect(() => { setPage(1); }, [estadoFilter, minMora, sortMora]);
 
   // ── Autorización de jornada (informe §2.1): el bot NO marca hasta que DPG
   // revisa la lista y autoriza HOY. Sin esto, nada arranca en automático. ──────
@@ -1421,7 +1444,7 @@ export function CobranzaTab() {
   const fetchJornadaAuth = useCallback(async () => {
     try {
       const r = await apiFetch('/api/cobranza/jornada/estado');
-      if (r.ok) setJornadaAuth(await r.json());
+      if (r.ok) { const d = await r.json(); setJornadaAuth(prev => mismoJson(prev, d) ? prev : d); }
     } catch { /* noop */ }
   }, []);
   useEffect(() => {
@@ -1492,7 +1515,7 @@ export function CobranzaTab() {
   const fetchTodaySummary = useCallback(async () => {
     try {
       const r = await apiFetch('/api/cobranza/today-summary');
-      if (r.ok) setTodayKpis(await r.json());
+      if (r.ok) { const d = await r.json(); setTodayKpis(prev => mismoJson(prev, d) ? prev : d); }
     } catch { /* keep prev */ }
   }, []);
   useEffect(() => {
@@ -1589,7 +1612,7 @@ export function CobranzaTab() {
     setAlertasLoading(true);
     try {
       const r = await apiFetch('/api/cobranza/alertas?solo_pendientes=true');
-      if (r.ok) setAlertas((await r.json()).items || []);
+      if (r.ok) { const items = (await r.json()).items || []; setAlertas(prev => mismoJson(prev, items) ? prev : items); }
     } catch { /* keep prev */ }
     finally { setAlertasLoading(false); }
   }, []);
@@ -1609,7 +1632,7 @@ export function CobranzaTab() {
   const fetchFunnel = useCallback(async () => {
     try {
       const r = await apiFetch('/api/cobranza/funnel');
-      if (r.ok) setFunnel(await r.json());
+      if (r.ok) { const d = await r.json(); setFunnel(prev => mismoJson(prev, d) ? prev : d); }
     } catch { /* keep prev */ }
   }, []);
   useEffect(() => { fetchFunnel(); }, [fetchFunnel]);
@@ -1622,7 +1645,8 @@ export function CobranzaTab() {
       const r = await apiFetch('/api/debtors/sync-status');
       if (r.ok) {
         const d = await r.json();
-        setSyncStatus({ last_sync_at: d.last_sync_at ?? null, is_syncing_now: !!d.is_syncing_now });
+        const next = { last_sync_at: d.last_sync_at ?? null, is_syncing_now: !!d.is_syncing_now };
+        setSyncStatus(prev => mismoJson(prev, next) ? prev : next);
       }
     } catch { /* keep prev */ }
   }, []);
