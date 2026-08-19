@@ -3,7 +3,7 @@
  * programmatic fetch calls when accessing the app through an ngrok tunnel.
  * Harmless when running locally.
  */
-import { API_BASE, getToken } from '../api';
+import { API_BASE, getToken, setToken } from '../api';
 
 export const NGROK_BYPASS = { 'ngrok-skip-browser-warning': 'true' } as const;
 
@@ -126,6 +126,15 @@ export function apiFetch(url: string, init: RequestInit = {}): Promise<Response>
   })
     .then((res) => {
       if (timeoutId !== null) window.clearTimeout(timeoutId);
+      // Sesión deslizante: el backend manda un token fresco cuando el actual
+      // está por vencer (15 min). Adoptarlo evita el panel "muerto".
+      const renewed = res.headers.get('X-Renewed-Token');
+      if (renewed) setToken(renewed);
+      // Token vencido: antes cada caller tragaba el 401 en silencio (buscador
+      // muerto, botones sin efecto) y tocaba refrescar. Ahora se vuelve al login.
+      if (res.status === 401) {
+        window.dispatchEvent(new Event('landa:unauthorized'));
+      }
       _track(method, resolved, res.status, performance.now() - t0);
       return res;
     })

@@ -161,6 +161,27 @@ ESTADO_GROUPS: dict[str, list[str]] = {
 }
 
 
+# Los nombres de la cartera vienen con y sin tilde ("GARCIA" vs "GARCÍA"), y
+# $options:"i" solo ignora mayúsculas, no acentos (Mongo tampoco aplica collation
+# a $regex). Convertimos cada vocal/ñ/ç en una clase de caracteres para que
+# buscar "munoz" encuentre "MUÑOZ".
+_EQUIV = {"a": "aáàäâ", "e": "eéèëê", "i": "iíìïî", "o": "oóòöô",
+          "u": "uúùüû", "n": "nñ", "c": "cç"}
+
+
+def _regex_sin_acentos(texto: str) -> str:
+    import re as _re, unicodedata as _ud
+    # El usuario puede escribir CON tilde ("GARCÍA") y el dato estar sin ella:
+    # se quita el acento de la consulta antes de expandir a clases.
+    plano = "".join(c for c in _ud.normalize("NFD", texto)
+                    if _ud.category(c) != "Mn")
+    partes = []
+    for ch in plano:
+        grupo = _EQUIV.get(ch.lower())
+        partes.append(f"[{grupo}]" if grupo else _re.escape(ch))
+    return "".join(partes)
+
+
 async def get_debtors(
     db,
     user_id: str,
@@ -206,8 +227,7 @@ async def get_debtors(
     # póliza o documento. Regex case-insensitive; se escapan metacaracteres para
     # que "3.14" o "(57)" no rompan. Cubre TODA la cartera, no solo la página.
     if q and q.strip():
-        import re as _re
-        rx = {"$regex": _re.escape(q.strip()), "$options": "i"}
+        rx = {"$regex": _regex_sin_acentos(q.strip()), "$options": "i"}
         query["$or"] = [
             {"nombre": rx}, {"telefono": rx},
             {"numero_poliza": rx}, {"cliente_documento": rx},

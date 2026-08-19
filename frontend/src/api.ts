@@ -120,6 +120,9 @@ async function apiCall(endpoint: string, options: RequestInit = {}) {
       headers["Authorization"] = `Bearer ${ACCESS_TOKEN}`;
     }
     const res = await fetch(url, { ...options, headers });
+    // Sesión deslizante (ver apiFetch.ts): adoptar el token renovado.
+    const renewed = res.headers.get("X-Renewed-Token");
+    if (renewed) setToken(renewed);
     if (res.status === 401) {
       // Sesión expirada/ inválida → limpiar todo y avisar a la app para volver al login.
       ACCESS_TOKEN = "";

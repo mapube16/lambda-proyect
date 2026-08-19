@@ -75,6 +75,10 @@ async def init_db(client: Optional[AsyncIOMotorClient] = None) -> None:
     # ── Phase 17: Cobranza debtors indexes ───────────────────────────────────
     await _safe_index(db.debtors, [("user_id", 1), ("estado", 1)])
     await _safe_index(db.debtors, [("user_id", 1), ("created_at", -1)])
+    # El listado del panel ordena por updated_at (default) o dias_mora (sort=mora);
+    # sin estos índices, cada página hace un sort en memoria de toda la cartera.
+    await _safe_index(db.debtors, [("user_id", 1), ("updated_at", -1)])
+    await _safe_index(db.debtors, [("user_id", 1), ("dias_mora", -1)])
     await _safe_index(db.debtors, "vapi_call_id", sparse=True)
     # The legacy unique (user_id, telefono) index applied to ALL debtors but
     # SOFTSEGUROS represents each póliza of a client as its own debtor doc — a

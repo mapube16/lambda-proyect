@@ -160,6 +160,29 @@ async def limit_request_body(request: Request, call_next):
     return await call_next(request)
 
 
+# Sesión deslizante: el token dura 15 min (postura de seguridad), pero mientras
+# el usuario esté activo se renueva solo. Si el JWT del request vence en <10 min,
+# devolvemos uno fresco en X-Renewed-Token y el frontend lo adopta. Sin esto, el
+# panel "muere" a los 15 min y toca refrescar/reloguear (queja DPG).
+@app.middleware("http")
+async def sliding_token_renewal(request: Request, call_next):
+    response = await call_next(request)
+    authz = request.headers.get("Authorization", "")
+    if authz.startswith("Bearer "):
+        try:
+            from jose import jwt as _jwt
+            from datetime import datetime, timezone, timedelta
+            from auth import SECRET_KEY, ALGORITHM, create_access_token
+            payload = _jwt.decode(authz[7:], SECRET_KEY, algorithms=[ALGORITHM])
+            exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+            if exp - datetime.now(timezone.utc) < timedelta(minutes=10):
+                fresh = create_access_token({"sub": payload["sub"], "role": payload.get("role", "client")})
+                response.headers["X-Renewed-Token"] = fresh
+        except Exception:
+            pass  # token inválido/vencido: el endpoint ya respondió 401, nada que renovar
+    return response
+
+
 # Declared after limit_request_body so it executes first (outermost @middleware).
 # Responds to CORS preflights before auth dependencies can reject them.
 @app.middleware("http")
@@ -191,7 +214,7 @@ ALLOWED_ORIGINS = list(set([
     os.getenv("FRONTEND_URL", "http://localhost:5173"),
 ]))
 
-app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "Authorization", "ngrok-skip-browser-warning"])
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "Authorization", "ngrok-skip-browser-warning"], expose_headers=["X-Renewed-Token"])
 app.add_middleware(SecurityHeadersMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
