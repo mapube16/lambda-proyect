@@ -49,6 +49,15 @@ def _tres_cifras(n: int) -> str:
     return " ".join(p for p in (parte_c, parte_r) if p)
 
 
+def _apocope(palabras: str) -> str:
+    """"...uno" -> "...un" cuando antecede a mil/millones."""
+    if palabras.endswith("veintiuno"):
+        return palabras[:-9] + "veintiun"
+    if palabras.endswith("uno"):
+        return palabras[:-1]
+    return palabras
+
+
 def numero_en_palabras(n: int) -> str:
     """Spell a non-negative integer 0..999_999_999 in Spanish."""
     n = int(round(n))
@@ -63,7 +72,9 @@ def numero_en_palabras(n: int) -> str:
         if miles == 1:
             parte_miles = "mil"
         else:
-            parte_miles = f"{_tres_cifras(miles)} mil"
+            # Apocope ante "mil": "ciento uno mil" no existe — es "ciento un
+            # mil" ("veintiuno mil" -> "veintiun mil"). Oido en llamada real.
+            parte_miles = f"{_apocope(_tres_cifras(miles))} mil"
         parte_resto = _tres_cifras(resto) if resto else ""
         return " ".join(p for p in (parte_miles, parte_resto) if p)
 
@@ -72,7 +83,7 @@ def numero_en_palabras(n: int) -> str:
     if millones == 1:
         parte_mill = "un millon"
     else:
-        parte_mill = f"{numero_en_palabras(millones)} millones"
+        parte_mill = f"{_apocope(numero_en_palabras(millones))} millones"
     parte_resto = numero_en_palabras(resto) if resto else ""
     return " ".join(p for p in (parte_mill, parte_resto) if p and p != "cero")
 
@@ -85,4 +96,8 @@ def pesos_en_palabras(monto) -> str:
         return "0 pesos"
     if entero <= 0:
         return "cero pesos"
-    return f"{numero_en_palabras(entero)} pesos"
+    palabras = numero_en_palabras(entero)
+    # "dos millones pesos" es agramatical: millones exactos llevan "de".
+    if palabras.endswith(("millon", "millones")):
+        return f"{palabras} de pesos"
+    return f"{palabras} pesos"

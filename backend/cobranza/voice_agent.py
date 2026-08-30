@@ -385,8 +385,12 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
     # 1) Conectar a Deepgram YA, en paralelo con armar prompt/orchestrator: el
     #    handshake TLS+WS (~300-600 ms) deja de sumarse al silencio pre-saludo.
     t_conn = time.time()
-    conectar = asyncio.create_task(websockets.connect(
-        DG_AGENT_URL, additional_headers={"Authorization": f"Token {key}"}))
+
+    async def _abrir():   # websockets.connect es awaitable pero NO corutina
+        return await websockets.connect(
+            DG_AGENT_URL, additional_headers={"Authorization": f"Token {key}"})
+
+    conectar = asyncio.create_task(_abrir())
 
     cobr = tenant_config.get("cobranza") or {}
     prompt, greeting, keyterms = armar_prompt(debtor or {}, tenant_config,
