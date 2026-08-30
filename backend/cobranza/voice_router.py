@@ -939,6 +939,9 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
             "resultado": new_estado,
             "transcript": transcript[:2000],
             "engine": getattr(result, "engine", None) or "pipecat-telnyx-gemini-live",
+            # motivo de cierre que dio el modelo (end_call) o el watchdog —
+            # cartera ve POR QUE se colgo sin leer el transcript.
+            "end_reason": getattr(result, "end_reason", "") or None,
             "direction": "inbound" if is_inbound else "outbound",
         }
 

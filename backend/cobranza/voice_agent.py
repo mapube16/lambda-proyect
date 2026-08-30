@@ -419,12 +419,18 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
     play = {"fin": 0.0}                       # epoch en que Twilio termina de sonar
     _COLA_ANTIECO = float(os.getenv("COBRANZA_AGENT_ECHO_TAIL_S", "0.5"))
     _SILENCIO = b"\xff" * _TRAMA
+    # Half-duplex apagable por tenant/env: su costo real es que lo que el
+    # cliente diga MIENTRAS ARIA habla se pierde (y el se siente ignorado). En
+    # telefono al oido casi no hay eco; full-duplex deja que Deepgram maneje
+    # eco/barge-in nativo. Default: on (el caso ALTAVOZ inventaba turnos).
+    _half_duplex = str(cobr.get("agent_half_duplex",
+                                os.getenv("COBRANZA_AGENT_HALF_DUPLEX", "true"))).lower() != "false"
 
     def aria_habla() -> bool:
         # Half-duplex anti-eco (doc Deepgram audio-preprocessing): mientras ARIA
         # suena (+cola), lo que vuelve por la linea es su eco (grave en ALTAVOZ);
         # a Deepgram se le manda silencio. Costo: sin barge-in ese ratito.
-        return time.time() < play["fin"] + _COLA_ANTIECO
+        return _half_duplex and time.time() < play["fin"] + _COLA_ANTIECO
 
     # ── Latencia por turno (lo que el cliente percibe) ────────────────────────
     lat = {"t_eot": 0.0, "turno": 0}
@@ -436,18 +442,35 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
     def pedir_colgar(m: str):
         if not colgar.is_set():
             motivo["v"] = m
+            result.end_reason = result.end_reason or m
             colgar.set()
 
-    async def colgar_cuando_termine_de_sonar(max_espera: float = 8.0):
-        # end_call: la despedida ya esta en cola (o por llegar). Esperar a que
-        # TERMINE DE SONAR — si llega mas audio, play["fin"] se corre y seguimos
-        # esperando; tope duro por si algo se traba.
+    marca_eco = asyncio.Event()   # Twilio devolvio el mark: lo encolado ya SONO
+
+    async def _enviar_marca():
+        try:
+            await websocket.send_json({"event": "mark", "streamSid": stream_id,
+                                       "mark": {"name": "fin-despedida"}})
+        except Exception:
+            pass
+
+    async def colgar_tras_despedida(max_espera: float = 8.0):
+        # end_call: colgar cuando la despedida SONO de verdad. El mark de Twilio
+        # se encola detras del audio ya enviado y vuelve como eco cuando ese
+        # audio se reprodujo — senal exacta, sin estimar red/buffers. Si llega
+        # MAS audio despues del mark, se manda otro. Fallback: el reloj de
+        # reproduccion +1s si el eco no vuelve; tope duro de max_espera.
         limite = time.time() + max_espera
+        await _enviar_marca()
         while time.time() < limite:
-            falta = play["fin"] + 0.3 - time.time()
-            if falta <= 0:
-                break
-            await asyncio.sleep(min(falta, 0.25))
+            if marca_eco.is_set():
+                if time.time() >= play["fin"] - 0.05:
+                    break                     # eco recibido y nada mas por sonar
+                marca_eco.clear()             # llego mas despedida tras el mark
+                await _enviar_marca()
+            elif time.time() >= play["fin"] + 1.0:
+                break                         # fallback estimado: eco perdido
+            await asyncio.sleep(0.15)
         pedir_colgar("end_call")
 
     tareas_bg: set = set()
@@ -475,7 +498,8 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                                   "name": name,
                                   "content": json.dumps(content, ensure_ascii=False)}))
         if name == "end_call":
-            _bg(colgar_cuando_termine_de_sonar())
+            result.end_reason = str((_a or {}).get("reason") or "end_call")
+            _bg(colgar_tras_despedida())
 
     async def watchdogs():
         # Mismos guardas que el pipeline pipecat (el motor nuevo no los tenia):
@@ -490,17 +514,34 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
         await asyncio.sleep(max(0, max_s - no_speech))
         pedir_colgar(f"tope de {max_s}s")
 
-    async def twilio_a_dg(dg):
+    dg_box = {"ws": None}      # la bomba arranca ANTES de tener la sesion
+    listo = asyncio.Event()    # Settings ya enviados: se puede reenviar audio
+    descartado = {"frames": 0}
+
+    async def twilio_a_dg():
         async for raw in websocket.iter_text():
             m = json.loads(raw)
             ev = m.get("event")
             if ev == "media":
-                await dg.send(_SILENCIO if aria_habla() else base64.b64decode(m["media"]["payload"]))
+                if not listo.is_set():
+                    # Audio ANTERIOR a la sesion con Deepgram (los "alo, alo?"
+                    # mientras conectabamos). Antes se acumulaba en el buffer y
+                    # al conectar entraba EN RAFAGA: el STT arrancaba esos
+                    # segundos atrasado y ARIA respondia a turnos viejos toda la
+                    # llamada (visto: stt_latency 6.8s drenando a 0.2s/s). Se
+                    # DESCARTA: el saludo lo dice ella primero igual.
+                    descartado["frames"] += 1
+                    continue
+                await dg_box["ws"].send(
+                    _SILENCIO if aria_habla() else base64.b64decode(m["media"]["payload"]))
             elif ev == "dtmf":
                 dig = "".join(c for c in (m.get("dtmf") or {}).get("digit", "") if c.isdigit())
-                if dig:
-                    await dg.send(json.dumps({"type": "InjectUserMessage",
-                                              "content": f"[TECLADO] {dig}"}))
+                if dig and listo.is_set():
+                    await dg_box["ws"].send(json.dumps({"type": "InjectUserMessage",
+                                                        "content": f"[TECLADO] {dig}"}))
+            elif ev == "mark":
+                if (m.get("mark") or {}).get("name") == "fin-despedida":
+                    marca_eco.set()
             elif ev == "stop":
                 pedir_colgar("twilio stop")
                 return
@@ -558,26 +599,46 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                     return
 
     dg = None
+    tareas = [asyncio.create_task(twilio_a_dg())]   # leer YA: que nada se encole
     try:
         dg = await conectar
         logger.info("[agent] conectado a Deepgram en %.0f ms", (time.time() - t_conn) * 1000)
         await dg.send(json.dumps(_settings(prompt, greeting, voz, keyterms, modo_recepcion,
                                            listen_cfg, temperature)))
-        tareas = [asyncio.create_task(twilio_a_dg(dg)), asyncio.create_task(dg_a_twilio(dg)),
-                  asyncio.create_task(watchdogs()), asyncio.create_task(colgar.wait())]
-        try:
-            await asyncio.wait(tareas, return_when=asyncio.FIRST_COMPLETED)
-            if colgar.is_set():
-                logger.info("[agent] colgando call=%s motivo=%s", call_sid, motivo["v"])
-        finally:
-            for x in list(tareas) + list(tareas_bg):
-                x.cancel()
+        dg_box["ws"] = dg
+        listo.set()
+        if descartado["frames"]:
+            logger.info("[agent][lat] descartados %d ms de audio pre-sesion (no envenenan el STT)",
+                        descartado["frames"] * 20)
+        tareas += [asyncio.create_task(dg_a_twilio(dg)),
+                   asyncio.create_task(watchdogs()), asyncio.create_task(colgar.wait())]
+        await asyncio.wait(tareas, return_when=asyncio.FIRST_COMPLETED)
+        if colgar.is_set():
+            logger.info("[agent] colgando call=%s motivo=%s", call_sid, motivo["v"])
     except Exception:
         logger.exception("[agent] bridge fallo call=%s", call_sid)
     finally:
+        for x in list(tareas) + list(tareas_bg):
+            x.cancel()
         if dg is not None:
             try:
                 await dg.close()
+            except Exception:
+                pass
+        # Colgado garantizado: cerrar el stream termina la llamada con el TwiML
+        # actual, pero el update REST la mata aunque el TwiML cambie o el WS
+        # quede zombie — y corta la facturacion ya. Solo cuando decidimos
+        # nosotros (si colgo el cliente, la llamada ya esta completed).
+        if colgar.is_set() and motivo["v"] != "twilio stop" and call_sid.startswith("CA"):
+            def _rest_hangup():
+                try:
+                    from twilio.rest import Client
+                    Client(os.getenv("TWILIO_ACCOUNT_SID", ""),
+                           os.getenv("TWILIO_AUTH_TOKEN", "")).calls(call_sid).update(status="completed")
+                except Exception:
+                    logger.info("[agent] REST hangup no aplico (llamada ya terminada)")
+            try:
+                await asyncio.get_event_loop().run_in_executor(None, _rest_hangup)
             except Exception:
                 pass
 

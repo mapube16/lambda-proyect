@@ -19,6 +19,7 @@ class CallResult:
     started_at: float = 0.0
     ended_at: float = 0.0
     engine: str = "pipecat-telnyx-gemini-live"   # etiqueta en historial_llamadas
+    end_reason: str = ""                          # por que colgo (end_call/watchdog)
     _bot_buffer: str = field(default="", repr=False)
     _bot_buffer_ts: float = field(default=0.0, repr=False)
 
