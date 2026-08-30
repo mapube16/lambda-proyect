@@ -23,7 +23,7 @@ from datetime import date, datetime, time as dtime, timezone
 
 import websockets
 
-from cobranza.voice_pipecat import CallResult
+from cobranza.voz_comun import CallResult
 
 logger = logging.getLogger("cobranza.voice_agent")
 
@@ -217,7 +217,7 @@ class _Dispatcher:
         return {"ok": True}
 
     async def _identificar(self, crudo: str) -> dict:
-        from cobranza.voice_pipecat import documento_base
+        from cobranza.voz_comun import documento_base
         from cobranza.es_numbers import pesos_en_palabras
         digits = "".join(c for c in str(crudo) if c.isdigit())
         cands = []
@@ -254,8 +254,40 @@ class _Dispatcher:
 
 # ── Settings del Voice Agent ───────────────────────────────────────────────────
 
+def _env_json(name: str) -> dict:
+    try:
+        return json.loads(os.getenv(name, "") or "{}") or {}
+    except json.JSONDecodeError:
+        logger.warning("[agent] %s no es JSON valido — ignorado", name)
+        return {}
+
+
+def _listen_provider(keyterms: list, cfg: dict) -> dict:
+    """Oido del agente. cfg = tenant_configs.cobranza.deepgram_listen (o env
+    COBRANZA_AGENT_LISTEN como JSON). Default: nova-3 es (doc oficial
+    Twilio+Deepgram). Con model "flux-general-multi" se usa el end-of-turn
+    INTEGRADO de Flux (eot_threshold / eager_eot_threshold / eot_timeout_ms):
+    decide que el cliente termino por el modelo, no por un silencio fijo — es
+    la palanca grande de latencia STT→LLM. Se valida sin llamada real con
+    scripts/check_deepgram_agent.py."""
+    model = str(cfg.get("model") or "nova-3")
+    p = {"type": "deepgram", "model": model, "keyterms": keyterms}
+    if model.startswith("flux"):
+        p["version"] = "v2"
+        p["language_hints"] = list(cfg.get("language_hints") or ["es"])
+        for k in ("eot_threshold", "eager_eot_threshold", "eot_timeout_ms"):
+            if cfg.get(k) is not None:
+                p[k] = cfg[k]
+    else:
+        p["language"] = str(cfg.get("language") or "es")
+    if cfg.get("smart_format") is not None:
+        p["smart_format"] = bool(cfg["smart_format"])
+    return p
+
+
 def _settings(prompt: str, greeting: str, voz: str, keyterms: list,
-              modo_recepcion: bool) -> dict:
+              modo_recepcion: bool, listen_cfg: dict = None,
+              temperature: float = 0.5) -> dict:
     return {
         "type": "Settings",
         "audio": {
@@ -263,11 +295,12 @@ def _settings(prompt: str, greeting: str, voz: str, keyterms: list,
             "output": {"encoding": "mulaw", "sample_rate": 8000, "container": "none"},
         },
         "agent": {
-            # nova-3 (no nova-2): es el modelo del ejemplo oficial Twilio+Deepgram,
-            # el mejor para acento/ruido. keyterms funciona con nova-3.
-            "listen": {"provider": {"type": "deepgram", "model": "nova-3",
-                                    "language": "es", "keyterms": keyterms}},
-            "think": {"provider": {"type": "google", "model": THINK_MODEL},
+            "listen": {"provider": _listen_provider(keyterms, listen_cfg or {})},
+            # temperature 0.5 (misma que el pipeline pipecat): menos deliberacion
+            # de muestreo = respuesta un poco antes; cobranza quiere guion, no
+            # creatividad.
+            "think": {"provider": {"type": "google", "model": THINK_MODEL,
+                                   "temperature": temperature},
                       "prompt": prompt, "functions": _tool_schemas(modo_recepcion)},
             "speak": {"provider": {"type": "deepgram", "model": voz}},
             "greeting": greeting,
@@ -284,7 +317,7 @@ def armar_prompt(debtor: dict, tenant_config: dict, *, modo_recepcion: bool) -> 
         assemble_system_prompt, nombre_dos, render_greeting, resolve_persona,
     )
     from cobranza.es_numbers import pesos_en_palabras
-    from cobranza.deepgram_pipecat_tts import keyterms_llamada
+    from cobranza.voz_comun import keyterms_llamada
     persona = resolve_persona(tenant_config)
     brand = persona.get("company_brand") or persona.get("company_name", "")
     agente = str(persona.get("agent_name") or "Aria").title()
@@ -331,123 +364,218 @@ def armar_prompt(debtor: dict, tenant_config: dict, *, modo_recepcion: bool) -> 
 
 # ── Bridge Twilio ↔ Voice Agent ────────────────────────────────────────────────
 
+_MULAW_BPS = 8000.0          # bytes/segundo de mulaw 8k = segundos que suena
+_TRAMA = 160                 # 20 ms — la trama que Twilio espera
+
+
 async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: str,
                           stream_id: str, tenant_config: dict,
                           is_inbound: bool = False, modo_recepcion: bool = False) -> CallResult:
     """Puentea el media-stream de Twilio (ya aceptado) con el Voice Agent de
     Deepgram y devuelve el CallResult para el post-call. Nunca lanza hacia
     afuera: cualquier fallo cierra limpio con lo que se haya recolectado."""
-    result = CallResult(call_sid=call_sid, started_at=time.time())
+    result = CallResult(call_sid=call_sid, started_at=time.time(), engine="deepgram_agent")
     from database import get_db
     db = get_db()
+    key = os.getenv("DEEPGRAM_API_KEY", "")
 
+    # 1) Conectar a Deepgram YA, en paralelo con armar prompt/orchestrator: el
+    #    handshake TLS+WS (~300-600 ms) deja de sumarse al silencio pre-saludo.
+    t_conn = time.time()
+    conectar = asyncio.create_task(websockets.connect(
+        DG_AGENT_URL, additional_headers={"Authorization": f"Token {key}"}))
+
+    cobr = tenant_config.get("cobranza") or {}
     prompt, greeting, keyterms = armar_prompt(debtor or {}, tenant_config,
                                               modo_recepcion=modo_recepcion)
-    voz = str((tenant_config.get("cobranza") or {}).get("deepgram_voice")
-              or tenant_config.get("deepgram_voice")
+    voz = str(cobr.get("deepgram_voice") or tenant_config.get("deepgram_voice")
               or os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-celeste-es"))
-    logger.info("[agent] call=%s recepcion=%s voz=%s think=%s keyterms=%d",
-                call_sid, modo_recepcion, voz, THINK_MODEL, len(keyterms))
+    listen_cfg = cobr.get("deepgram_listen") or _env_json("COBRANZA_AGENT_LISTEN")
+    temperature = float(cobr.get("voice_temperature") or tenant_config.get("voice_temperature")
+                        or os.getenv("COBRANZA_AGENT_TEMPERATURE", "0.5"))
+    logger.info("[agent] call=%s recepcion=%s voz=%s think=%s listen=%s keyterms=%d prompt=%d chars",
+                call_sid, modo_recepcion, voz, THINK_MODEL,
+                listen_cfg.get("model") or "nova-3", len(keyterms), len(prompt))
     from cobranza.cobranza_orchestrator import CobranzaOrchestrator
-    # db=None: el orchestrator hace `db or get_db()` y bool(Database de motor)
-    # revienta; get_db() devuelve el mismo singleton igual.
     orch = CobranzaOrchestrator(user_id, tenant_config) if user_id else None
     identificado = {"ok": not modo_recepcion}
     dispatch = _Dispatcher(db, user_id, debtor or {}, orch, call_sid,
                            result.transcript, identificado)
 
-    key = os.getenv("DEEPGRAM_API_KEY", "")
-    colgar = {"pedido": False}
-    # Half-duplex anti-eco (doc Deepgram "audio-preprocessing-barge-in"): mientras
-    # ARIA habla, la voz que vuelve por la linea es su propio eco (grave en
-    # ALTAVOZ). En vez de reenviarlo a Deepgram —que lo transcribia como turnos
-    # del cliente e inventaba frases— se le manda SILENCIO hasta ~0.5s despues
-    # del ultimo audio del agente. Deepgram no oye lo que no le llega. Costo:
-    # no hay barge-in durante ese ratito (aceptable en cobranza; turnos cortos).
-    _SILENCIO = base64.b64encode(b"\xff" * 160).decode()
-    agente = {"habla_hasta": 0.0}
+    # ── Reloj de reproduccion ─────────────────────────────────────────────────
+    # Deepgram entrega el audio del agente en RAFAGA (mucho mas rapido que tiempo
+    # real) y Twilio lo reproduce a 8000 B/s. Todo lo que dependa de "ARIA ya
+    # termino de hablar" (anti-eco, colgar tras la despedida) se calcula sobre
+    # CUANDO TERMINA DE SONAR, no sobre cuando llego el ultimo chunk. (Bug
+    # anterior: a los 0.5 s del ultimo chunk se reabria el microfono con ARIA
+    # aun a mitad de frase → su propio eco entraba como turno del cliente.)
+    play = {"fin": 0.0}                       # epoch en que Twilio termina de sonar
     _COLA_ANTIECO = float(os.getenv("COBRANZA_AGENT_ECHO_TAIL_S", "0.5"))
+    _SILENCIO = b"\xff" * _TRAMA
 
-    try:
-        async with websockets.connect(
-            DG_AGENT_URL, additional_headers={"Authorization": f"Token {key}"}
-        ) as dg:
-            await dg.send(json.dumps(_settings(prompt, greeting, voz, keyterms, modo_recepcion)))
+    def aria_habla() -> bool:
+        # Half-duplex anti-eco (doc Deepgram audio-preprocessing): mientras ARIA
+        # suena (+cola), lo que vuelve por la linea es su eco (grave en ALTAVOZ);
+        # a Deepgram se le manda silencio. Costo: sin barge-in ese ratito.
+        return time.time() < play["fin"] + _COLA_ANTIECO
 
-            async def twilio_a_dg():
-                async for raw in websocket.iter_text():
-                    m = json.loads(raw)
-                    ev = m.get("event")
-                    if ev == "media":
-                        # anti-eco: mientras ARIA habla (o cola de ~0.5s), se le
-                        # manda SILENCIO a Deepgram en vez del audio con eco.
-                        if time.time() < agente["habla_hasta"]:
-                            await dg.send(base64.b64decode(_SILENCIO))
-                        else:
-                            await dg.send(base64.b64decode(m["media"]["payload"]))
-                    elif ev == "dtmf":
-                        # cedula por teclado en recepcion → turno de texto para el agente
-                        dig = "".join(c for c in (m.get("dtmf") or {}).get("digit", "") if c.isdigit())
-                        if dig:
-                            await dg.send(json.dumps({"type": "InjectUserMessage",
-                                                      "content": f"[TECLADO] {dig}"}))
-                    elif ev == "stop":
-                        return
+    # ── Latencia por turno (lo que el cliente percibe) ────────────────────────
+    lat = {"t_eot": 0.0, "turno": 0}
 
-            async def dg_a_twilio():
-                async for msg in dg:
-                    if isinstance(msg, bytes):
-                        # ARIA esta hablando: marca la ventana anti-eco (se refresca
-                        # con cada chunk; el silencio a Deepgram dura mientras dure
-                        # el audio del agente + la cola).
-                        agente["habla_hasta"] = time.time() + _COLA_ANTIECO
-                        await websocket.send_json({"event": "media", "streamSid": stream_id,
-                                                   "media": {"payload": base64.b64encode(msg).decode()}})
-                        continue
-                    ev = json.loads(msg)
-                    t = ev.get("type")
-                    if t == "UserStartedSpeaking":
-                        # barge-in: limpia el audio del agente ya encolado en Twilio
-                        await websocket.send_json({"event": "clear", "streamSid": stream_id})
-                    elif t == "ConversationText":
-                        who = "Deudor" if ev.get("role") == "user" else "ARIA"
-                        result.transcript.append((time.time(), who, ev.get("content", "")))
-                    elif t == "FunctionCallRequest":
-                        for f in ev.get("functions", []):
-                            # el Voice Agent manda arguments como STRING JSON
-                            _a = f.get("arguments")
-                            if isinstance(_a, str):
-                                try:
-                                    _a = json.loads(_a) if _a.strip() else {}
-                                except json.JSONDecodeError:
-                                    _a = {}
-                            content = await dispatch(f.get("name", ""), _a or {})
-                            dispatch.debtor = dispatch.debtor  # (identificar_cliente puede haberlo cambiado)
-                            await dg.send(json.dumps({
-                                "type": "FunctionCallResponse", "id": f.get("id"),
-                                "name": f.get("name"),
-                                "content": json.dumps(content, ensure_ascii=False)}))
-                            if f.get("name") == "end_call":
-                                colgar["pedido"] = True
-                    elif t == "AgentAudioDone" and colgar["pedido"]:
-                        await asyncio.sleep(1.5)   # deja salir la despedida
-                        return
-                    elif t == "Error":
-                        logger.error("[agent] Deepgram Error: %s", ev)
-                        return
+    # ── Colgado coordinado ───────────────────────────────────────────────────
+    colgar = asyncio.Event()
+    motivo = {"v": ""}
 
-            tareas = [asyncio.create_task(twilio_a_dg()), asyncio.create_task(dg_a_twilio())]
+    def pedir_colgar(m: str):
+        if not colgar.is_set():
+            motivo["v"] = m
+            colgar.set()
+
+    async def colgar_cuando_termine_de_sonar(max_espera: float = 8.0):
+        # end_call: la despedida ya esta en cola (o por llegar). Esperar a que
+        # TERMINE DE SONAR — si llega mas audio, play["fin"] se corre y seguimos
+        # esperando; tope duro por si algo se traba.
+        limite = time.time() + max_espera
+        while time.time() < limite:
+            falta = play["fin"] + 0.3 - time.time()
+            if falta <= 0:
+                break
+            await asyncio.sleep(min(falta, 0.25))
+        pedir_colgar("end_call")
+
+    tareas_bg: set = set()
+
+    def _bg(coro):
+        t = asyncio.create_task(coro)
+        tareas_bg.add(t)
+        t.add_done_callback(tareas_bg.discard)
+        return t
+
+    async def ejecutar_tool(dg, f: dict):
+        # Corre como task: mientras la tool pega a Mongo/alertas, el audio que
+        # el agente ya mando sigue fluyendo a Twilio (antes el loop se frenaba).
+        name = f.get("name", "")
+        _a = f.get("arguments")
+        if isinstance(_a, str):            # el Voice Agent manda arguments como STRING JSON
             try:
-                await asyncio.wait(tareas, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                for x in tareas:
-                    x.cancel()
+                _a = json.loads(_a) if _a.strip() else {}
+            except json.JSONDecodeError:
+                _a = {}
+        t0 = time.time()
+        content = await dispatch(name, _a or {})
+        logger.info("[agent][lat] tool %s: %.0f ms", name, (time.time() - t0) * 1000)
+        await dg.send(json.dumps({"type": "FunctionCallResponse", "id": f.get("id"),
+                                  "name": name,
+                                  "content": json.dumps(content, ensure_ascii=False)}))
+        if name == "end_call":
+            _bg(colgar_cuando_termine_de_sonar())
+
+    async def watchdogs():
+        # Mismos guardas que el pipeline pipecat (el motor nuevo no los tenia):
+        # sin voz humana en N s = buzon mudo/aire muerto → colgar; tope duro de
+        # duracion pase lo que pase.
+        no_speech = int(os.getenv("COBRANZA_NO_SPEECH_HANGUP_SECS", "20"))
+        max_s = int(os.getenv("COBRANZA_MAX_CALL_SECS", "240"))
+        await asyncio.sleep(no_speech)
+        if result.user_turn_count == 0:
+            pedir_colgar(f"sin voz humana tras {no_speech}s")
+            return
+        await asyncio.sleep(max(0, max_s - no_speech))
+        pedir_colgar(f"tope de {max_s}s")
+
+    async def twilio_a_dg(dg):
+        async for raw in websocket.iter_text():
+            m = json.loads(raw)
+            ev = m.get("event")
+            if ev == "media":
+                await dg.send(_SILENCIO if aria_habla() else base64.b64decode(m["media"]["payload"]))
+            elif ev == "dtmf":
+                dig = "".join(c for c in (m.get("dtmf") or {}).get("digit", "") if c.isdigit())
+                if dig:
+                    await dg.send(json.dumps({"type": "InjectUserMessage",
+                                              "content": f"[TECLADO] {dig}"}))
+            elif ev == "stop":
+                pedir_colgar("twilio stop")
+                return
+
+    async def dg_a_twilio(dg):
+        from cobranza.voz_comun import _VOICEMAIL_LIVE_RE
+        async for msg in dg:
+            if isinstance(msg, bytes):
+                now = time.time()
+                if lat["t_eot"]:
+                    logger.info("[agent][lat] turno %d: fin-de-turno → primer audio %.0f ms",
+                                lat["turno"], (now - lat["t_eot"]) * 1000)
+                    lat["t_eot"] = 0.0
+                if play["fin"] < now:
+                    play["fin"] = now          # cola vacia: empieza a sonar ya
+                play["fin"] += len(msg) / _MULAW_BPS
+                # Re-chunk a tramas de 20 ms: Deepgram manda bloques grandes e
+                # irregulares y Twilio glitchea al reproducirlos ("se traba").
+                for i in range(0, len(msg), _TRAMA):
+                    await websocket.send_json({
+                        "event": "media", "streamSid": stream_id,
+                        "media": {"payload": base64.b64encode(msg[i:i + _TRAMA]).decode()}})
+                continue
+            ev = json.loads(msg)
+            t = ev.get("type")
+            if t == "UserStartedSpeaking":
+                # barge-in: vaciar lo encolado en Twilio; ya no suena nada
+                await websocket.send_json({"event": "clear", "streamSid": stream_id})
+                play["fin"] = 0.0
+            elif t == "ConversationText":
+                texto = ev.get("content", "")
+                if ev.get("role") == "user":
+                    result.transcript.append((time.time(), "Deudor", texto))
+                    lat["turno"] += 1
+                    lat["t_eot"] = time.time()
+                    if _VOICEMAIL_LIVE_RE.search(texto):
+                        pedir_colgar(f"buzon en vivo: {texto[:60]!r}")
+                else:
+                    result.transcript.append((time.time(), "ARIA", texto))
+            elif t == "FunctionCallRequest":
+                for f in ev.get("functions", []):
+                    if f.get("client_side", True):
+                        _bg(ejecutar_tool(dg, f))
+            elif t == "LatencyReport":
+                # Desglose oficial por turno (segundos): stt / ttt_* (LLM) / tts.
+                logger.info("[agent][lat] deepgram %s",
+                            {k: v for k, v in ev.items() if k != "type"})
+            elif t == "SettingsApplied":
+                logger.info("[agent] SettingsApplied a +%.0f ms de conectar", (time.time() - t_conn) * 1000)
+            elif t in ("Error", "Warning", "InjectionRefused"):
+                logger.log(logging.ERROR if t == "Error" else logging.WARNING,
+                           "[agent] Deepgram %s: %s", t, ev)
+                if t == "Error":
+                    pedir_colgar("deepgram error")
+                    return
+
+    dg = None
+    try:
+        dg = await conectar
+        logger.info("[agent] conectado a Deepgram en %.0f ms", (time.time() - t_conn) * 1000)
+        await dg.send(json.dumps(_settings(prompt, greeting, voz, keyterms, modo_recepcion,
+                                           listen_cfg, temperature)))
+        tareas = [asyncio.create_task(twilio_a_dg(dg)), asyncio.create_task(dg_a_twilio(dg)),
+                  asyncio.create_task(watchdogs()), asyncio.create_task(colgar.wait())]
+        try:
+            await asyncio.wait(tareas, return_when=asyncio.FIRST_COMPLETED)
+            if colgar.is_set():
+                logger.info("[agent] colgando call=%s motivo=%s", call_sid, motivo["v"])
+        finally:
+            for x in list(tareas) + list(tareas_bg):
+                x.cancel()
     except Exception:
         logger.exception("[agent] bridge fallo call=%s", call_sid)
+    finally:
+        if dg is not None:
+            try:
+                await dg.close()
+            except Exception:
+                pass
 
     result.ended_at = time.time()
     result.duration_seconds = int(result.ended_at - result.started_at)
     # En recepcion, identificar_cliente ya actualizo el mapping en Mongo con el
-    # debtor_id — el ws handler relee el mapping en el post-call (mismo camino
-    # que el pipeline pipecat), asi que no hace falta devolver el deudor aqui.
+    # debtor_id — el ws handler relee el mapping en el post-call.
     return result

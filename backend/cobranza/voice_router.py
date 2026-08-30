@@ -729,10 +729,15 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
             caller_stated_document = call_mapping.get("caller_stated_document", "")
             # Parallelize the two Atlas round-trips — they're independent. Run in
             # series this added ~one extra RTT of dead air before ARIA could greet.
-            debtor, config_doc = await asyncio.gather(
+            # tenant_config (Redis) va en el mismo gather: el motor deepgram_agent
+            # lo necesita antes de saludar y en serie sumaba otro RTT de aire muerto.
+            from cobranza.config_cache import get_tenant_config as _get_tcfg
+            debtor, config_doc, _tcfg = await asyncio.gather(
                 get_debtor_by_id(db, user_id, debtor_id) if debtor_id else _noop_none(),
                 db.cobranza_config.find_one({"user_id": user_id}),
+                _get_tcfg(user_id) if user_id else _noop_none(),
             )
+            _tcfg = _tcfg or {}
             estrategia = (config_doc or {}).get("estrategia", {})
         else:
             logger.warning("[WS] No call mapping for %s — rejecting", call_sid)
@@ -758,12 +763,11 @@ async def voice_websocket(websocket: WebSocket, call_sid: str):
         _voz_engine = str(
             (estrategia.get("voz_engine") if isinstance(estrategia, dict) else None)
             or (config_doc or {}).get("cobranza", {}).get("voz_engine")
+            or (_tcfg.get("cobranza") or {}).get("voz_engine")
             or os.getenv("COBRANZA_VOZ_ENGINE", "pipecat")
         ).lower()
         if _voz_engine == "deepgram_agent":
             from cobranza.voice_agent import run_voice_agent
-            from cobranza.config_cache import get_tenant_config
-            _tcfg = await get_tenant_config(user_id) if user_id else {}
             _modo_recepcion = bool(is_inbound and not debtor)
             logger.info("[WS] motor=deepgram_agent call=%s", call_sid)
             call_result = await run_voice_agent(
@@ -934,7 +938,7 @@ async def _process_call_ended(db, debtor: dict, result: CallResult, *, is_inboun
             "duracion_segundos": result.duration_seconds,
             "resultado": new_estado,
             "transcript": transcript[:2000],
-            "engine": "pipecat-telnyx-gemini-live",
+            "engine": getattr(result, "engine", None) or "pipecat-telnyx-gemini-live",
             "direction": "inbound" if is_inbound else "outbound",
         }
 

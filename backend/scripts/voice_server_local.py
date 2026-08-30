@@ -30,12 +30,24 @@ except Exception:
 os.environ.setdefault("GOOGLE_API_KEY", os.getenv("GEMINI_API_KEY", ""))
 os.environ.setdefault("COBRANZA_TTS_ENGINE", "deepgram")
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+
 from fastapi import FastAPI
 
 from cobranza.voice_router import router as voice_router
 
 app = FastAPI(title="voz local (hibrido deepgram)")
 app.include_router(voice_router)
+
+
+@app.on_event("startup")
+async def _startup():
+    # main.py lo hace en su lifespan; sin esto get_db() revienta con
+    # "'NoneType' object is not subscriptable" al abrir el WebSocket.
+    from database import init_db
+    await init_db()
 
 if __name__ == "__main__":
     import uvicorn

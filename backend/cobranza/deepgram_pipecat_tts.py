@@ -33,6 +33,8 @@ from pipecat.services.deepgram.tts import DeepgramHttpTTSService
 
 logger = logging.getLogger("cobranza.deepgram_pipecat_tts")
 
+from cobranza.voz_comun import keyterms_llamada  # noqa: E402,F401 — re-export
+
 # Sesión aiohttp compartida del proceso (pooling); se crea en el primer call —
 # aiohttp exige un event loop corriendo. Nunca se cierra: vive lo que el server.
 _session: Optional[aiohttp.ClientSession] = None
@@ -117,13 +119,33 @@ class OidoDeepgram(FrameProcessor):
     def __init__(self, call_result=None, **kwargs):
         super().__init__(**kwargs)
         self._call_result = call_result
+        self._bot_speaking = True    # arranca True: protege el SALUDO inicial
+        self._ultimo_bot_stop = 0.0
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        from pipecat.frames.frames import TranscriptionFrame, LLMMessagesAppendFrame
+        from pipecat.frames.frames import (
+            TranscriptionFrame, LLMMessagesAppendFrame,
+            BotStartedSpeakingFrame, BotStoppedSpeakingFrame,
+        )
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            self._ultimo_bot_stop = time.time()
+
         # solo transcripciones FINALES con texto real (las interinas no cuentan)
         if isinstance(frame, TranscriptionFrame) and (frame.text or "").strip():
             texto = frame.text.strip()
+            # ECO / no-interrupcion: si ARIA esta hablando (o acaba de hablar,
+            # cola de audio en la linea), lo que "oye" Deepgram es su propia voz
+            # rebotando o al cliente pisandola. Se DESCARTA — igual que
+            # NO_INTERRUPTION en el oido de Gemini. Sin esto, el eco de "Buenos
+            # dias" se colaba como turno del cliente y mataba el saludo (CA9c2c8).
+            if self._bot_speaking or (time.time() - self._ultimo_bot_stop) < 0.7:
+                logger.info("[VOICE][oido-dg] descartado (ARIA hablando/eco): %r", texto[:80])
+                await self.push_frame(frame, direction)  # al transcript, no al llm
+                return
             logger.info("[VOICE][oido-dg] turno del cliente: %r", texto[:120])
             await self.push_frame(frame, direction)  # que siga al collector/llm
             await self.push_frame(LLMMessagesAppendFrame(
@@ -132,29 +154,6 @@ class OidoDeepgram(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-def keyterms_llamada(debtor: dict) -> list:
-    """Vocabulario a reforzar en el STT para ESTA llamada: nombre del deudor,
-    aseguradora, y el vocabulario minado de 372 transcripts reales. Anclar
-    estos terminos reduce los inventos del STT en audio telefonico ruidoso."""
-    base = [
-        "alo", "si", "no", "bueno", "senora", "senor", "gracias", "cupon",
-        "link", "poliza", "pago", "cuota", "pesos", "ya pague", "ya lo pague",
-        "no tengo plata", "no puedo pagar", "manana", "mas tarde", "asesor",
-        "numero equivocado", "de una", "hasta luego", "buenos dias",
-    ]
-    for campo in ("nombre", "aseguradora_nombre"):
-        for w in str(debtor.get(campo) or "").split():
-            w = "".join(c for c in w if c.isalpha())
-            if len(w) > 2:
-                base.append(w)
-    # dedup preservando orden
-    vistos, out = set(), []
-    for t in base:
-        k = t.lower()
-        if k not in vistos:
-            vistos.add(k)
-            out.append(t)
-    return out
 
 
 def crear_stt_deepgram(debtor: dict, sample_rate: int = 8000):
@@ -170,8 +169,13 @@ def crear_stt_deepgram(debtor: dict, sample_rate: int = 8000):
             model="nova-2", language="es",
             encoding="linear16", channels=1, sample_rate=sample_rate,
             smart_format=True, punctuate=True,
-            interim_results=True, utterance_end_ms=1000, vad_events=True,
-            endpointing=300,
+            interim_results=True, vad_events=True,
+            # Fin de turno = silencio fijo (nova no tiene EOT integrado). 1000/300
+            # eran ~1.3 s de espera muerta ANTES de que Gemini viera el turno;
+            # 700/250 recorta ~0.35 s por turno sin cortar pausas normales. Env
+            # para afinar sin deploy si corta a gente lenta.
+            utterance_end_ms=int(os.getenv("COBRANZA_STT_UTTERANCE_END_MS", "700")),
+            endpointing=int(os.getenv("COBRANZA_STT_ENDPOINTING_MS", "250")),
             keywords=keyterms_llamada(debtor),
         ),
     )

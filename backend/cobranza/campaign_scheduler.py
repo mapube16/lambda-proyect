@@ -327,6 +327,11 @@ async def safe_initiate_call(debtor: dict, user_id: str) -> None:
             amd_kwargs = {
                 "machine_detection": "Enable",
                 "machine_detection_timeout": int(os.getenv("COBRANZA_AMD_TIMEOUT_SECS", "12")),
+                # Twilio decide "humano" cuando tras el 'alo' hay ESTE silencio
+                # (default 1200 ms). 800 ms recorta ~0.4 s del aire muerto que el
+                # humano oye antes del saludo; un buzon habla >2.4 s seguidos
+                # (speech_threshold) asi que no lo confunde. Env para afinar.
+                "machine_detection_speech_end_threshold": int(os.getenv("COBRANZA_AMD_SPEECH_END_MS", "800")),
             }
         call = await asyncio.wait_for(
             loop.run_in_executor(None, lambda: client.calls.create(
