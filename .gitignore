@@ -32,3 +32,4 @@ backend/.venv/
 .claude/projects/
 .git-rewrite/
 .planning/
+backend/tmp/

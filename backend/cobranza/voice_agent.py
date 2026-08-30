@@ -28,7 +28,10 @@ from cobranza.voz_comun import CallResult
 logger = logging.getLogger("cobranza.voice_agent")
 
 DG_AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
-THINK_MODEL = os.getenv("COBRANZA_AGENT_THINK_MODEL", "gemini-3.5-flash")
+# flash-lite: 0.66 s de think medidos vs 1.49-1.9 s de 3.5-flash (sonda
+# check_deepgram_agent.py, 30-ago) — el turno completo baja de ~1.8 s a ~0.96 s.
+# Si en llamada real cede terreno en el guion, se revierte con la env sin deploy.
+THINK_MODEL = os.getenv("COBRANZA_AGENT_THINK_MODEL", "gemini-3.1-flash-lite")
 
 
 # ── Esquemas de las tools (formato Voice Agent) ────────────────────────────────
