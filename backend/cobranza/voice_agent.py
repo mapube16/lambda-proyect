@@ -427,11 +427,19 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
     _half_duplex = str(cobr.get("agent_half_duplex",
                                 os.getenv("COBRANZA_AGENT_HALF_DUPLEX", "true"))).lower() != "false"
 
+    # El SALUDO manda: hasta que el primer byte de audio de ARIA llegue, TODO lo
+    # del cliente se silencia hacia Deepgram. Sin esto habia una carrera fatal:
+    # el "alo" al contestar entraba ANTES del saludo, Deepgram disparaba
+    # UserStartedSpeaking / barge-in sobre un saludo apenas encolado, y el
+    # cliente oia a ARIA arrancando A MITAD de frase (queja 30-ago).
+    saludo_pendiente = {"v": True}
+
     def aria_habla() -> bool:
         # Half-duplex anti-eco (doc Deepgram audio-preprocessing): mientras ARIA
         # suena (+cola), lo que vuelve por la linea es su eco (grave en ALTAVOZ);
         # a Deepgram se le manda silencio. Costo: sin barge-in ese ratito.
-        return _half_duplex and time.time() < play["fin"] + _COLA_ANTIECO
+        return _half_duplex and (saludo_pendiente["v"]
+                                 or time.time() < play["fin"] + _COLA_ANTIECO)
 
     # ── Latencia por turno (lo que el cliente percibe) ────────────────────────
     lat = {"t_eot": 0.0, "turno": 0}
@@ -552,6 +560,7 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
         async for msg in dg:
             if isinstance(msg, bytes):
                 now = time.time()
+                saludo_pendiente["v"] = False   # ya esta sonando: manda el reloj
                 if lat["t_eot"]:
                     logger.info("[agent][lat] turno %d: fin-de-turno → primer audio %.0f ms",
                                 lat["turno"], (now - lat["t_eot"]) * 1000)
@@ -569,9 +578,13 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
             ev = json.loads(msg)
             t = ev.get("type")
             if t == "UserStartedSpeaking":
-                # barge-in: vaciar lo encolado en Twilio; ya no suena nada
-                await websocket.send_json({"event": "clear", "streamSid": stream_id})
-                play["fin"] = 0.0
+                # barge-in SOLO en full-duplex: vaciar lo encolado en Twilio.
+                # En half-duplex no hay barge-in — y este clear era el que
+                # BOTABA el saludo recien encolado cuando el "alo" inicial
+                # disparaba UserStartedSpeaking (saludo cortado a la mitad).
+                if not _half_duplex:
+                    await websocket.send_json({"event": "clear", "streamSid": stream_id})
+                    play["fin"] = 0.0
             elif t == "ConversationText":
                 texto = ev.get("content", "")
                 if ev.get("role") == "user":
