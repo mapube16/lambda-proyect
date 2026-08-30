@@ -388,7 +388,8 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
 
     async def _abrir():   # websockets.connect es awaitable pero NO corutina
         return await websockets.connect(
-            DG_AGENT_URL, additional_headers={"Authorization": f"Token {key}"})
+            DG_AGENT_URL, additional_headers={"Authorization": f"Token {key}"},
+            close_timeout=1)  # si Twilio muere primero, close() esperaba 10s el handshake
 
     conectar = asyncio.create_task(_abrir())
 
@@ -590,7 +591,8 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                 logger.info("[agent][lat] deepgram %s",
                             {k: v for k, v in ev.items() if k != "type"})
             elif t == "SettingsApplied":
-                logger.info("[agent] SettingsApplied a +%.0f ms de conectar", (time.time() - t_conn) * 1000)
+                logger.info("[agent] SettingsApplied a +%.0f ms del arranque del bridge",
+                            (time.time() - t_conn) * 1000)
             elif t in ("Error", "Warning", "InjectionRefused"):
                 logger.log(logging.ERROR if t == "Error" else logging.WARNING,
                            "[agent] Deepgram %s: %s", t, ev)
