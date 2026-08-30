@@ -370,21 +370,6 @@ def armar_prompt(debtor: dict, tenant_config: dict, *, modo_recepcion: bool) -> 
 _MULAW_BPS = 8000.0          # bytes/segundo de mulaw 8k = segundos que suena
 _TRAMA = 160                 # 20 ms — la trama que Twilio espera
 
-# SALUDO INSTANTANEO: el texto del saludo se conoce al marcar, asi que se
-# sintetiza una vez (mismo celeste, REST) y se cachea; al abrir el stream se
-# dispara DE UNA, sin esperar el boot de la sesion con Deepgram (~1.5-2s).
-_saludo_cache: dict = {}
-
-
-async def _saludo_pregrabado(texto: str, voz: str) -> bytes:
-    k = (voz, texto)
-    if k not in _saludo_cache:
-        if len(_saludo_cache) > 256:   # ponytail: cache naive, se vacia y ya
-            _saludo_cache.clear()
-        from cobranza.deepgram_tts_client import speak_mulaw_8k
-        _saludo_cache[k] = await speak_mulaw_8k(texto, model=voz, timeout_s=2.5)
-    return _saludo_cache[k]
-
 
 async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: str,
                           stream_id: str, tenant_config: dict,
@@ -416,7 +401,6 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
     listen_cfg = cobr.get("deepgram_listen") or _env_json("COBRANZA_AGENT_LISTEN")
     temperature = float(cobr.get("voice_temperature") or tenant_config.get("voice_temperature")
                         or os.getenv("COBRANZA_AGENT_TEMPERATURE", "0.5"))
-    saludo_task = asyncio.create_task(_saludo_pregrabado(greeting, voz))
     logger.info("[agent] call=%s recepcion=%s voz=%s think=%s listen=%s keyterms=%d prompt=%d chars",
                 call_sid, modo_recepcion, voz, THINK_MODEL,
                 listen_cfg.get("model") or "nova-3", len(keyterms), len(prompt))
@@ -543,83 +527,11 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
     listo = asyncio.Event()    # Settings ya enviados: se puede reenviar audio
     descartado = {"frames": 0}
 
-    # ── Oido sombra: STT crudo full-duplex ────────────────────────────────────
-    # El anti-eco silencia hacia el AGENTE lo que el cliente dice mientras ARIA
-    # habla (para que no la interrumpa ni se confunda) — pero un /listen aparte
-    # oye TODO el rato. Lo dicho durante el turno de ella (si no es su propio
-    # eco ni un "alo" suelto) se inyecta cuando termina su frase: ella no se
-    # interrumpe y aun asi nada de lo que dijo el cliente se pierde.
-    sombra_ws = {"ws": None}
-    sombra_buf: list = []
-    ultimo_aria = {"txt": ""}
-
-    def _parece_eco(texto: str) -> bool:
-        pal = [w for w in texto.lower().split() if len(w) > 2]
-        if not pal:
-            return True
-        aria = ultimo_aria["txt"].lower()
-        return sum(1 for w in pal if w in aria) / len(pal) > 0.6
-
-    async def oido_sombra():
-        if str(cobr.get("agent_oido_sombra",
-                        os.getenv("COBRANZA_AGENT_OIDO_SOMBRA", "true"))).lower() == "false":
-            return
-        url = ("wss://api.deepgram.com/v1/listen?model=nova-3&language=es"
-               "&encoding=mulaw&sample_rate=8000&punctuate=true"
-               "&interim_results=false&endpointing=400")
-        try:
-            async with websockets.connect(
-                    url, additional_headers={"Authorization": f"Token {key}"},
-                    close_timeout=1) as stt:
-                sombra_ws["ws"] = stt
-                async for raw in stt:
-                    try:
-                        ev = json.loads(raw)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                    alt = (((ev.get("channel") or {}).get("alternatives")) or [{}])[0]
-                    texto = (alt.get("transcript") or "").strip()
-                    if not texto or not ev.get("is_final"):
-                        continue
-                    if aria_habla():
-                        # 1 palabra ("alo", "si") durante el turno de ella es
-                        # backchannel/ruido — no amerita respuesta luego.
-                        if len(texto.split()) >= 2 and not _parece_eco(texto):
-                            sombra_buf.append(texto)
-                            logger.info("[agent][sombra] guardado (ARIA hablaba): %r", texto[:80])
-        except Exception:
-            logger.warning("[agent][sombra] oido sombra caido (no critico)")
-        finally:
-            sombra_ws["ws"] = None
-
-    async def flush_sombra():
-        # Al abrirse el microfono (ella callo), lo capturado se le pasa al
-        # agente como turno de usuario — responde a eso sin haberse cortado.
-        while True:
-            await asyncio.sleep(0.3)
-            if sombra_buf and not aria_habla() and listo.is_set():
-                texto = " ... ".join(sombra_buf)
-                sombra_buf.clear()
-                result.transcript.append((time.time(), "Deudor", f"(mientras ARIA hablaba) {texto}"))
-                try:
-                    await dg_box["ws"].send(json.dumps({
-                        "type": "InjectUserMessage",
-                        "content": f"[EL CLIENTE DIJO MIENTRAS HABLABAS] {texto}"}))
-                    logger.info("[agent][sombra] inyectado: %r", texto[:100])
-                except Exception:
-                    logger.warning("[agent][sombra] inyeccion fallo")
-
     async def twilio_a_dg():
         async for raw in websocket.iter_text():
             m = json.loads(raw)
             ev = m.get("event")
             if ev == "media":
-                audio = base64.b64decode(m["media"]["payload"])
-                if sombra_ws["ws"] is not None:
-                    try:
-                        await sombra_ws["ws"].send(audio)   # el sombra oye TODO
-                    except Exception:
-                        sombra_ws["ws"] = None
                 if not listo.is_set():
                     # Audio ANTERIOR a la sesion con Deepgram (los "alo, alo?"
                     # mientras conectabamos). Antes se acumulaba en el buffer y
@@ -629,7 +541,8 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                     # DESCARTA: el saludo lo dice ella primero igual.
                     descartado["frames"] += 1
                     continue
-                await dg_box["ws"].send(_SILENCIO if aria_habla() else audio)
+                await dg_box["ws"].send(
+                    _SILENCIO if aria_habla() else base64.b64decode(m["media"]["payload"]))
             elif ev == "dtmf":
                 dig = "".join(c for c in (m.get("dtmf") or {}).get("digit", "") if c.isdigit())
                 if dig and listo.is_set():
@@ -637,7 +550,6 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                                                         "content": f"[TECLADO] {dig}"}))
             elif ev == "mark":
                 if (m.get("mark") or {}).get("name") == "fin-despedida":
-                    logger.info("[agent] mark de despedida sono en el telefono")
                     marca_eco.set()
             elif ev == "stop":
                 pedir_colgar("twilio stop")
@@ -683,7 +595,6 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                         pedir_colgar(f"buzon en vivo: {texto[:60]!r}")
                 else:
                     result.transcript.append((time.time(), "ARIA", texto))
-                    ultimo_aria["txt"] = (ultimo_aria["txt"] + " " + texto)[-400:]
             elif t == "FunctionCallRequest":
                 for f in ev.get("functions", []):
                     if f.get("client_side", True):
@@ -703,39 +614,12 @@ async def run_voice_agent(*, websocket, call_sid: str, debtor: dict, user_id: st
                     return
 
     dg = None
-    tareas = [asyncio.create_task(twilio_a_dg()),    # leer YA: que nada se encole
-              asyncio.create_task(oido_sombra()),
-              asyncio.create_task(flush_sombra())]
-    # SALUDO INSTANTANEO: sonar apenas el stream abre, sin esperar a Deepgram.
-    saludo_sono = False
-    try:
-        audio_saludo = await asyncio.wait_for(saludo_task, timeout=2.5)
-        now = time.time()
-        play["fin"] = now + len(audio_saludo) / _MULAW_BPS
-        saludo_pendiente["v"] = False    # el reloj ya cubre el saludo sonando
-        result.transcript.append((now, "ARIA", greeting))
-        for i in range(0, len(audio_saludo), _TRAMA):
-            await websocket.send_json({
-                "event": "media", "streamSid": stream_id,
-                "media": {"payload": base64.b64encode(audio_saludo[i:i + _TRAMA]).decode()}})
-        saludo_sono = True
-        logger.info("[agent][lat] saludo pregrabado sonando a +%.0f ms del bridge (%d ms de audio)",
-                    (now - t_conn) * 1000, len(audio_saludo) // 8)
-    except Exception:
-        saludo_task.cancel()
-        logger.info("[agent] saludo pregrabado no disponible — saluda el agente")
+    tareas = [asyncio.create_task(twilio_a_dg())]   # leer YA: que nada se encole
     try:
         dg = await conectar
         logger.info("[agent] conectado a Deepgram en %.0f ms", (time.time() - t_conn) * 1000)
-        settings = _settings(prompt, greeting, voz, keyterms, modo_recepcion,
-                             listen_cfg, temperature)
-        if saludo_sono:
-            # El saludo ya sono pregrabado: el agente NO debe repetirlo, pero
-            # si saber que lo dijo — va sembrado como su primer turno.
-            settings["agent"].pop("greeting", None)
-            settings["agent"]["context"] = {"messages": [
-                {"type": "History", "role": "assistant", "content": greeting}]}
-        await dg.send(json.dumps(settings))
+        await dg.send(json.dumps(_settings(prompt, greeting, voz, keyterms, modo_recepcion,
+                                           listen_cfg, temperature)))
         dg_box["ws"] = dg
         listo.set()
         if descartado["frames"]:
