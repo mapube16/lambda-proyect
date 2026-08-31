@@ -11,6 +11,7 @@ fallo de un tenant no debe afectar a los demás.
 """
 import logging
 from datetime import date, timedelta
+from typing import Optional
 
 from apscheduler.triggers.cron import CronTrigger
 
@@ -180,6 +181,50 @@ async def jornada_notificaciones_job() -> None:
             logger.exception("[report_scheduler] jornada_notificaciones falló user=%s", user_id)
 
 
+async def recarga_mensual_job(hoy: Optional[date] = None) -> None:
+    """A partir del día 15, carga la recarga mensual de minutos contratada
+    (tenant_configs.cobranza.facturacion.recarga_mensual_minutos) si este mes
+    aún no está en el ledger. Chequeo diario idempotente en vez de cron fijo
+    day=15: el jobstore es en memoria y un redeploy/caída justo el 15 no debe
+    saltarse la carga — el catch-up corre hasta fin de mes.
+    `recarga_mensual_desde` ("YYYY-MM", opcional) evita retro-cargar el mes en
+    curso cuando el plan se contrata después del día 15."""
+    from datetime import datetime
+    import pytz
+    from database import get_db
+    from cobranza import minutes
+    from cobranza.config_cache import get_tenant_config
+
+    db = get_db()
+    if hoy is None:
+        hoy = datetime.now(pytz.timezone("America/Bogota")).date()
+    if hoy.day < 15:
+        return
+    mes = hoy.strftime("%Y-%m")
+    for user_id in await _tenant_ids(db):
+        try:
+            fact = (((await get_tenant_config(user_id)) or {})
+                    .get("cobranza") or {}).get("facturacion") or {}
+            minutos_recarga = int(fact.get("recarga_mensual_minutos") or 0)
+            if minutos_recarga <= 0:
+                continue  # tenant sin recarga mensual contratada
+            desde = fact.get("recarga_mensual_desde")
+            if desde and mes < desde:
+                continue  # plan contratado después del 15: no retro-cargar este mes
+            nota = f"Recarga mensual {mes}"
+            if await db[minutes.COLLECTION].find_one(
+                {"user_id": user_id, "tipo": "compra", "nota": nota}
+            ):
+                continue  # ya cargada este mes
+            saldo = await minutes.record_purchase(
+                db, user_id, minutos_recarga, nota=nota, actor="cron_recarga"
+            )
+            logger.info("[report_scheduler] recarga mensual user=%s +%dmin restantes=%s",
+                        user_id, minutos_recarga, saldo["minutos_restantes"])
+        except Exception:
+            logger.exception("[report_scheduler] recarga mensual falló user=%s", user_id)
+
+
 def register_report_jobs(scheduler) -> None:
     scheduler.add_job(
         reporte_diario_job, CronTrigger(hour=18, minute=0, day_of_week="mon-sat", timezone="UTC"),
@@ -205,6 +250,12 @@ def register_report_jobs(scheduler) -> None:
         next_run_time=_dt.now() + _td(seconds=60),
         id="cobr_jornada_notifs", replace_existing=True,
     )
+    # Diario 17:00 UTC (12:00 CO) + catch-up al boot: idempotente por nota mensual.
+    scheduler.add_job(
+        recarga_mensual_job, CronTrigger(hour=17, minute=0, timezone="UTC"),
+        next_run_time=_dt.now() + _td(seconds=75),
+        id="cobr_recarga_mensual", replace_existing=True,
+    )
     logger.info("[report_scheduler] registrados: cobr_reporte_diario (18:00 UTC L-Sáb), "
                 "cobr_reporte_semanal (lun 18:05 UTC), cobr_fin_jornada_check (15m), "
-                "cobr_jornada_notifs (5m)")
+                "cobr_jornada_notifs (5m), cobr_recarga_mensual (diario 17:00 UTC)")
