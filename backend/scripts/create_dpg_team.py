@@ -66,8 +66,32 @@ async def main():
     if not tenant:
         raise SystemExit(f"Tenant DPG {DPG_TENANT_ID} no existe — abortando")
 
-    from mailer import _send as mailersend_send
-    from_addr = os.getenv("MAILERSEND_FROM_EMAIL", "reportes@landatech.org")
+    # SMTP de Private Email (Namecheap) — MailerSend trial da 403. Host/puerto/
+    # usuario tienen default con lo que mostro el panel; la contraseña SOLO por
+    # env (SMTP_PASS), nunca hardcodeada.
+    import smtplib
+    import ssl
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    smtp_host = os.getenv("SMTP_HOST", "mail.privateemail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "465"))
+    smtp_user = os.getenv("SMTP_USER", "teamtech@landatech.org")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+    from_addr = os.getenv("SMTP_FROM", smtp_user)
+    if not smtp_pass:
+        raise SystemExit("Falta SMTP_PASS (contraseña del buzón Private Email)")
+
+    def _send_smtp(to_email: str, subject: str, html: str) -> None:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"Landa Tech <{from_addr}>"
+        msg["To"] = to_email
+        msg.attach(MIMEText(html, "html", "utf-8"))
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=30) as s:
+            s.login(smtp_user, smtp_pass)
+            s.sendmail(from_addr, [to_email], msg.as_string())
 
     from datetime import datetime, timezone
     for email in TEAM:
@@ -97,8 +121,7 @@ async def main():
 
         try:
             await asyncio.to_thread(
-                mailersend_send,
-                from_addr, "Landa Tech", email, "",
+                _send_smtp, email,
                 "Tu acceso al dashboard de cobranza DPG — Landa Tech",
                 _email_html(email, temp),
             )

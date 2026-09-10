@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # ── Fail-fast on missing key at module import ─────────────────────────────────
 _ENCRYPTION_KEY = os.getenv("SOFTSEGUROS_ENCRYPTION_KEY", "").strip()
 if not _ENCRYPTION_KEY:
-    raise RuntimeError(
+    raise RuntimeError( 
         "SOFTSEGUROS_ENCRYPTION_KEY is missing or empty. Generate one with "
         '`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` '
         "and set it in your environment before importing softseguros.credentials."
