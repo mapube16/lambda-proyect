@@ -33,6 +33,21 @@ async def _ensure_case_id(db, debtor: dict) -> str:
     return new_id
 
 
+def _motivo_llamada(debtor: dict) -> str:
+    """Por qué se llamó al deudor, para que ARIA en WhatsApp lo sepa (antes le
+    llegaba vacío y sonaba plana). Sin montos: WA consulta el saldo en vivo."""
+    partes = ["Llamada de cobranza de DPG Seguros por cuota pendiente"]
+    if debtor.get("ramo_nombre"):
+        partes.append(f"ramo {debtor['ramo_nombre']}")
+    if debtor.get("objeto_asegurado"):
+        partes.append(f"riesgo asegurado {debtor['objeto_asegurado']}")
+    if debtor.get("dias_mora"):
+        partes.append(f"{debtor['dias_mora']} dias de mora")
+    if debtor.get("estado"):
+        partes.append(f"resultado de gestion: {debtor['estado']}")
+    return ", ".join(partes) + "."
+
+
 async def handoff_to_wa(
     db, user_id: str, debtor: dict, *,
     message: str = "", initial_context: str = "", call_id: str = "",
@@ -61,13 +76,18 @@ async def handoff_to_wa(
 
     case_id = await _ensure_case_id(db, debtor)
     body = {
+        # Sin documento WA no puede fijar la póliza llamada: pedía la cédula o
+        # listaba TODAS las pólizas del cliente. Con documento + poliza_number
+        # entra directo a ESTA póliza.
+        "documento": str(debtor.get("cliente_documento") or "")[:20] or None,
+        "cliente_nombre": str(debtor.get("nombre") or "")[:80] or None,
         "case_id": case_id,
         "debtor_id": str(debtor.get("_id", "")),
         "poliza_number": str(debtor.get("numero_poliza") or "")[:40] or "N/A",
         "call_id": call_id,
         "user_id": user_id,
         "phone": phone if phone.startswith("+") else f"+{phone}",
-        "initial_context": initial_context[:500],
+        "initial_context": (initial_context or _motivo_llamada(debtor))[:500],
         "message": message,
     }
     try:
