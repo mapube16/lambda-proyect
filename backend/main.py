@@ -249,6 +249,10 @@ app.include_router(tenant_admin_router)
 from routes.debtors import router as debtors_router
 app.include_router(debtors_router)
 
+# ── Demo web de voz (navegador ↔ Deepgram; NO toca la ruta de llamadas reales) ─
+from cobranza.demo_router import router as demo_aria_router
+app.include_router(demo_aria_router)
+
 # ── Static frontend (must be last) ───────────────────────────────────────────
 _frontend_dist = pathlib.Path(__file__).parent.parent / "frontend" / "dist"
 if _frontend_dist.exists():

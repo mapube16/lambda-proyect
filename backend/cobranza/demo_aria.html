@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hablar con Aria</title>
+<style>
+  body{margin:0;background:#f6f7f9;display:flex;justify-content:center;padding:24px 16px;
+       font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+  #aria{width:100%;max-width:560px}
+</style>
+</head>
+<body>
+<!-- Pagina de referencia. Es exactamente lo que hace una landing externa, y
+     sirve de respaldo si alguien prefiere embeberla con un iframe:
+       <iframe src=".../demo/aria" allow="microphone"></iframe>      -->
+<div id="aria"></div>
+<script src="/demo/aria/widget.js"></script>
+<script>
+  AriaDemo.montar("#aria", {
+    code: new URLSearchParams(location.search).get("code") || undefined
+  });
+</script>
+</body>
+</html>
