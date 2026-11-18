@@ -108,12 +108,12 @@ async def _cupo_diario_ok() -> bool:
 # Datos plausibles de la cartera de DPG, pero inventados: ninguna consulta a
 # Softseguros ni a Mongo. El telefono va vacio a proposito (send_whatsapp
 # ademas queda muerto porque no hay orchestrator).
+# Solo Seguros del Estado: la demo se presenta en su curso de innovacion.
 _CARTERA = [
-    ("Autos", "Seguros Bolivar", "Mazda CX-30 placa KJT482"),
-    ("Hogar", "Allianz", "Apartamento en Chapinero"),
-    ("Vida", "Sura", ""),
-    ("Autos", "Mapfre", "Chevrolet Onix placa HSR119"),
-    ("Salud", "Seguros del Estado", ""),
+    ("Autos", "Seguros del Estado", "Mazda CX-30 placa KJT482"),
+    ("Hogar", "Seguros del Estado", "Apartamento en Chapinero"),
+    ("Vida", "Seguros del Estado", ""),
+    ("Autos", "Seguros del Estado", "Chevrolet Onix placa HSR119"),
 ]
 
 
